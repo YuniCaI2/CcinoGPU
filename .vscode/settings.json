@@ -1,0 +1,9 @@
+{
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": false,
+  "cmake.generator": "Ninja",
+  "cmake.preferredGenerators": ["Ninja"],
+  "cmake.useVsDeveloperEnvironment": "auto",
+  "cmake.buildDirectory": "${workspaceFolder}/build",
+}

@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/yuni/Dev/CcinoGPU/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
