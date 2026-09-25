@@ -1,3 +1,0 @@
-/home/yuni/Dev/CcinoGPU/build/CMakeFiles/CcinoGPU.dir
-/home/yuni/Dev/CcinoGPU/build/CMakeFiles/edit_cache.dir
-/home/yuni/Dev/CcinoGPU/build/CMakeFiles/rebuild_cache.dir

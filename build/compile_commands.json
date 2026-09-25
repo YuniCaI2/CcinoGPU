@@ -1,8 +1,0 @@
-[
-{
-  "directory": "/home/yuni/Dev/CcinoGPU/build",
-  "command": "/nix/store/cnggn0p188nfvys53iqsavf2agpykdh2-gcc-wrapper-15.2.0/bin/g++ -g -std=gnu++23 -o CMakeFiles/CcinoGPU.dir/main.cpp.o -c /home/yuni/Dev/CcinoGPU/main.cpp",
-  "file": "/home/yuni/Dev/CcinoGPU/main.cpp",
-  "output": "/home/yuni/Dev/CcinoGPU/build/CMakeFiles/CcinoGPU.dir/main.cpp.o"
-}
-]
