@@ -44,6 +44,9 @@
             libxi
             libxext
             libxfixes
+
+            #Test
+            gtest
           ];
 
           shellHook = ''
