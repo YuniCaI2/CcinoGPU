@@ -6,9 +6,17 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(BUILD_TESTS ON)
+set(RHI_VULKAN ON)
 
 
 add_executable(CcinoGPU main.cpp)
 
 enable_testing()
+if(RHI_VULKAN)
+    add_subdirectory(ThirdPart)
+endif()
 add_subdirectory(Tests)
+add_subdirectory(RHI)
+
+
+target_include_directories(RHI PUBLIC ${CMAKE_SOURCE_DIR})
