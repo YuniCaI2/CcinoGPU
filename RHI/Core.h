@@ -19,7 +19,7 @@
     } \
 } while (0)
 
-namespace Ccino::RHI::Vulkan {
+namespace Ccino::RHI {
     class Core {
     public:
         Core() = default;

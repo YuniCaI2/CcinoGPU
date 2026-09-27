@@ -37,6 +37,10 @@ struct RID {
         static std::atomic<uint64_t> count = 0;
         return count;
     }
+
+    static RID Invalid() {
+        return RID{UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    }
 };
 
 template<typename T>
@@ -85,6 +89,16 @@ public:
         return true;
     }
 
+    template<typename Fn>
+    void ForEach(Fn&& fn) {
+        std::shared_lock lock(m_mutex);
+        for (auto& slot : m_data) {
+            if (slot.generation != UINT64_MAX) {
+                fn(slot.value);
+            }
+        }
+    }
+
 private:
     std::shared_mutex m_mutex;
     std::vector<Slot> m_data; //数据存储
@@ -94,23 +108,17 @@ private:
 
 
 
-enum class BufferUsage {
-    UNIFORM_BUFFER = 1 >> 0,
-    STORAGE_BUFFER = 1 >> 2,
-    TRANSFER_SOURCE = 1 >> 3,
-    TRANSFER_DESTINATION = 1 >> 4
-};
 //这里不需要Vertex Buffer 和 Index Buffer 直接使用Bindless 配合 索引完成所有
-
-
-
-struct BufferCreateInfo {
-    uint32_t size = 0; //字节数
-    //Usage
-    BufferUsage usage;
-    //Shared Mode 这里不使用，原型版本这里直接使用共享配置避免跨队列转换，后续使用独占
-    void* data = nullptr; //映射指针,创建时设置可以即刻上传
-};
 
 //纹理先不处理，先把当前的库设置为一个单的计算库
 //TODO: 纹理
+
+//区分队列
+enum class CommandQueueType {
+    COMPUTE = 0,
+    GRAPHICS = 1,
+    TRANSFER = 2
+};
+
+//Pipeline
+//先实现计算管线

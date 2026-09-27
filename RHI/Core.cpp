@@ -1,4 +1,4 @@
-#include "RHI/Vulkan/Core.h"
+#include "RHI/Core.h"
 #include <algorithm>
 #include <vector>
 #include <iostream>
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace Ccino::RHI::Vulkan {
+namespace Ccino::RHI {
     void Core::Init(const RHISettings& settings) {
         std::vector<const char*> requiredExtensions = {};
 
