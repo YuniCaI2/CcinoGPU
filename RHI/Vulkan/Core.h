@@ -12,6 +12,13 @@
     #define USE_VALIDATION_LAYERS 1
 #endif
 
+#define VULKAN_CHECK(expr) do { \
+    auto result = (expr); \
+    if (result != VK_SUCCESS) { \
+        throw std::runtime_error("Vulkan error: " #expr); \
+    } \
+} while (0)
+
 namespace Ccino::RHI::Vulkan {
     class Core {
     public:

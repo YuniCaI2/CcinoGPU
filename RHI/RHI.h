@@ -14,6 +14,8 @@ namespace Ccino::RHI {
 
         //此处使用Bindless所以资源使用索引代替原本的Vulkan的资源句柄
         //Buffer
+        virtual RID CreateBuffer(const BufferCreateInfo& createInfo) = 0;
+        virtual void DestroyBuffer(RID rid) = 0;
         //Image
         //ImageView
         //Sampler
