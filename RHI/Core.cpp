@@ -5,13 +5,56 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vulkan/vulkan_core.h>
 
 namespace Ccino::RHI {
     void Core::Init(const RHISettings& settings) {
-        std::vector<const char*> requiredExtensions = {};
+        std::vector<const char*> instanceExtensions = {};
 
-        CreateInstance(requiredExtensions);
-        CreateDevice(m_instance, VkPhysicalDeviceFeatures(), requiredExtensions, nullptr);
+        //配置Vulkan Device Features
+        VkPhysicalDeviceFeatures deviceFeatures{};
+        deviceFeatures.samplerAnisotropy = VK_TRUE;
+
+        VkPhysicalDeviceVulkan11Features features11{};
+        features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        features11.shaderDrawParameters = VK_TRUE;
+
+        VkPhysicalDeviceVulkan12Features features12{};
+        features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        features12.timelineSemaphore = VK_TRUE;
+        features12.bufferDeviceAddress = VK_TRUE;
+        features12.descriptorBindingPartiallyBound = VK_TRUE;
+        features12.runtimeDescriptorArray = VK_TRUE;
+        features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        features12.scalarBlockLayout = VK_TRUE;
+        features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+
+        VkPhysicalDeviceVulkan13Features features13{};
+        features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        features13.synchronization2 = VK_TRUE;
+        features13.dynamicRendering = VK_TRUE;
+
+        VkPhysicalDeviceVulkan14Features features14{};
+        features14.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES;
+        features14.maintenance5 = VK_TRUE;
+
+        VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptorHeapFeatures{};
+        descriptorHeapFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT;
+        descriptorHeapFeatures.descriptorHeap = VK_TRUE;
+
+        features11.pNext = &features12;
+        features12.pNext = &features13;
+        features13.pNext = &features14;
+        features14.pNext = &descriptorHeapFeatures;
+
+        //这里使用Descriptor Heap
+        std::vector<const char*> deviceExtensions = {
+            VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME
+        };
+
+        CreateInstance(instanceExtensions);
+        CreateDevice(m_instance, deviceFeatures, deviceExtensions, &features11);
         if (settings.bUseSwapChain) {
             CreateSurface();
         }   
@@ -74,7 +117,6 @@ namespace Ccino::RHI {
         VkDebugUtilsMessengerCreateInfoEXT debugInfo = {};
         if (USE_VALIDATION_LAYERS) {
             SetupDebuggingMessengerCreateInfo(debugInfo);
-            debugInfo.pNext = &createInfo;
             createInfo.pNext = &debugInfo;
 
             //增加Debug的扩展
@@ -94,8 +136,8 @@ namespace Ccino::RHI {
             createInfo.ppEnabledExtensionNames = instanceExtensions.data();
         } 
 
+        const char* validationLayerName = "VK_LAYER_KHRONOS_validation";
         if (USE_VALIDATION_LAYERS) {
-            const char* validationLayerName = "VK_LAYER_KHRONOS_validation";
             bool validationLayerFound = false;
             uint32_t layoutCount = 0;
             vkEnumerateInstanceLayerProperties(&layoutCount, nullptr);
@@ -248,7 +290,7 @@ namespace Ccino::RHI {
         }
 
         std::vector<const char*> deviceExtensions(extensions);
-        deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        // deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME); // SwapChain 手动增加
 
         VkPhysicalDeviceFeatures supportedFeatures{};
         vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
@@ -310,6 +352,11 @@ namespace Ccino::RHI {
             throw std::runtime_error("Failed to create device");
         }
 
+        m_queueFamilyCount = queueFamilyCount;
+        vkGetDeviceQueue(m_device, m_queueFamilyIndices.graphics, 0, &m_graphicsQueue);
+        vkGetDeviceQueue(m_device, m_queueFamilyIndices.compute, 0, &m_computeQueue);
+        vkGetDeviceQueue(m_device, m_queueFamilyIndices.transfer, 0, &m_transferQueue);
+
         m_properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         m_descriptorBufferProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
         m_descriptorBufferProps.pNext = m_properties2.pNext;
@@ -322,6 +369,9 @@ namespace Ccino::RHI {
     }
 
     void Core::DestroyDevice() {
+        m_graphicsQueue = VK_NULL_HANDLE;
+        m_computeQueue = VK_NULL_HANDLE;
+        m_transferQueue = VK_NULL_HANDLE;
         if (m_device != VK_NULL_HANDLE) {
             vkDestroyDevice(m_device, nullptr);
             m_device = VK_NULL_HANDLE;
@@ -352,7 +402,8 @@ namespace Ccino::RHI {
         allocatorInfo.device = m_device;
         allocatorInfo.instance = m_instance;
         allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT |
-            VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+            VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT |
+            VMA_ALLOCATOR_CREATE_KHR_MAINTENANCE5_BIT;
         allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_4;
         if (vmaCreateAllocator(&allocatorInfo, &m_vmaAllocator) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create VMA allocator");

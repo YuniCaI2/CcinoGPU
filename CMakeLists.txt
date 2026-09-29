@@ -15,8 +15,6 @@ enable_testing()
 if(RHI_VULKAN)
     add_subdirectory(ThirdPart)
 endif()
-add_subdirectory(Tests)
 add_subdirectory(RHI)
-
-
 target_include_directories(RHI PUBLIC ${CMAKE_SOURCE_DIR})
+add_subdirectory(Tests)

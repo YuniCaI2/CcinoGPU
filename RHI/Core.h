@@ -35,6 +35,29 @@ namespace Ccino::RHI {
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_queueFamilyIndices.graphics; }
         uint32_t GetComputeQueueFamilyIndex() const { return m_queueFamilyIndices.compute; }
         uint32_t GetTransferQueueFamilyIndex() const { return m_queueFamilyIndices.transfer; }
+        uint32_t GetQueueFamilyCount() const { return m_queueFamilyCount; }
+        uint32_t GetQueueFamilyIndex(CommandQueueType queueType) const {
+            switch (queueType) {
+                case CommandQueueType::COMPUTE:
+                    return m_queueFamilyIndices.compute;
+                case CommandQueueType::GRAPHICS:
+                    return m_queueFamilyIndices.graphics;
+                case CommandQueueType::TRANSFER:
+                    return m_queueFamilyIndices.transfer;
+            }
+            return m_queueFamilyIndices.graphics;
+        }
+        VkQueue GetVkQueue(CommandQueueType queueType) const {
+            switch (queueType) {
+                case CommandQueueType::COMPUTE:
+                    return m_computeQueue;
+                case CommandQueueType::GRAPHICS:
+                    return m_graphicsQueue;
+                case CommandQueueType::TRANSFER:
+                    return m_transferQueue;
+            }
+            return VK_NULL_HANDLE;
+        }
         const VkPhysicalDeviceProperties& GetPhysicalDeviceProperties() const { return m_properties; }
         const VkPhysicalDeviceDescriptorBufferPropertiesEXT& GetDescriptorBufferProp() const { return m_descriptorBufferProps; }
         PFN_vkGetDescriptorSetLayoutSizeEXT GetVkGetDescriptorSetLayoutSizeEXT() const { return m_vkGetDescriptorSetLayoutSizeEXT; }
@@ -54,6 +77,11 @@ namespace Ccino::RHI {
             uint32_t compute;
             uint32_t transfer;
         } m_queueFamilyIndices{};
+
+        VkQueue m_graphicsQueue = VK_NULL_HANDLE;
+        VkQueue m_computeQueue = VK_NULL_HANDLE;
+        VkQueue m_transferQueue = VK_NULL_HANDLE;
+        uint32_t m_queueFamilyCount = 0;
 
         VmaAllocator m_vmaAllocator = VK_NULL_HANDLE;
 

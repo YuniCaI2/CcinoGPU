@@ -2,6 +2,10 @@
 #include "RHI/RHIStruct.h"
 #include "RHI/Core.h"
 #include "RHI/Command.h"
+#include "RHI/TimelineSemaphore.h"
+#include <concepts>
+#include <memory>
+#include <vector>
 #include <vulkan/vulkan_core.h>
 
 
@@ -10,7 +14,7 @@ namespace Ccino::RHI {
     struct BufferCreateInfo {
         uint32_t size = 0;
         VkBufferUsageFlags2 usage = 0;
-        //...
+        bool hostVisible = false;
     };
 
     class Context {
@@ -26,12 +30,43 @@ namespace Ccino::RHI {
         RID CreateUniformBuffer(uint32_t size, void* data); //Uniform Buffer 
         RID CreateStorageBuffer(uint32_t size, void* data);
         RID CreateTransferBuffer(uint32_t size, void* data); //StagingBuffer用来上传
+        RID CreateReadbackBuffer(uint32_t size); //CPU 可见，用来把 Local Buffer 读回
+        void ReadbackBuffer(RID src, RID dst); //Transfer 队列从 src 拷到 Readback Buffer
+        bool IsBufferAvailable(RID rid); //使用value来判断是否可用
         
         void* MapBuffer(RID rid); //必须使用可以支持CPU映射的Buffer
         void UnmapBuffer(RID rid);
         void DestroyBuffer(RID rid);
 
+
+        //Semphore
+        RID CreateSemaphore();
+        void DestroySemaphore(RID rid);
+
+        //Global Timeline Semaphore
+        void CreateGlobalTimelineSemaphore(); //尽可能不让外部感知到这个信号量，这里不用RID管理
+        void DestroyGlobalTimelineSemaphore();
+        bool IsGlobalTimelineSemaphoreAvailable(CommandQueueType queueType, uint64_t value); //使用value来判断是否可用
+
         //Texture
+
+        //Command
+        CommandContext::CommandBuffer& GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex = 0);
+        void StartRecording(CommandContext::CommandBuffer& commandBuffer);
+        void EndRecording(CommandContext::CommandBuffer& commandBuffer);
+
+        void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0, const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
+       
+        template<typename Fn>
+        requires std::invocable<Fn, CommandContext::CommandBuffer&>
+        void ExecuteCommand(Fn&& fn, CommandQueueType queueType) {
+            CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(queueType, 0);
+            StartRecording(commandBuffer);
+            fn(commandBuffer);
+            EndRecording(commandBuffer);
+            SubmitCommandBuffer(queueType, {commandBuffer}, {}, {});
+        } //立即执行并且提交到队列中
+
 
 
     private:
@@ -44,11 +79,29 @@ namespace Ccino::RHI {
             VkBufferUsageFlags2 usage = 0;
 
             void* mappedPtr = nullptr;
+            bool hostVisible = false;
+            bool persistentlyMapped = false;
             uint64_t bda = 0; //GPU的地址
+
+            // Transfer 队列 timeline 的目标值。0 表示没有未完成的 DMA 上传。
+            uint64_t isAvailable = 0;
+            RID uploadStaging{};
         };
+
+        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
+        void UploadBuffer(RID rid, void* data, uint32_t size);
+        void ReleaseUploadStaging(VulkanBuffer& buffer);
+        TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
 
         Core m_core;
         CommandContext m_commandContext;
         TRIDArray<VulkanBuffer> m_buffers;
+        TRIDArray<VkSemaphore> m_semaphores;
+
+        // 按队列家族索引。每个 TimelineSemaphore 自己保护目标值。
+        std::vector<std::unique_ptr<TimelineSemaphore>> m_timelines;
+
+
+
     };
 }
