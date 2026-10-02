@@ -3,6 +3,8 @@
 #include "RHI/Core.h"
 #include "RHI/Command.h"
 #include "RHI/TimelineSemaphore.h"
+#include "RHI/ComputePipeline.h"
+
 #include <concepts>
 #include <memory>
 #include <vector>
@@ -37,6 +39,14 @@ namespace Ccino::RHI {
         void* MapBuffer(RID rid); //必须使用可以支持CPU映射的Buffer
         void UnmapBuffer(RID rid);
         void DestroyBuffer(RID rid);
+        bool GetBufferUsage(RID rid, VkBufferUsageFlags2& usage);
+        bool GetImageDescriptorType(RID rid, VkDescriptorType& type);
+        bool GetSamplerDescriptorType(RID rid, VkDescriptorType& type);
+        uint64_t GetBufferBDA(RID rid) {return m_buffers.Get(rid)->bda;}
+        void* GetBufferMappedPtr(RID rid) {return m_buffers.Get(rid)->mappedPtr;}
+        uint32_t GetBufferSize(RID rid) {return m_buffers.Get(rid)->size;}
+
+        Core& GetCore() { return m_core; }
 
 
         //Semphore
@@ -68,6 +78,11 @@ namespace Ccino::RHI {
         } //立即执行并且提交到队列中
 
 
+        //这里的VkShahderModule需要使用复杂的方法得到这里作为RHI层不需要管理Shader IR 到spv的过程，只作为消费端
+        //Create Compute Pipline
+        RID CreateComputePipeline(const std::string& name, VkShaderModule shaderModule); 
+        void DestroyComputePipeline(RID rid);
+
 
     private:
         struct VulkanBuffer {
@@ -95,8 +110,10 @@ namespace Ccino::RHI {
 
         Core m_core;
         CommandContext m_commandContext;
+
         TRIDArray<VulkanBuffer> m_buffers;
         TRIDArray<VkSemaphore> m_semaphores;
+        TRIDArray<ComputePipeline> m_computePipelines;
 
         // 按队列家族索引。每个 TimelineSemaphore 自己保护目标值。
         std::vector<std::unique_ptr<TimelineSemaphore>> m_timelines;

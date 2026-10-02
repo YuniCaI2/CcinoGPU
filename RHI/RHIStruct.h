@@ -1,11 +1,15 @@
 #pragma once
 #include <cstdint>
 #include <atomic>
+#include <functional>
 #include <shared_mutex>
 #include <mutex>
 #include <vector>
 #include <queue>
+#include <vulkan/vulkan_core.h>
 
+
+#define ALIGN_UP(value, alignment) (((value) + (alignment) - 1) & ~((alignment) - 1))
 
 
 struct RHISettings {
@@ -26,6 +30,12 @@ struct RID {
         return index == other.index && generation == other.generation && type == other.type;
     }
 
+    uint64_t Hash() const {
+        uint64_t h = index;
+        h ^= generation + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        h ^= type + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        return h;
+    }
 
     template<typename T>
     static uint64_t GetIndex() {
@@ -40,6 +50,13 @@ struct RID {
 
     static RID Invalid() {
         return RID{UINT64_MAX, UINT64_MAX, UINT64_MAX};
+    }
+};
+
+template<>
+struct std::hash<RID> {
+    size_t operator()(const RID& id) const noexcept {
+        return static_cast<size_t>(id.Hash());
     }
 };
 
@@ -122,3 +139,86 @@ enum class CommandQueueType {
 
 //Pipeline
 //先实现计算管线
+
+//Sampler
+enum class SamplerType {
+    LINEAR_REPEAT = 0,
+    LINEAR_CLAMP_TO_EDGE = 1,
+    LINEAR_CLAMP_TO_BORDER = 2,
+    LINEAR_MIRRORED_REPEAT = 3,
+    NEAREST_REPEAT = 4,
+    NEAREST_CLAMP_TO_EDGE = 5,
+    NEAREST_CLAMP_TO_BORDER = 6,
+    NEAREST_MIRRORED_REPEAT = 7,
+    COUNT
+};
+
+inline VkSamplerCreateInfo CreateSamplerCreateInfo(SamplerType type) {
+    VkFilter filter = VK_FILTER_LINEAR;
+    VkSamplerMipmapMode mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    VkSamplerAddressMode addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+    switch (type) {
+    case SamplerType::LINEAR_REPEAT:
+        filter = VK_FILTER_LINEAR;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        break;
+    case SamplerType::LINEAR_CLAMP_TO_EDGE:
+        filter = VK_FILTER_LINEAR;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        break;
+    case SamplerType::LINEAR_CLAMP_TO_BORDER:
+        filter = VK_FILTER_LINEAR;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        break;
+    case SamplerType::LINEAR_MIRRORED_REPEAT:
+        filter = VK_FILTER_LINEAR;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+        break;
+    case SamplerType::NEAREST_REPEAT:
+        filter = VK_FILTER_NEAREST;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        break;
+    case SamplerType::NEAREST_CLAMP_TO_EDGE:
+        filter = VK_FILTER_NEAREST;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        break;
+    case SamplerType::NEAREST_CLAMP_TO_BORDER:
+        filter = VK_FILTER_NEAREST;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        break;
+    case SamplerType::NEAREST_MIRRORED_REPEAT:
+        filter = VK_FILTER_NEAREST;
+        mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        addressMode = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+        break;
+    default:
+        throw std::runtime_error("Invalid sampler type");
+    }
+
+    VkSamplerCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = filter;
+    info.minFilter = filter;
+    info.mipmapMode = mipmapMode;
+    info.addressModeU = addressMode;
+    info.addressModeV = addressMode;
+    info.addressModeW = addressMode;
+    info.mipLodBias = 0.0f;
+    info.anisotropyEnable = VK_TRUE;
+    info.maxAnisotropy = 1.0f;
+    info.compareEnable = VK_FALSE;
+    info.compareOp = VK_COMPARE_OP_NEVER;
+    info.minLod = 0.0f;
+    info.maxLod = VK_LOD_CLAMP_NONE;
+    info.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    info.unnormalizedCoordinates = VK_FALSE;
+    return info;
+}

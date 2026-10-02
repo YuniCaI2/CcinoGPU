@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <vk_mem_alloc.h>
+#include <vulkan/vulkan_core.h>
 
 #include "RHI/RHIStruct.h"
 
@@ -59,12 +60,9 @@ namespace Ccino::RHI {
             return VK_NULL_HANDLE;
         }
         const VkPhysicalDeviceProperties& GetPhysicalDeviceProperties() const { return m_properties; }
-        const VkPhysicalDeviceDescriptorBufferPropertiesEXT& GetDescriptorBufferProp() const { return m_descriptorBufferProps; }
-        PFN_vkGetDescriptorSetLayoutSizeEXT GetVkGetDescriptorSetLayoutSizeEXT() const { return m_vkGetDescriptorSetLayoutSizeEXT; }
-        PFN_vkGetDescriptorSetLayoutBindingOffsetEXT GetVkGetDescriptorSetLayoutBindingOffsetEXT() const { return m_vkGetDescriptorSetLayoutBindingOffsetEXT; }
-        PFN_vkGetDescriptorEXT GetVkGetDescriptorEXT() const { return m_vkGetDescriptorEXT; }
-        PFN_vkCmdBindDescriptorBuffersEXT GetVkCmdBindDescriptorBuffersEXT() const { return m_vkCmdBindDescriptorBuffersEXT; }
-        PFN_vkCmdSetDescriptorBufferOffsetsEXT GetVkCmdSetDescriptorBufferOffsetsEXT() const { return m_vkCmdSetDescriptorBufferOffsetsEXT; }
+        PFN_vkGetPhysicalDeviceDescriptorSizeEXT GetVkGetPhysicalDeviceDescriptorSizeEXT() const { return m_vkGetPhysicalDeviceDescriptorSizeEXT; }
+        PFN_vkWriteResourceDescriptorsEXT GetVkWriteResourceDescriptorsEXT() const { return m_vkWriteResourceDescriptorsEXT; }
+        PFN_vkWriteSamplerDescriptorsEXT GetVkWriteSamplerDescriptorsEXT() const { return m_vkWriteSamplerDescriptorsEXT; }
 
     private:
         VkInstance m_instance = VK_NULL_HANDLE;
@@ -90,12 +88,10 @@ namespace Ccino::RHI {
         VkPhysicalDeviceProperties m_properties{};
         VkPhysicalDeviceDescriptorBufferPropertiesEXT m_descriptorBufferProps{};
 
-        // VK_EXT_descriptor_buffer 扩展函数指针
-        PFN_vkGetDescriptorSetLayoutSizeEXT m_vkGetDescriptorSetLayoutSizeEXT = nullptr;
-        PFN_vkGetDescriptorSetLayoutBindingOffsetEXT m_vkGetDescriptorSetLayoutBindingOffsetEXT = nullptr;
-        PFN_vkGetDescriptorEXT m_vkGetDescriptorEXT = nullptr;
-        PFN_vkCmdBindDescriptorBuffersEXT m_vkCmdBindDescriptorBuffersEXT = nullptr;
-        PFN_vkCmdSetDescriptorBufferOffsetsEXT m_vkCmdSetDescriptorBufferOffsetsEXT = nullptr;
+        // VK_EXT_descriptor_heap
+        PFN_vkGetPhysicalDeviceDescriptorSizeEXT m_vkGetPhysicalDeviceDescriptorSizeEXT = nullptr;
+        PFN_vkWriteResourceDescriptorsEXT m_vkWriteResourceDescriptorsEXT = nullptr;
+        PFN_vkWriteSamplerDescriptorsEXT m_vkWriteSamplerDescriptorsEXT = nullptr;
 
 #ifndef NDEBUG
         PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT = nullptr;

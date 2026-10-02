@@ -1,4 +1,5 @@
 #include "RHI/Context.h"
+#include "RHI/ComputePipeline.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -132,6 +133,23 @@ namespace Ccino::RHI {
         buffer.bda = vkGetBufferDeviceAddress(m_core.GetVkDevice(), &addressInfo);
 
         return m_buffers.Add(std::move(buffer));
+    }
+
+    bool Context::GetBufferUsage(RID rid, VkBufferUsageFlags2& usage) {
+        VulkanBuffer* buffer = m_buffers.Get(rid);
+        if (buffer == nullptr) {
+            return false;
+        }
+        usage = buffer->usage;
+        return true;
+    }
+
+    bool Context::GetImageDescriptorType(RID, VkDescriptorType&) {
+        return false;
+    }
+
+    bool Context::GetSamplerDescriptorType(RID, VkDescriptorType&) {
+        return false;
     }
 
     RID Context::CreateUniformBuffer(uint32_t size, void* data) {
@@ -562,5 +580,20 @@ namespace Ccino::RHI {
         submitInfo.pSignalSemaphoreInfos = signals.data();
         VULKAN_CHECK(vkQueueSubmit2(m_core.GetVkQueue(queueType), 1, &submitInfo, VK_NULL_HANDLE));
         return signal.current;
+    }
+
+
+    RID Context::CreateComputePipeline(const std::string& name, VkShaderModule shaderModule) {
+        ComputePipeline pipeline;
+        pipeline.Init(m_core.GetVkDevice(), name, shaderModule);
+        return m_computePipelines.Add(std::move(pipeline));
+    }
+
+    void Context::DestroyComputePipeline(RID rid) {
+        ComputePipeline* pipeline = m_computePipelines.Get(rid);
+        if (pipeline != nullptr) {
+            pipeline->Destroy();
+        }
+        m_computePipelines.Remove(rid);
     }
 }

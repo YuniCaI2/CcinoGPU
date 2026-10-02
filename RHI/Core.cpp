@@ -419,20 +419,14 @@ namespace Ccino::RHI {
 
     void Core::InitDynamicFunctions() {
         //动态加载 VK_EXT_descriptor_buffer 扩展函数
-        m_vkGetDescriptorSetLayoutSizeEXT = reinterpret_cast<PFN_vkGetDescriptorSetLayoutSizeEXT>(
-            vkGetDeviceProcAddr(m_device, "vkGetDescriptorSetLayoutSizeEXT"));
+        m_vkGetPhysicalDeviceDescriptorSizeEXT = reinterpret_cast<PFN_vkGetPhysicalDeviceDescriptorSizeEXT>(
+            vkGetDeviceProcAddr(m_device, "vkGetPhysicalDeviceDescriptorSizeEXT"));
 
-        m_vkGetDescriptorSetLayoutBindingOffsetEXT = reinterpret_cast<PFN_vkGetDescriptorSetLayoutBindingOffsetEXT>(
-            vkGetDeviceProcAddr(m_device, "vkGetDescriptorSetLayoutBindingOffsetEXT"));
+        m_vkWriteResourceDescriptorsEXT = reinterpret_cast<PFN_vkWriteResourceDescriptorsEXT>(
+            vkGetDeviceProcAddr(m_device, "vkWriteResourceDescriptorsEXT"));
 
-        m_vkGetDescriptorEXT = reinterpret_cast<PFN_vkGetDescriptorEXT>(
-            vkGetDeviceProcAddr(m_device, "vkGetDescriptorEXT"));
-
-        m_vkCmdBindDescriptorBuffersEXT = reinterpret_cast<PFN_vkCmdBindDescriptorBuffersEXT>(
-            vkGetDeviceProcAddr(m_device, "vkCmdBindDescriptorBuffersEXT"));
-
-        m_vkCmdSetDescriptorBufferOffsetsEXT = reinterpret_cast<PFN_vkCmdSetDescriptorBufferOffsetsEXT>(
-            vkGetDeviceProcAddr(m_device, "vkCmdSetDescriptorBufferOffsetsEXT"));
+        m_vkWriteSamplerDescriptorsEXT = reinterpret_cast<PFN_vkWriteSamplerDescriptorsEXT>(
+            vkGetDeviceProcAddr(m_device, "vkWriteSamplerDescriptorsEXT"));
     }
 
     void Core::SetDebugging(VkInstance instance) {
