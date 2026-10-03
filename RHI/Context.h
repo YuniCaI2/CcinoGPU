@@ -27,6 +27,9 @@ namespace Ccino::RHI {
         void Init(const RHISettings& settings);
         void Destroy();
 
+        //meta
+        uint32_t GetFlightFrameCount() const { return m_flightFrameCount; }
+
         //Buffer 默认使用BDA
         RID CreateBuffer(const BufferCreateInfo& createInfo); //这里使用新的的BufferUsageFlags2
         RID CreateUniformBuffer(uint32_t size, void* data); //Uniform Buffer 
@@ -80,11 +83,15 @@ namespace Ccino::RHI {
 
         //这里的VkShahderModule需要使用复杂的方法得到这里作为RHI层不需要管理Shader IR 到spv的过程，只作为消费端
         //Create Compute Pipline
-        RID CreateComputePipeline(const std::string& name, VkShaderModule shaderModule); 
+        RID CreateComputePipeline(const std::string& name, VkShaderModule shaderModule);
         void DestroyComputePipeline(RID rid);
+        VkPipeline GetComputePipeline(RID rid);
 
 
     private:
+        //meta
+        uint32_t m_flightFrameCount = 0;
+
         struct VulkanBuffer {
             VkBuffer buffer = VK_NULL_HANDLE;
             VmaAllocation allocation = VK_NULL_HANDLE;

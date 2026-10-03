@@ -63,6 +63,9 @@ namespace Ccino::RHI {
         PFN_vkGetPhysicalDeviceDescriptorSizeEXT GetVkGetPhysicalDeviceDescriptorSizeEXT() const { return m_vkGetPhysicalDeviceDescriptorSizeEXT; }
         PFN_vkWriteResourceDescriptorsEXT GetVkWriteResourceDescriptorsEXT() const { return m_vkWriteResourceDescriptorsEXT; }
         PFN_vkWriteSamplerDescriptorsEXT GetVkWriteSamplerDescriptorsEXT() const { return m_vkWriteSamplerDescriptorsEXT; }
+        PFN_vkCmdPushDataEXT GetVkCmdPushDataEXT() const { return m_vkCmdPushDataEXT; }
+        PFN_vkCmdBindResourceHeapEXT GetVkCmdBindResourceHeapEXT() const { return m_vkCmdBindResourceHeapEXT; }
+        PFN_vkCmdBindSamplerHeapEXT GetVkCmdBindSamplerHeapEXT() const { return m_vkCmdBindSamplerHeapEXT; }
 
     private:
         VkInstance m_instance = VK_NULL_HANDLE;
@@ -92,6 +95,9 @@ namespace Ccino::RHI {
         PFN_vkGetPhysicalDeviceDescriptorSizeEXT m_vkGetPhysicalDeviceDescriptorSizeEXT = nullptr;
         PFN_vkWriteResourceDescriptorsEXT m_vkWriteResourceDescriptorsEXT = nullptr;
         PFN_vkWriteSamplerDescriptorsEXT m_vkWriteSamplerDescriptorsEXT = nullptr;
+        PFN_vkCmdPushDataEXT m_vkCmdPushDataEXT = nullptr;
+        PFN_vkCmdBindResourceHeapEXT m_vkCmdBindResourceHeapEXT = nullptr;
+        PFN_vkCmdBindSamplerHeapEXT m_vkCmdBindSamplerHeapEXT = nullptr;
 
 #ifndef NDEBUG
         PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT = nullptr;

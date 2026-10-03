@@ -43,14 +43,21 @@ namespace Ccino::RHI {
         descriptorHeapFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT;
         descriptorHeapFeatures.descriptorHeap = VK_TRUE;
 
+        //Shader 通过 descriptor_heap 直接访问堆时, SPIR-V 依赖 untyped pointers
+        VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPointersFeatures{};
+        untypedPointersFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR;
+        untypedPointersFeatures.shaderUntypedPointers = VK_TRUE;
+
         features11.pNext = &features12;
         features12.pNext = &features13;
         features13.pNext = &features14;
         features14.pNext = &descriptorHeapFeatures;
+        descriptorHeapFeatures.pNext = &untypedPointersFeatures;
 
         //这里使用Descriptor Heap
         std::vector<const char*> deviceExtensions = {
-            VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME
+            VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME,
+            VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME
         };
 
         CreateInstance(instanceExtensions);
@@ -420,13 +427,22 @@ namespace Ccino::RHI {
     void Core::InitDynamicFunctions() {
         //动态加载 VK_EXT_descriptor_buffer 扩展函数
         m_vkGetPhysicalDeviceDescriptorSizeEXT = reinterpret_cast<PFN_vkGetPhysicalDeviceDescriptorSizeEXT>(
-            vkGetDeviceProcAddr(m_device, "vkGetPhysicalDeviceDescriptorSizeEXT"));
+            vkGetInstanceProcAddr(m_instance, "vkGetPhysicalDeviceDescriptorSizeEXT"));
 
         m_vkWriteResourceDescriptorsEXT = reinterpret_cast<PFN_vkWriteResourceDescriptorsEXT>(
             vkGetDeviceProcAddr(m_device, "vkWriteResourceDescriptorsEXT"));
 
         m_vkWriteSamplerDescriptorsEXT = reinterpret_cast<PFN_vkWriteSamplerDescriptorsEXT>(
             vkGetDeviceProcAddr(m_device, "vkWriteSamplerDescriptorsEXT"));
+
+        m_vkCmdPushDataEXT = reinterpret_cast<PFN_vkCmdPushDataEXT>(
+            vkGetDeviceProcAddr(m_device, "vkCmdPushDataEXT"));
+
+        m_vkCmdBindResourceHeapEXT = reinterpret_cast<PFN_vkCmdBindResourceHeapEXT>(
+            vkGetDeviceProcAddr(m_device, "vkCmdBindResourceHeapEXT"));
+
+        m_vkCmdBindSamplerHeapEXT = reinterpret_cast<PFN_vkCmdBindSamplerHeapEXT>(
+            vkGetDeviceProcAddr(m_device, "vkCmdBindSamplerHeapEXT"));
     }
 
     void Core::SetDebugging(VkInstance instance) {

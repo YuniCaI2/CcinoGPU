@@ -1,13 +1,11 @@
-#include "RHI/Context.h"
+#include "TestContext.h"
 #include <cstdint>
 #include <cstring>
 #include <vector>
 #include <gtest/gtest.h>
 
 TEST(Buffer, UploadLocalAndReadback) {
-    Ccino::RHI::Context context;
-    RHISettings settings;
-    context.Init(settings);
+    Ccino::RHI::Context& context = GetTestContext();
 
     std::vector<uint32_t> data(64);
     for (uint32_t i = 0; i < data.size(); ++i) {
@@ -29,5 +27,4 @@ TEST(Buffer, UploadLocalAndReadback) {
 
     context.DestroyBuffer(readback);
     context.DestroyBuffer(local);
-    context.Destroy();
 }

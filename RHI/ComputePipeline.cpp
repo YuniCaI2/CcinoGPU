@@ -1,6 +1,5 @@
 #include "ComputePipeline.h"
 #include "RHI/Core.h"
-#include "RHI/PushConstant.h"
 
 namespace Ccino::RHI {
     void ComputePipeline::Init(VkDevice device, const std::string& name, VkShaderModule shaderModule) {
@@ -13,22 +12,23 @@ namespace Ccino::RHI {
         shaderStageInfo.module = shaderModule;
         shaderStageInfo.pName = "main";
 
-        auto pushConstantRange = CreatePushConstantRange(VK_SHADER_STAGE_COMPUTE_BIT);
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0;
-        pipelineLayoutInfo.pSetLayouts = nullptr;
-        pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+        //Shader 直接访问Descriptor Heap, 管线不能带Pipeline Layout
+        VkPipelineCreateFlags2CreateInfo flagsInfo{};
+        flagsInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO;
+        flagsInfo.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
 
-        VULKAN_CHECK(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout));
+        VkComputePipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        pipelineInfo.pNext = &flagsInfo;
+        pipelineInfo.stage = shaderStageInfo;
+        pipelineInfo.layout = VK_NULL_HANDLE;
+
+        VULKAN_CHECK(vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipeline));
     }
     void ComputePipeline::Destroy() {
         if (m_pipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        }
-        if (m_pipelineLayout != VK_NULL_HANDLE) {
-            vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+            m_pipeline = VK_NULL_HANDLE;
         }
     }
 

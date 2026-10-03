@@ -29,6 +29,7 @@ namespace Ccino::RHI {
             m_core.GetTransferQueueFamilyIndex()
         });
         CreateGlobalTimelineSemaphore();
+        m_flightFrameCount = settings.flightFrameCount; //飞行帧数用来处理资源和同步的分配
     }
 
     void Context::Destroy() {
@@ -595,5 +596,10 @@ namespace Ccino::RHI {
             pipeline->Destroy();
         }
         m_computePipelines.Remove(rid);
+    }
+
+    VkPipeline Context::GetComputePipeline(RID rid) {
+        ComputePipeline* pipeline = m_computePipelines.Get(rid);
+        return pipeline != nullptr ? pipeline->GetVkPipeline() : VK_NULL_HANDLE;
     }
 }
