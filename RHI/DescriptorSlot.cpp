@@ -1,6 +1,7 @@
 #include "RHI/DescriptorSlot.h"
 #include "RHI/Context.h"
 #include "RHI/Core.h"
+#include <mutex>
 #include <vulkan/vulkan_core.h>
 #include <algorithm>
 #include <cstring>
@@ -32,17 +33,17 @@ namespace Ccino::RHI {
             }
         }
 
-        uint32_t AcquireHeapIndex(std::vector<RID>& ridList, std::queue<uint32_t>& releaseQueue, uint32_t maxCount, RID rid) {
+        uint32_t AcquireHeapIndex(std::vector<std::pair<RID, uint32_t>>& ridList, std::queue<uint32_t>& releaseQueue, uint32_t maxCount, RID rid) {
             if (!releaseQueue.empty()) {
                 uint32_t index = releaseQueue.front();
                 releaseQueue.pop();
-                ridList[index] = rid;
+                ridList[index] = {rid, 1};
                 return index;
             }
             if (ridList.size() >= maxCount) {
                 throw std::runtime_error("Descriptor heap is full");
             }
-            ridList.push_back(rid);
+            ridList.emplace_back(rid, 1);
             return static_cast<uint32_t>(ridList.size() - 1);
         }
     }
@@ -81,6 +82,15 @@ namespace Ccino::RHI {
             m_slotContext->FreeSlotBlock(m_block);
             m_block = INVALID_BLOCK;
         }
+        //释放槽位
+        for (const auto& [name, entry] : m_fieldMap) {
+            if (entry.type == ResourceType::Buffer) {
+                m_slotContext->ReleaseBuffer(entry.rid);
+            } else if (entry.type == ResourceType::Texture) {
+                m_slotContext->ReleaseTexture(entry.rid);
+            } 
+        }
+
         m_slotContext->m_liveBindingCount.fetch_sub(1, std::memory_order_relaxed);
         m_slotContext = nullptr;
     }
@@ -98,6 +108,10 @@ namespace Ccino::RHI {
     DescriptorSlotBinding& DescriptorSlotBinding::BindTexture(const std::string& name, RID rid, VkImageSubresourceRange subresourceRange) {
         VkDescriptorType type = VK_DESCRIPTOR_TYPE_MAX_ENUM;
         const uint32_t field = FindField(name, type);
+        if (m_fieldMap.find(name) != m_fieldMap.end()) {
+            m_slotContext->ReleaseTexture(m_fieldMap[name].rid);
+        } 
+        m_fieldMap[name] = ResourceEntry{rid, ResourceType::Texture};
         m_fields[field] = m_slotContext->AcquireTextureIndex(rid, type, subresourceRange);
         m_dirty = true;
         return *this;
@@ -106,6 +120,10 @@ namespace Ccino::RHI {
     DescriptorSlotBinding& DescriptorSlotBinding::BindBuffer(const std::string& name, RID rid) {
         VkDescriptorType type = VK_DESCRIPTOR_TYPE_MAX_ENUM;
         const uint32_t field = FindField(name, type);
+        if (m_fieldMap.find(name) != m_fieldMap.end()) {
+            m_slotContext->ReleaseBuffer(m_fieldMap[name].rid);
+        }
+        m_fieldMap[name] = ResourceEntry{rid, ResourceType::Buffer}; 
         m_fields[field] = m_slotContext->AcquireBufferIndex(rid, type); 
         m_dirty = true;
         return *this;
@@ -258,9 +276,14 @@ namespace Ccino::RHI {
             return;
         }
         uint32_t index = it->second.index;
-        m_bufferRIDList[index] = RID::Invalid();
-        m_bufferPendingRelease[m_currentFrame].push_back(index);
-        m_bufferIndexMap.erase(it);
+        if (m_bufferRIDList[index].second > 0) {
+            m_bufferRIDList[index].second--;
+        } 
+        if (m_bufferRIDList[index].second <= 0) {
+            m_bufferRIDList[index] = std::pair<RID, uint32_t>(RID::Invalid(), 0);
+            m_bufferPendingRelease[m_currentFrame].push_back(index);
+            m_bufferIndexMap.erase(it);
+        }
     }
 
     void DescriptorSlot::ReleaseTexture(RID rid) {
@@ -270,9 +293,14 @@ namespace Ccino::RHI {
             return;
         }
         uint32_t index = it->second.index;
-        m_textureRIDList[index] = RID::Invalid();
-        m_texturePendingRelease[m_currentFrame].push_back(index);
-        m_textureIndexMap.erase(it);
+        if (m_textureRIDList[index].second > 0) {
+            m_textureRIDList[index].second--;
+        } 
+        if (m_textureRIDList[index].second <= 0) {
+            m_textureRIDList[index] = std::pair<RID, uint32_t>(RID::Invalid(), 0);
+            m_texturePendingRelease[m_currentFrame].push_back(index);
+            m_textureIndexMap.erase(it);
+        }
     }
 
     uint32_t DescriptorSlot::AcquireBufferIndex(RID rid, VkDescriptorType type) {
@@ -291,6 +319,7 @@ namespace Ccino::RHI {
             if (it->second.type != type) {
                 throw std::runtime_error("Buffer is already in the descriptor heap with another descriptor type");
             }
+            m_bufferRIDList[it->second.index].second++; //增加计数
             return firstIndex + it->second.index;
         }
 
@@ -328,6 +357,10 @@ namespace Ccino::RHI {
 
         std::lock_guard lock(m_heapMutex);
         if (auto it = m_textureIndexMap.find(rid); it != m_textureIndexMap.end()) {
+            if (it->second.type != type) {
+                throw std::runtime_error("Texture is already in the descriptor heap with another descriptor type");
+            }
+            m_textureRIDList[it->second.index].second++; //增加计数
             return firstIndex + it->second.index;
         }
 

@@ -24,6 +24,8 @@
 #define DESCRIPTOR_MAX_IMAGE_COUNT 1024 //最大图像数量
 #define DESCRIPTOR_MAX_BUFFER_COUNT 1024 //最大缓冲区数量
 
+//着色器中取descriptorHeap使用的是索引
+//索引是相对于类型本身的，当取image 那 index = imageOffset / imageDescriptorSize . Buffer 同理
 
 namespace Ccino::RHI {
     class Context;
@@ -64,7 +66,20 @@ namespace Ccino::RHI {
 
         DescriptorSlot* m_slotContext = nullptr; //指向DescriptorSlot的指针 相当于全局的上下文
         DescriptorSlotLayout m_layout;
-        std::array<uint32_t, MAX_FIELD_COUNT> m_fields{}; //CPU 端的块内容
+        std::array<uint32_t, MAX_FIELD_COUNT> m_fields{}; //CPU 端的块内容,这里是抽象的不关心数据本身，会被打包上传到PushData
+
+        enum class ResourceType {
+            Buffer,
+            Texture,
+            Sampler,
+        };
+
+        struct ResourceEntry {
+            RID rid = RID::Invalid();
+            ResourceType type = ResourceType::Buffer;
+        };
+
+        std::unordered_map<std::string, ResourceEntry> m_fieldMap; //字段名到数据本身的映射,用来处理覆盖
         uint32_t m_block = INVALID_BLOCK;
         bool m_dirty = true;
     };
@@ -145,8 +160,8 @@ namespace Ccino::RHI {
 
         //以下堆槽位的分配状态由m_heapMutex 保护
         std::mutex m_heapMutex;
-        std::vector<RID> m_textureRIDList;
-        std::vector<RID> m_bufferRIDList;
+        std::vector<std::pair<RID, uint32_t>> m_textureRIDList;
+        std::vector<std::pair<RID, uint32_t>> m_bufferRIDList;
         std::unordered_map<RID, HeapEntry> m_textureIndexMap; //快速查找
         std::unordered_map<RID, HeapEntry> m_bufferIndexMap;
         //已经释放的队列用来记录对象释放情况方便O1 读取空闲的槽

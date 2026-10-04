@@ -15,11 +15,11 @@
     in
     {
       devShells = forEachSystem ({ pkgs }: {
-        default = pkgs.mkShell {
+        default = (pkgs.mkShell.override { stdenv = pkgs.clangStdenv; }) {
           nativeBuildInputs = with pkgs; [
             cmake
             ninja
-            gcc
+            clang-tools
             gnumake
           ];
 
@@ -50,6 +50,10 @@
           ];
 
           shellHook = ''
+            export CC=clang
+            export CXX=clang++
+            export CMAKE_GENERATOR=Ninja
+            export CMAKE_EXPORT_COMPILE_COMMANDS=ON
             export VULKAN_SDK="${pkgs.vulkan-headers}"
             export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (with pkgs; [
@@ -64,7 +68,7 @@
               libxfixes
             ])}:$LD_LIBRARY_PATH"
 
-            echo "CaIEngine Vulkan dev environment loaded (via Flake)."
+            echo "CcinoGPU Vulkan dev environment loaded (Clang via Flake)."
           '';
         };
       });
