@@ -47,6 +47,10 @@
 
             #Test
             gtest
+
+            # libTooling: CMake 配置和头文件在 dev 输出里
+            llvmPackages.llvm
+            llvmPackages.clang-unwrapped
           ];
 
           shellHook = ''
@@ -66,6 +70,8 @@
               libxi
               libxext
               libxfixes
+              llvmPackages.llvm
+              llvmPackages.clang-unwrapped
             ])}:$LD_LIBRARY_PATH"
 
             echo "CcinoGPU Vulkan dev environment loaded (Clang via Flake)."
