@@ -30,6 +30,18 @@ namespace Ccino::RHI {
         });
         CreateGlobalTimelineSemaphore();
         m_flightFrameCount = settings.flightFrameCount; //飞行帧数用来处理资源和同步的分配
+
+        m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
+    }
+
+    void Context::Tick() {
+        m_currentFrameIndex = (m_currentFrameIndex + 1) % m_flightFrameCount;
+        if (!m_bufferDeletionQueue[m_currentFrameIndex].empty()) {
+            for (RID rid : m_bufferDeletionQueue[m_currentFrameIndex]) {
+                DestroyResource(rid);
+            }
+            m_bufferDeletionQueue[m_currentFrameIndex].clear();
+        }
     }
 
     void Context::Destroy() {
@@ -62,6 +74,11 @@ namespace Ccino::RHI {
         DestroyGlobalTimelineSemaphore();
         m_commandContext.Destroy();
         m_core.Destroy();
+    }
+
+    void Context::DeleteResource(RID rid) {
+        //类型匹配 
+        m_bufferDeletionQueue[m_currentFrameIndex].push_back(rid);
     }
 
     RID Context::CreateBuffer(const BufferCreateInfo& createInfo) {
@@ -347,6 +364,24 @@ namespace Ccino::RHI {
         }
     }
 
+    void Context::WaitForUploadStaging(RID rid) {
+        VulkanBuffer* buffer = m_buffers.Get(rid);
+        if (IsHostWriteBuffer(buffer->usage)) {
+            return;
+        }
+
+        if (TimelineSemaphore* transferTimeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::TRANSFER));
+            transferTimeline != nullptr) {
+            if (buffer->isAvailable < transferTimeline->ReadValue()) {
+                return;
+            } else {
+                transferTimeline->Wait(buffer->isAvailable);
+            }
+        } else {
+            throw std::runtime_error("Transfer timeline is not available");
+        }
+    }
+
     void Context::ReleaseUploadStaging(VulkanBuffer& buffer) {
         RID staging = buffer.uploadStaging;
         buffer.uploadStaging = RID::Invalid();
@@ -471,6 +506,18 @@ namespace Ccino::RHI {
 
     void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {
         SubmitCommandBufferTracked(queueType, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
+    }
+
+    void Context::DestroyResource(RID rid) {
+        if (rid.type == RID::GetIndex<VulkanBuffer>()) {
+            DestroyBuffer(rid);
+        } else if (rid.type == RID::GetIndex<VkSemaphore>()) {
+            DestroySemaphore(rid);
+        } else if (rid.type == RID::GetIndex<ComputePipeline>()) {
+            DestroyComputePipeline(rid);
+        } else {
+            throw std::runtime_error("Invalid resource type");
+        }
     }
 
     uint64_t Context::SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags) {

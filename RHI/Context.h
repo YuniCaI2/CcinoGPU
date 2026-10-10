@@ -25,7 +25,11 @@ namespace Ccino::RHI {
         ~Context() = default;
 
         void Init(const RHISettings& settings);
+        void Tick(); //每次更新，这必须要调用，这是推动Delete释放队列的根本,这个在 !!!!帧首调用 ,不过需要SwapChain Acquire 后调用
         void Destroy();
+
+        //Resource
+        void DeleteResource(RID rid);
 
         //meta
         uint32_t GetFlightFrameCount() const { return m_flightFrameCount; }
@@ -37,11 +41,14 @@ namespace Ccino::RHI {
         RID CreateTransferBuffer(uint32_t size, void* data); //StagingBuffer用来上传
         RID CreateReadbackBuffer(uint32_t size); //CPU 可见，用来把 Local Buffer 读回
         void ReadbackBuffer(RID src, RID dst); //Transfer 队列从 src 拷到 Readback Buffer
+        void UploadBuffer(RID rid, void* data, uint32_t size);
         bool IsBufferAvailable(RID rid); //使用value来判断是否可用
-        
         void* MapBuffer(RID rid); //必须使用可以支持CPU映射的Buffer
         void UnmapBuffer(RID rid);
+        void WaitForUploadStaging(RID rid);
+
         void DestroyBuffer(RID rid);
+
         bool GetBufferUsage(RID rid, VkBufferUsageFlags2& usage);
         bool GetImageDescriptorType(RID rid, VkDescriptorType& type);
         bool GetSamplerDescriptorType(RID rid, VkDescriptorType& type);
@@ -68,7 +75,8 @@ namespace Ccino::RHI {
         void StartRecording(CommandContext::CommandBuffer& commandBuffer);
         void EndRecording(CommandContext::CommandBuffer& commandBuffer);
 
-        void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0, const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
+        void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0, 
+            const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
        
         template<typename Fn>
         requires std::invocable<Fn, CommandContext::CommandBuffer&>
@@ -91,6 +99,7 @@ namespace Ccino::RHI {
     private:
         //meta
         uint32_t m_flightFrameCount = 0;
+        uint32_t m_currentFrameIndex = 0;
 
         struct VulkanBuffer {
             VkBuffer buffer = VK_NULL_HANDLE;
@@ -110,10 +119,12 @@ namespace Ccino::RHI {
             RID uploadStaging{};
         };
 
-        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
-        void UploadBuffer(RID rid, void* data, uint32_t size);
+        void DestroyResource(RID rid); 
+        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, 
+            uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
         void ReleaseUploadStaging(VulkanBuffer& buffer);
         TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
+
 
         Core m_core;
         CommandContext m_commandContext;
@@ -121,6 +132,8 @@ namespace Ccino::RHI {
         TRIDArray<VulkanBuffer> m_buffers;
         TRIDArray<VkSemaphore> m_semaphores;
         TRIDArray<ComputePipeline> m_computePipelines;
+
+        std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列
 
         // 按队列家族索引。每个 TimelineSemaphore 自己保护目标值。
         std::vector<std::unique_ptr<TimelineSemaphore>> m_timelines;
