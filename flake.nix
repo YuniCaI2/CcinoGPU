@@ -45,9 +45,6 @@
             libxext
             libxfixes
 
-            #Test
-            gtest
-
             # libTooling: CMake 配置和头文件在 dev 输出里
             llvmPackages.llvm
             llvmPackages.clang-unwrapped

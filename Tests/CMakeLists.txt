@@ -2,7 +2,6 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS "*.cpp")
 
 
 if(BUILD_TESTS)
-    find_package(GTest REQUIRED)
     include(GoogleTest)
 
     add_executable(Tests ${TEST_SOURCES})
