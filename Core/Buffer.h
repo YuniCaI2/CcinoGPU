@@ -16,10 +16,10 @@ namespace Ccino {
 
     template<typename DataType, BufferType bufferType>  //DataType是方便在Lambda反射时使用
     requires std::is_trivially_copyable_v<DataType> //这个对象一定是平凡的
-    class Buffer : RefCounted{
+    class Buffer : public RefCounted{
     public:
         //GPU资源
-        ~Buffer() {
+        virtual ~Buffer() {
             Delete();
         }
 
@@ -50,16 +50,16 @@ namespace Ccino {
             m_context->WaitForUploadStaging(m_rhiBuffer);
         }
 
-        void Copy(const DataType& data) {
+        void Copy(const void* data) {
             if (m_rhiBuffer == RID::Invalid()) {
                 std::cerr << "The Buffer RID Is Invild" << std::endl;
                 return;
             }
             if constexpr (bufferType == BufferType::Device) {
-                m_context->UploadBuffer(m_rhiBuffer, &data, m_size * sizeof(DataType));
+                m_context->UploadBuffer(m_rhiBuffer, data, m_size * sizeof(DataType));
             } else if constexpr (bufferType == BufferType::Host) {
                 //直接copy即可
-                std::memcpy(m_context->GetBufferMappedPtr(m_rhiBuffer), &data, m_size * sizeof(DataType));
+                std::memcpy(m_context->GetBufferMappedPtr(m_rhiBuffer), data, m_size * sizeof(DataType));
             } else {
                 static_assert(false, "Invalid buffer type");
             }

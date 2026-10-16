@@ -170,7 +170,7 @@ namespace Ccino::RHI {
         return false;
     }
 
-    RID Context::CreateUniformBuffer(uint32_t size, void* data) {
+    RID Context::CreateUniformBuffer(uint32_t size, const void* data) {
         RID rid = CreateBuffer(BufferCreateInfo{size, VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT});
         if (data == nullptr) {
             MapBuffer(rid);
@@ -185,7 +185,7 @@ namespace Ccino::RHI {
         return rid;
     }
 
-    RID Context::CreateTransferBuffer(uint32_t size, void* data) {
+    RID Context::CreateTransferBuffer(uint32_t size, const void* data) {
         RID rid = CreateBuffer(BufferCreateInfo{size, VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT});
         if (data != nullptr && size > 0) {
             void* mapped = MapBuffer(rid);
@@ -198,7 +198,7 @@ namespace Ccino::RHI {
         return rid;
     }
 
-    RID Context::CreateStorageBuffer(uint32_t size, void* data) {
+    RID Context::CreateStorageBuffer(uint32_t size, const void* data) {
         RID rid = CreateBuffer(BufferCreateInfo{
             size,
             VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT
@@ -264,7 +264,7 @@ namespace Ccino::RHI {
         destination->isAvailable = value;
     }
 
-    void Context::UploadBuffer(RID rid, void* data, uint32_t size) {
+    void Context::UploadBuffer(RID rid, const void* data, uint32_t size) {
         if (data == nullptr || size == 0) {
             return;
         }

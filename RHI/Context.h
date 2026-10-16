@@ -36,12 +36,12 @@ namespace Ccino::RHI {
 
         //Buffer 默认使用BDA
         RID CreateBuffer(const BufferCreateInfo& createInfo); //这里使用新的的BufferUsageFlags2
-        RID CreateUniformBuffer(uint32_t size, void* data); //Uniform Buffer 
-        RID CreateStorageBuffer(uint32_t size, void* data);
-        RID CreateTransferBuffer(uint32_t size, void* data); //StagingBuffer用来上传
+        RID CreateUniformBuffer(uint32_t size, const void* data); //Uniform Buffer 
+        RID CreateStorageBuffer(uint32_t size, const void* data);
+        RID CreateTransferBuffer(uint32_t size, const void* data); //StagingBuffer用来上传
         RID CreateReadbackBuffer(uint32_t size); //CPU 可见，用来把 Local Buffer 读回
         void ReadbackBuffer(RID src, RID dst); //Transfer 队列从 src 拷到 Readback Buffer
-        void UploadBuffer(RID rid, void* data, uint32_t size);
+        void UploadBuffer(RID rid, const void* data, uint32_t size);
         bool IsBufferAvailable(RID rid); //使用value来判断是否可用
         void* MapBuffer(RID rid); //必须使用可以支持CPU映射的Buffer
         void UnmapBuffer(RID rid);
