@@ -1,5 +1,6 @@
 #include "RHI/Context.h"
 #include "RHI/ComputePipeline.h"
+#include "RHI/DescriptorSlot.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -29,18 +30,21 @@ namespace Ccino::RHI {
             m_core.GetTransferQueueFamilyIndex()
         });
         CreateGlobalTimelineSemaphore();
+        DescriptorSlot::InitGlobal(m_core); //全局唯一的DescriptorSetLayout / PipelineLayout / DescriptorPool
         m_flightFrameCount = settings.flightFrameCount; //飞行帧数用来处理资源和同步的分配
 
         m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
     }
 
     void Context::Tick() {
-        m_currentFrameIndex = (m_currentFrameIndex + 1) % m_flightFrameCount;
-        if (!m_bufferDeletionQueue[m_currentFrameIndex].empty()) {
-            for (RID rid : m_bufferDeletionQueue[m_currentFrameIndex]) {
-                DestroyResource(rid);
-            }
-            m_bufferDeletionQueue[m_currentFrameIndex].clear();
+        std::vector<RID> expired;
+        {
+            std::lock_guard lock(m_deletionMutex);
+            m_currentFrameIndex = (m_currentFrameIndex + 1) % m_flightFrameCount;
+            expired.swap(m_bufferDeletionQueue[m_currentFrameIndex]); //取出后在锁外销毁, 避免销毁过程中持锁
+        }
+        for (RID rid : expired) {
+            DestroyResource(rid);
         }
     }
 
@@ -71,6 +75,7 @@ namespace Ccino::RHI {
             });
         }
 
+        DescriptorSlot::DestroyGlobal();
         DestroyGlobalTimelineSemaphore();
         m_commandContext.Destroy();
         m_core.Destroy();
@@ -78,6 +83,7 @@ namespace Ccino::RHI {
 
     void Context::DeleteResource(RID rid) {
         //类型匹配 
+        std::lock_guard lock(m_deletionMutex);
         m_bufferDeletionQueue[m_currentFrameIndex].push_back(rid);
     }
 
@@ -633,7 +639,7 @@ namespace Ccino::RHI {
 
     RID Context::CreateComputePipeline(const std::string& name, VkShaderModule shaderModule) {
         ComputePipeline pipeline;
-        pipeline.Init(m_core.GetVkDevice(), name, shaderModule);
+        pipeline.Init(m_core.GetVkDevice(), name, shaderModule, DescriptorSlot::GetGlobalPipelineLayout());
         return m_computePipelines.Add(std::move(pipeline));
     }
 

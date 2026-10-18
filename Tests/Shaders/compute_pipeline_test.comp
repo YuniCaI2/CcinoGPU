@@ -1,24 +1,27 @@
 #version 460
-#extension GL_EXT_descriptor_heap : require
 #extension GL_EXT_buffer_reference : require
-#extension GL_EXT_nonuniform_qualifier : require
 
 layout(local_size_x = 8) in;
 
-layout(descriptor_heap) uniform Params {
+//全局DescriptorSet (set 0) 的Sampler / SampledImage / StorageImage 数组, 和DescriptorSlot.h 中的DESCRIPTOR_BINDING_* 一致
+//这个Shader 只用Buffer, 没有声明它们
+
+//Buffer 全部通过BDA 访问
+layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer Params {
     uint multiplier;
-} heapParams[];
-
-layout(descriptor_heap) buffer Data {
-    uint values[];
-} heapData[];
-
-//和DescriptorSlotLayout 的字段顺序一致, 每个成员是对应 descriptor_heap 数组的索引
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Slot {
-    uint params;
-    uint data;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Data {
+    uint values[];
+};
+
+//和DescriptorSlotLayout 的字段顺序一致, 按std140 排布, Buffer 字段存的是BDA
+layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer Slot {
+    Params params; //UniformDataType::Buffer
+    Data data;     //UniformDataType::Buffer
+};
+
+//PushConstant 只有当前飞行帧UniformBuffer 的BDA
 layout(push_constant) uniform PushData {
     Slot slot;
 } pushData;
@@ -27,5 +30,5 @@ void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= 64) return; //这里后续生成代码会直接填充，所有这里先不用在意
     Slot slot = pushData.slot;
-    heapData[slot.data].values[idx] = idx * heapParams[slot.params].multiplier;
+    slot.data.values[idx] = idx * slot.params.multiplier;
 }

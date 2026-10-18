@@ -22,13 +22,17 @@ namespace Ccino::RHI {
         VkPhysicalDeviceVulkan12Features features12{};
         features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
         features12.timelineSemaphore = VK_TRUE;
-        features12.bufferDeviceAddress = VK_TRUE;
-        features12.descriptorBindingPartiallyBound = VK_TRUE;
-        features12.runtimeDescriptorArray = VK_TRUE;
-        features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
-        features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        features12.bufferDeviceAddress = VK_TRUE; //Buffer 全部通过BDA 访问
         features12.scalarBlockLayout = VK_TRUE;
+        //descriptor_indexing: 全局DescriptorSet 中的Sampler / SampledImage / StorageImage 数组
+        features12.runtimeDescriptorArray = VK_TRUE;
+        features12.descriptorBindingPartiallyBound = VK_TRUE;
+        features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        features12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+        features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE; //Sampler 也由这一项控制
+        features12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
         features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        features12.shaderStorageImageArrayNonUniformIndexing = VK_TRUE;
 
         VkPhysicalDeviceVulkan13Features features13{};
         features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -39,26 +43,12 @@ namespace Ccino::RHI {
         features14.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES;
         features14.maintenance5 = VK_TRUE;
 
-        VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptorHeapFeatures{};
-        descriptorHeapFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT;
-        descriptorHeapFeatures.descriptorHeap = VK_TRUE;
-
-        //Shader 通过 descriptor_heap 直接访问堆时, SPIR-V 依赖 untyped pointers
-        VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPointersFeatures{};
-        untypedPointersFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR;
-        untypedPointersFeatures.shaderUntypedPointers = VK_TRUE;
-
         features11.pNext = &features12;
         features12.pNext = &features13;
         features13.pNext = &features14;
-        features14.pNext = &descriptorHeapFeatures;
-        descriptorHeapFeatures.pNext = &untypedPointersFeatures;
 
-        //这里使用Descriptor Heap
-        std::vector<const char*> deviceExtensions = {
-            VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME,
-            VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME
-        };
+        //Bindless 只依赖Vulkan 1.2 核心的bufferDeviceAddress 和descriptor_indexing, 不需要额外的设备扩展
+        std::vector<const char*> deviceExtensions = {};
 
         CreateInstance(instanceExtensions);
         CreateDevice(m_instance, deviceFeatures, deviceExtensions, &features11);
@@ -365,9 +355,6 @@ namespace Ccino::RHI {
         vkGetDeviceQueue(m_device, m_queueFamilyIndices.transfer, 0, &m_transferQueue);
 
         m_properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-        m_descriptorBufferProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
-        m_descriptorBufferProps.pNext = m_properties2.pNext;
-        m_properties2.pNext = &m_descriptorBufferProps;
         vkGetPhysicalDeviceProperties2(m_physicalDevice, &m_properties2);
         m_properties = m_properties2.properties;
 
@@ -425,24 +412,7 @@ namespace Ccino::RHI {
     }
 
     void Core::InitDynamicFunctions() {
-        //动态加载 VK_EXT_descriptor_buffer 扩展函数
-        m_vkGetPhysicalDeviceDescriptorSizeEXT = reinterpret_cast<PFN_vkGetPhysicalDeviceDescriptorSizeEXT>(
-            vkGetInstanceProcAddr(m_instance, "vkGetPhysicalDeviceDescriptorSizeEXT"));
-
-        m_vkWriteResourceDescriptorsEXT = reinterpret_cast<PFN_vkWriteResourceDescriptorsEXT>(
-            vkGetDeviceProcAddr(m_device, "vkWriteResourceDescriptorsEXT"));
-
-        m_vkWriteSamplerDescriptorsEXT = reinterpret_cast<PFN_vkWriteSamplerDescriptorsEXT>(
-            vkGetDeviceProcAddr(m_device, "vkWriteSamplerDescriptorsEXT"));
-
-        m_vkCmdPushDataEXT = reinterpret_cast<PFN_vkCmdPushDataEXT>(
-            vkGetDeviceProcAddr(m_device, "vkCmdPushDataEXT"));
-
-        m_vkCmdBindResourceHeapEXT = reinterpret_cast<PFN_vkCmdBindResourceHeapEXT>(
-            vkGetDeviceProcAddr(m_device, "vkCmdBindResourceHeapEXT"));
-
-        m_vkCmdBindSamplerHeapEXT = reinterpret_cast<PFN_vkCmdBindSamplerHeapEXT>(
-            vkGetDeviceProcAddr(m_device, "vkCmdBindSamplerHeapEXT"));
+        //动态加载扩展函数. 目前只用到核心API, 没有需要加载的函数
     }
 
     void Core::SetDebugging(VkInstance instance) {

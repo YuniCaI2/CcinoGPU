@@ -62,7 +62,7 @@ namespace {
 
     void RecordDispatch(VkCommandBuffer cmd, VkPipeline pipeline, Ccino::RHI::DescriptorSlot& slot, Ccino::RHI::DescriptorSlotBinding& binding) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-        slot.BindHeaps(cmd);
+        slot.BindDescriptorSet(cmd);
         binding.Push(cmd);
         vkCmdDispatch(cmd, 8, 1, 1);
 
@@ -82,23 +82,23 @@ namespace {
 
     void ReleaseAndDestroy(Ccino::RHI::Context& context, Ccino::RHI::DescriptorSlot& slot, const std::vector<RID>& buffers) {
         for (RID rid : buffers) {
-            slot.ReleaseBuffer(rid);
             context.DestroyBuffer(rid);
         }
         slot.Destroy();
     }
 
-    // 两个 Pass 同时引用同一个 UBO。其中一个覆盖掉之后，这个 UBO 不能进析构队列。
-    // 飞行帧为 1，Update 会把待释放桶倒进空闲队列；接着再绑一个新 UBO，拿去占刚空出来的槽。
-    // 还握着旧 UBO 的那个 Pass 必须仍然读到原来的 multiplier。
+    //和compute_pipeline_test.comp 里Slot 结构体的成员顺序一致, Buffer 字段存的是BDA
+    const Ccino::RHI::DescriptorSlotLayout kLayout = {
+        {"params", Ccino::RHI::UniformDataType::Buffer},
+        {"data", Ccino::RHI::UniformDataType::Buffer},
+    };
+
+    // 两个 Pass 同时引用同一个 UBO。其中一个改绑之后，另一个必须仍然读到原来的 multiplier。
+    // 每个 Binding 有自己的 UniformBuffer，Bind 只修改自己的 CPU 副本；Buffer 通过 BDA 访问，不存在共享的槽位。
+    // Update 之后再创建一个绑定新 UBO 的 Binding，也不能影响已有的 Binding。
     void TestSharedReferenceSurvivesOverwrite(Ccino::RHI::Context& context, VkPipeline pipeline) {
         Ccino::RHI::DescriptorSlot slot;
         slot.Init(&context);
-
-        const Ccino::RHI::DescriptorSlotLayout layout = {
-            {"params", {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER}},
-            {"data", {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}},
-        };
 
         constexpr uint32_t kShared = 5;
         constexpr uint32_t kReplacement = 4;
@@ -112,15 +112,15 @@ namespace {
         const std::vector<RID> buffers = {shared, replacement, intruderParams, sharedOut, intruderOut};
 
         {
-            Ccino::RHI::DescriptorSlotBinding pass1 = slot.CreateSlotBinding(layout);
-            Ccino::RHI::DescriptorSlotBinding pass2 = slot.CreateSlotBinding(layout);
+            Ccino::RHI::DescriptorSlotBinding pass1 = slot.CreateSlotBinding(kLayout);
+            Ccino::RHI::DescriptorSlotBinding pass2 = slot.CreateSlotBinding(kLayout);
             pass1.BindBuffer("params", shared).BindBuffer("data", sharedOut);
             pass2.BindBuffer("params", shared).BindBuffer("data", sharedOut);
 
             pass1.BindBuffer("params", replacement);
             slot.Update();
 
-            Ccino::RHI::DescriptorSlotBinding reuse = slot.CreateSlotBinding(layout);
+            Ccino::RHI::DescriptorSlotBinding reuse = slot.CreateSlotBinding(kLayout);
             reuse.BindBuffer("params", intruderParams).BindBuffer("data", intruderOut);
 
             context.ExecuteCommand([&](Ccino::RHI::CommandContext::CommandBuffer& commandBuffer) {
@@ -135,16 +135,11 @@ namespace {
         ReleaseAndDestroy(context, slot, buffers);
     }
 
-    // 只有一个引用时，覆盖应把旧槽放进当前飞行帧的待释放桶，而不是立刻给下一个 Bind 用。
-    // 命令在覆盖前录好，块里仍是旧索引。新 UBO 若提前复用了这个槽，dispatch 会读到新的 multiplier。
+    // 命令录好之后再改绑，已经录制的命令必须仍然读到改绑之前的 UBO。
+    // Bind 只修改 CPU 副本，下一次 Push 才写入 UniformBuffer，所以录制时推送的 UniformBuffer 内容不会变。
     void TestSoleOverwriteStaysPending(Ccino::RHI::Context& context, VkPipeline pipeline) {
         Ccino::RHI::DescriptorSlot slot;
         slot.Init(&context);
-
-        const Ccino::RHI::DescriptorSlotLayout layout = {
-            {"params", {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER}},
-            {"data", {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}},
-        };
 
         constexpr uint32_t kOriginal = 2;
         constexpr uint32_t kReplacement = 3;
@@ -158,7 +153,7 @@ namespace {
         const std::vector<RID> buffers = {original, replacement, intruderParams, out, intruderOut};
 
         {
-            Ccino::RHI::DescriptorSlotBinding binding = slot.CreateSlotBinding(layout);
+            Ccino::RHI::DescriptorSlotBinding binding = slot.CreateSlotBinding(kLayout);
             binding.BindBuffer("params", original).BindBuffer("data", out);
 
             Ccino::RHI::CommandContext::CommandBuffer& commandBuffer = context.GetCommandBuffer(CommandQueueType::COMPUTE);
@@ -168,7 +163,7 @@ namespace {
 
             binding.BindBuffer("params", replacement);
 
-            Ccino::RHI::DescriptorSlotBinding reuse = slot.CreateSlotBinding(layout);
+            Ccino::RHI::DescriptorSlotBinding reuse = slot.CreateSlotBinding(kLayout);
             reuse.BindBuffer("params", intruderParams).BindBuffer("data", intruderOut);
 
             context.SubmitCommandBuffer(CommandQueueType::COMPUTE, {commandBuffer});
@@ -178,21 +173,18 @@ namespace {
             }, CommandQueueType::COMPUTE);
             VULKAN_CHECK(vkQueueWaitIdle(context.GetCore().GetVkQueue(CommandQueueType::COMPUTE)));
             ExpectMultiplied(context, intruderOut, kIntruder, "new buffer descriptor was not visible");
-            ExpectMultiplied(context, out, kOriginal, "sole buffer was reused before Update");
+            ExpectMultiplied(context, out, kOriginal, "recorded command saw a Bind made after it was recorded");
         }
 
         ReleaseAndDestroy(context, slot, buffers);
     }
 
-    // 同一个覆盖，Update 一次后（飞行帧为 1）旧槽必须从待释放桶进入空闲队列，并被下一个 Bind 写上。
+    // 原来验证的是 Heap 槽位在 Update 之后被回收、并被下一个 Bind 复用；BDA 方案里 Buffer 不占槽位，没有可回收的东西。
+    // 对应的行为改为：改绑并 Update 之后，旧命令仍读到旧 UBO；等它执行完，再次 Push 时这一帧的 UniformBuffer
+    // 被复用并写入改绑后的内容（飞行帧为 1），新的 Dispatch 读到新 UBO，另一个 Binding 不受影响。
     void TestSoleOverwriteRecycledAfterUpdate(Ccino::RHI::Context& context, VkPipeline pipeline) {
         Ccino::RHI::DescriptorSlot slot;
         slot.Init(&context);
-
-        const Ccino::RHI::DescriptorSlotLayout layout = {
-            {"params", {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER}},
-            {"data", {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}},
-        };
 
         constexpr uint32_t kOriginal = 2;
         constexpr uint32_t kReplacement = 3;
@@ -206,7 +198,7 @@ namespace {
         const std::vector<RID> buffers = {original, replacement, intruderParams, out, intruderOut};
 
         {
-            Ccino::RHI::DescriptorSlotBinding binding = slot.CreateSlotBinding(layout);
+            Ccino::RHI::DescriptorSlotBinding binding = slot.CreateSlotBinding(kLayout);
             binding.BindBuffer("params", original).BindBuffer("data", out);
 
             Ccino::RHI::CommandContext::CommandBuffer& commandBuffer = context.GetCommandBuffer(CommandQueueType::COMPUTE);
@@ -217,17 +209,20 @@ namespace {
             binding.BindBuffer("params", replacement);
             slot.Update();
 
-            Ccino::RHI::DescriptorSlotBinding reuse = slot.CreateSlotBinding(layout);
+            Ccino::RHI::DescriptorSlotBinding reuse = slot.CreateSlotBinding(kLayout);
             reuse.BindBuffer("params", intruderParams).BindBuffer("data", intruderOut);
 
             context.SubmitCommandBuffer(CommandQueueType::COMPUTE, {commandBuffer});
             VULKAN_CHECK(vkQueueWaitIdle(context.GetCore().GetVkQueue(CommandQueueType::COMPUTE)));
+            ExpectMultiplied(context, out, kOriginal, "recorded command saw a Bind made after it was recorded");
+
             context.ExecuteCommand([&](Ccino::RHI::CommandContext::CommandBuffer& recorded) {
+                RecordDispatch(recorded.commandBuffer, pipeline, slot, binding);
                 RecordDispatch(recorded.commandBuffer, pipeline, slot, reuse);
             }, CommandQueueType::COMPUTE);
             VULKAN_CHECK(vkQueueWaitIdle(context.GetCore().GetVkQueue(CommandQueueType::COMPUTE)));
-            ExpectMultiplied(context, intruderOut, kIntruder, "new buffer descriptor was not visible");
-            ExpectMultiplied(context, out, kIntruder, "sole buffer did not enter the release queue");
+            ExpectMultiplied(context, intruderOut, kIntruder, "new binding was not visible");
+            ExpectMultiplied(context, out, kReplacement, "uniform buffer was not rewritten by the next Push");
         }
 
         ReleaseAndDestroy(context, slot, buffers);

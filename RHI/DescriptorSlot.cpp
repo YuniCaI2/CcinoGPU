@@ -1,71 +1,130 @@
 #include "RHI/DescriptorSlot.h"
 #include "RHI/Context.h"
 #include "RHI/Core.h"
-#include <mutex>
-#include <vulkan/vulkan_core.h>
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
+#include <string>
+#include <vulkan/vulkan_core.h>
 
 namespace Ccino::RHI {
     namespace {
-        bool IsSupportedDescriptorType(VkDescriptorType type) {
-            switch (type) {
-                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-                case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-                case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-                case VK_DESCRIPTOR_TYPE_SAMPLER:
-                    return true;
-                default:
-                    return false;
-            }
-        }
+        //全局DescriptorSet 中所有数组共用的Binding Flags
+        // PARTIALLY_BOUND: 没写入的元素只要Shader 不访问就是合法的
+        // UPDATE_AFTER_BIND / UPDATE_UNUSED_WHILE_PENDING: DescriptorSet 绑定之后、命令缓冲执行期间, 还能写入没被使用的元素
+        constexpr VkDescriptorBindingFlags BINDLESS_BINDING_FLAGS =
+            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+            VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+            VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
 
-        bool BufferUsageMatchesLayout(VkDescriptorType type, VkBufferUsageFlags2 usage) {
-            switch (type) {
-                case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-                    return (usage & VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT) != 0;
-                case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-                    return (usage & VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT) != 0;
-                default:
-                    return false;
-            }
-        }
+        struct BindlessArray {
+            uint32_t binding;
+            VkDescriptorType type;
+            uint32_t count;
+        };
 
-        uint32_t AcquireHeapIndex(std::vector<std::pair<RID, uint32_t>>& ridList, std::queue<uint32_t>& releaseQueue, uint32_t maxCount, RID rid) {
-            if (!releaseQueue.empty()) {
-                uint32_t index = releaseQueue.front();
-                releaseQueue.pop();
-                ridList[index] = {rid, 1};
-                return index;
+        //全局DescriptorSet 的布局, 后续支持更多类型时在这里追加
+        constexpr BindlessArray BINDLESS_ARRAYS[] = {
+            {DESCRIPTOR_BINDING_SAMPLER, VK_DESCRIPTOR_TYPE_SAMPLER, DESCRIPTOR_MAX_SAMPLER_COUNT},
+            {DESCRIPTOR_BINDING_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, DESCRIPTOR_MAX_SAMPLED_IMAGE_COUNT},
+            {DESCRIPTOR_BINDING_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, DESCRIPTOR_MAX_STORAGE_IMAGE_COUNT},
+        };
+        constexpr uint32_t BINDLESS_ARRAY_COUNT = static_cast<uint32_t>(std::size(BINDLESS_ARRAYS));
+
+        //检查设备的descriptor_indexing 上限能否容纳全局DescriptorSet
+        void CheckBindlessLimits(VkPhysicalDevice physicalDevice) {
+            VkPhysicalDeviceDescriptorIndexingProperties indexing{};
+            indexing.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES;
+            VkPhysicalDeviceProperties2 properties{};
+            properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            properties.pNext = &indexing;
+            vkGetPhysicalDeviceProperties2(physicalDevice, &properties);
+
+            auto check = [](uint32_t required, uint32_t perStage, uint32_t perSet, const char* what) {
+                if (required > perStage || required > perSet) {
+                    throw std::runtime_error(std::string("Device does not support enough update-after-bind descriptors: ") + what);
+                }
+            };
+            check(DESCRIPTOR_MAX_SAMPLER_COUNT, indexing.maxPerStageDescriptorUpdateAfterBindSamplers,
+                indexing.maxDescriptorSetUpdateAfterBindSamplers, "sampler");
+            check(DESCRIPTOR_MAX_SAMPLED_IMAGE_COUNT, indexing.maxPerStageDescriptorUpdateAfterBindSampledImages,
+                indexing.maxDescriptorSetUpdateAfterBindSampledImages, "sampled image");
+            check(DESCRIPTOR_MAX_STORAGE_IMAGE_COUNT, indexing.maxPerStageDescriptorUpdateAfterBindStorageImages,
+                indexing.maxDescriptorSetUpdateAfterBindStorageImages, "storage image");
+
+            uint32_t total = 0;
+            for (const BindlessArray& array : BINDLESS_ARRAYS) {
+                total += array.count;
             }
-            if (ridList.size() >= maxCount) {
-                throw std::runtime_error("Descriptor heap is full");
+            if (total > indexing.maxPerStageUpdateAfterBindResources) {
+                throw std::runtime_error("Device does not support enough update-after-bind resources per stage");
             }
-            ridList.emplace_back(rid, 1);
-            return static_cast<uint32_t>(ridList.size() - 1);
         }
     }
 
-    DescriptorSlotBinding::DescriptorSlotBinding(DescriptorSlot* slotContext, DescriptorSlotLayout layout)
-        : m_slotContext(slotContext), m_layout(std::move(layout)) {}
+    //---------------------------------------------------------------------------------------------
+    // DescriptorSlotBinding
+    //---------------------------------------------------------------------------------------------
+
+    DescriptorSlotBinding::DescriptorSlotBinding(DescriptorSlot* slotContext, const DescriptorSlotLayout& layout)
+        : m_slotContext(slotContext), m_context(slotContext->m_context) {
+        uint32_t size = 0;
+        m_uniformOffsets = GetOffsetsTable(layout, size);
+        m_uniformBufferSize = std::max(size, 16u); //空布局也分配一个最小的块, 保证推送的BDA 有效
+        m_uniformData.assign(m_uniformBufferSize, 0);
+
+        //每个Binding 有一组UniformBuffer, 数量和飞行帧一致
+        const uint32_t flightFrameCount = m_context->GetFlightFrameCount();
+        m_frameDirty.assign(flightFrameCount, 1); //第一次Push 时每一帧都要上传
+        m_uniformBuffers.reserve(flightFrameCount);
+        m_uniformBufferAddresses.reserve(flightFrameCount);
+        try {
+            for (uint32_t i = 0; i < flightFrameCount; i++) {
+                const RID rid = m_context->CreateUniformBuffer(m_uniformBufferSize, nullptr);
+                m_uniformBuffers.push_back(rid);
+                const VkDeviceAddress address = m_context->GetBufferBDA(rid);
+                if (address % 16 != 0) { //和Shader 中Slot 的buffer_reference_align = 16 对应
+                    throw std::runtime_error("Descriptor slot uniform buffer address is not 16-byte aligned");
+                }
+                m_uniformBufferAddresses.push_back(address);
+            }
+        } catch (...) {
+            //构造失败时析构函数不会执行. 这些Buffer GPU 还没用过, 可以直接销毁
+            for (const RID rid : m_uniformBuffers) {
+                m_context->DestroyBuffer(rid);
+            }
+            throw;
+        }
+
+        //计数放在构造的最后, 和Release 中的减少成对, 构造失败时不会多出计数
+        m_slotContext->m_liveBindingCount.fetch_add(1, std::memory_order_relaxed);
+    }
 
     DescriptorSlotBinding::DescriptorSlotBinding(DescriptorSlotBinding&& other) noexcept
         : m_slotContext(std::exchange(other.m_slotContext, nullptr)),
-          m_layout(std::move(other.m_layout)),
-          m_fields(other.m_fields),
-          m_block(std::exchange(other.m_block, INVALID_BLOCK)),
-          m_dirty(other.m_dirty) {}
+          m_context(std::exchange(other.m_context, nullptr)),
+          m_uniformOffsets(std::move(other.m_uniformOffsets)),
+          m_uniformData(std::move(other.m_uniformData)),
+          m_uniformBufferSize(std::exchange(other.m_uniformBufferSize, 0)),
+          m_uniformBuffers(std::move(other.m_uniformBuffers)),
+          m_uniformBufferAddresses(std::move(other.m_uniformBufferAddresses)),
+          m_frameDirty(std::move(other.m_frameDirty)) {
+        //被移动的对象m_slotContext 为空, 析构时什么都不释放
+    }
 
     DescriptorSlotBinding& DescriptorSlotBinding::operator=(DescriptorSlotBinding&& other) noexcept {
         if (this != &other) {
             Release();
             m_slotContext = std::exchange(other.m_slotContext, nullptr);
-            m_layout = std::move(other.m_layout);
-            m_fields = other.m_fields;
-            m_block = std::exchange(other.m_block, INVALID_BLOCK);
-            m_dirty = other.m_dirty;
+            m_context = std::exchange(other.m_context, nullptr);
+            m_uniformOffsets = std::move(other.m_uniformOffsets);
+            m_uniformData = std::move(other.m_uniformData);
+            m_uniformBufferSize = std::exchange(other.m_uniformBufferSize, 0);
+            m_uniformBuffers = std::move(other.m_uniformBuffers);
+            m_uniformBufferAddresses = std::move(other.m_uniformBufferAddresses);
+            m_frameDirty = std::move(other.m_frameDirty);
         }
         return *this;
     }
@@ -78,143 +137,244 @@ namespace Ccino::RHI {
         if (m_slotContext == nullptr) {
             return;
         }
-        if (m_block != INVALID_BLOCK) {
-            m_slotContext->FreeSlotBlock(m_block);
-            m_block = INVALID_BLOCK;
+
+        //UniformBuffer 可能还在被GPU 读取, 交给Context 的延迟释放队列, 等这一帧的飞行帧回来再销毁
+        for (const RID rid : m_uniformBuffers) {
+            m_context->DeleteResource(rid);
         }
-        //释放槽位
-        for (const auto& [name, entry] : m_fieldMap) {
-            if (entry.type == ResourceType::Buffer) {
-                m_slotContext->ReleaseBuffer(entry.rid);
-            } else if (entry.type == ResourceType::Texture) {
-                m_slotContext->ReleaseTexture(entry.rid);
-            } 
-        }
+        m_uniformBuffers.clear();
+        m_uniformBufferAddresses.clear();
+        m_frameDirty.clear();
+        m_uniformOffsets.clear();
+        m_uniformData.clear();
+        m_uniformBufferSize = 0;
 
         m_slotContext->m_liveBindingCount.fetch_sub(1, std::memory_order_relaxed);
         m_slotContext = nullptr;
+        m_context = nullptr;
     }
 
-    uint32_t DescriptorSlotBinding::FindField(const std::string& name, VkDescriptorType& type) const {
-        for (size_t i = 0; i < m_layout.size(); i++) {
-            if (m_layout[i].first == name) {
-                type = m_layout[i].second.type;
-                return static_cast<uint32_t>(i);
+    std::unordered_map<std::string, UniformOffset> DescriptorSlotBinding::GetOffsetsTable(const DescriptorSlotLayout& layout, uint32_t& size) {
+        std::unordered_map<std::string, UniformOffset> offsets;
+        offsets.reserve(layout.size());
+        uint32_t currentOffset = 0;
+
+        //按声明顺序排布: 先对齐到成员的基础对齐, 再加上成员大小
+        for (const auto& [name, uniformType] : layout) {
+            const UniformTypeInfo info = GetUniformTypeInfo(uniformType);
+            currentOffset = Std140::AlignUp(currentOffset, info.alignment);
+            if (!offsets.emplace(name, UniformOffset{currentOffset, uniformType}).second) {
+                throw std::runtime_error("Duplicate field name in descriptor slot layout: " + name);
             }
+            currentOffset += info.size;
         }
-        throw std::runtime_error("Descriptor not found in descriptor slot layout: " + name);
+
+        //std140 中块整体按16 字节对齐, 尾部补齐
+        size = Std140::AlignUp(currentOffset, 16);
+        return offsets;
     }
 
-    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture(const std::string& name, RID rid, VkImageSubresourceRange subresourceRange) {
-        VkDescriptorType type = VK_DESCRIPTOR_TYPE_MAX_ENUM;
-        const uint32_t field = FindField(name, type);
-        if (m_fieldMap.find(name) != m_fieldMap.end()) {
-            m_slotContext->ReleaseTexture(m_fieldMap[name].rid);
-        } 
-        m_fieldMap[name] = ResourceEntry{rid, ResourceType::Texture};
-        m_fields[field] = m_slotContext->AcquireTextureIndex(rid, type, subresourceRange);
-        m_dirty = true;
-        return *this;
+    const UniformOffset& DescriptorSlotBinding::FindField(const std::string& name) const {
+        auto it = m_uniformOffsets.find(name);
+        if (it == m_uniformOffsets.end()) {
+            throw std::runtime_error("Field not found in descriptor slot layout: " + name);
+        }
+        return it->second;
+    }
+
+    void DescriptorSlotBinding::MarkDirty() {
+        std::fill(m_frameDirty.begin(), m_frameDirty.end(), 1);
     }
 
     DescriptorSlotBinding& DescriptorSlotBinding::BindBuffer(const std::string& name, RID rid) {
-        VkDescriptorType type = VK_DESCRIPTOR_TYPE_MAX_ENUM;
-        const uint32_t field = FindField(name, type);
-        if (m_fieldMap.find(name) != m_fieldMap.end()) {
-            m_slotContext->ReleaseBuffer(m_fieldMap[name].rid);
+        const UniformOffset& field = FindField(name);
+        if (field.uniformDataType != UniformDataType::Buffer) {
+            throw std::runtime_error("Field is not a buffer in descriptor slot layout: " + name);
         }
-        m_fieldMap[name] = ResourceEntry{rid, ResourceType::Buffer}; 
-        m_fields[field] = m_slotContext->AcquireBufferIndex(rid, type); 
-        m_dirty = true;
+
+        VkBufferUsageFlags2 usage = 0;
+        if (!m_context->GetBufferUsage(rid, usage)) {
+            throw std::runtime_error("Buffer resource does not exist: " + name);
+        }
+        if ((usage & VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT) == 0) {
+            throw std::runtime_error("Buffer is not created with shader device address: " + name);
+        }
+
+        const uint64_t address = m_context->GetBufferBDA(rid);
+        Std140::WriteParam(m_uniformData.data() + field.offset, address);
+        MarkDirty();
         return *this;
     }
 
     DescriptorSlotBinding& DescriptorSlotBinding::BindSampler(const std::string& name, SamplerType type) {
-        VkDescriptorType descriptorType = VK_DESCRIPTOR_TYPE_MAX_ENUM;
-        const uint32_t field = FindField(name, descriptorType);
-        if (descriptorType != VK_DESCRIPTOR_TYPE_SAMPLER) {
-            throw std::runtime_error("Sampler type does not match descriptor slot layout");
+        const UniformOffset& field = FindField(name);
+        if (field.uniformDataType != UniformDataType::Sampler) {
+            throw std::runtime_error("Field is not a sampler in descriptor slot layout: " + name);
         }
-        m_fields[field] = m_slotContext->GetSamplerIndex(type);
-        m_dirty = true;
+        Std140::WriteParam(m_uniformData.data() + field.offset, m_slotContext->GetSamplerIndex(type));
+        MarkDirty();
         return *this;
     }
 
     void DescriptorSlotBinding::Push(VkCommandBuffer commandBuffer) {
-        if (m_dirty) {
-            const uint32_t block = m_slotContext->AllocateSlotBlock();
-            std::memcpy(m_slotContext->GetSlotBlockMapped(block), m_fields.data(), m_layout.size() * sizeof(uint32_t));
-            if (m_block != INVALID_BLOCK) {
-                m_slotContext->FreeSlotBlock(m_block);
-            }
-            m_block = block;
-            m_dirty = false;
+        if (m_slotContext == nullptr) {
+            throw std::runtime_error("Push on a released descriptor slot binding");
         }
 
-        const VkDeviceAddress address = m_slotContext->GetSlotBlockAddress(m_block);
-        VkPushDataInfoEXT pushDataInfo{};
-        pushDataInfo.sType = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT;
-        pushDataInfo.offset = 0;
-        pushDataInfo.data.address = &address;
-        pushDataInfo.data.size = sizeof(address);
-        m_slotContext->m_core->GetVkCmdPushDataEXT()(commandBuffer, &pushDataInfo);
+        //这一帧的UniformBuffer 落后于CPU 副本时才上传. 没改过就不动它, 避免改写GPU 可能正在读的内容
+        const uint32_t frameIndex = m_context->GetCurrentFrameIndex();
+        if (m_frameDirty[frameIndex]) {
+            const RID uniformBuffer = m_uniformBuffers[frameIndex];
+            void* mapped = m_context->MapBuffer(uniformBuffer);
+            if (mapped == nullptr) {
+                throw std::runtime_error("Failed to map descriptor slot uniform buffer");
+            }
+            std::memcpy(mapped, m_uniformData.data(), m_uniformBufferSize);
+            m_context->UnmapBuffer(uniformBuffer); //非coherent 内存需要flush, 持久映射的Buffer 不会真的Unmap
+            m_frameDirty[frameIndex] = 0;
+        }
+
+        const VkDeviceAddress address = m_uniformBufferAddresses[frameIndex];
+        vkCmdPushConstants(commandBuffer, DescriptorSlot::GetGlobalPipelineLayout(), DESCRIPTOR_SHADER_STAGES,
+            0, DESCRIPTOR_PUSH_CONSTANT_SIZE, &address);
     }
 
+    //---------------------------------------------------------------------------------------------
+    // DescriptorSlot 全局对象
+    //---------------------------------------------------------------------------------------------
+
+    void DescriptorSlot::InitGlobal(const Core& core) {
+        const VkDevice device = core.GetVkDevice();
+        if (m_globalDevice != VK_NULL_HANDLE) {
+            if (m_globalDevice != device) {
+                throw std::runtime_error("DescriptorSlot global objects are already created for another device");
+            }
+            return;
+        }
+        CheckBindlessLimits(core.GetVkPhysicalDevice());
+        m_globalDevice = device;
+
+        try {
+            //1. 所有SamplerType 预先创建, 在Sampler 数组中的索引就是枚举值
+            for (uint32_t i = 0; i < static_cast<uint32_t>(SamplerType::COUNT); i++) {
+                const VkSamplerCreateInfo createInfo = CreateSamplerCreateInfo(static_cast<SamplerType>(i));
+                VULKAN_CHECK(vkCreateSampler(device, &createInfo, nullptr, &m_globalSamplers[i]));
+            }
+
+            //2. 全局唯一的DescriptorSetLayout, 每种资源一个descriptor_indexing 数组
+            VkDescriptorSetLayoutBinding bindings[BINDLESS_ARRAY_COUNT]{};
+            VkDescriptorBindingFlags bindingFlags[BINDLESS_ARRAY_COUNT]{};
+            for (uint32_t i = 0; i < BINDLESS_ARRAY_COUNT; i++) {
+                bindings[i].binding = BINDLESS_ARRAYS[i].binding;
+                bindings[i].descriptorType = BINDLESS_ARRAYS[i].type;
+                bindings[i].descriptorCount = BINDLESS_ARRAYS[i].count;
+                bindings[i].stageFlags = DESCRIPTOR_SHADER_STAGES;
+                bindingFlags[i] = BINDLESS_BINDING_FLAGS;
+            }
+
+            VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{};
+            bindingFlagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+            bindingFlagsInfo.bindingCount = BINDLESS_ARRAY_COUNT;
+            bindingFlagsInfo.pBindingFlags = bindingFlags;
+
+            VkDescriptorSetLayoutCreateInfo layoutInfo{};
+            layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+            layoutInfo.pNext = &bindingFlagsInfo;
+            layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+            layoutInfo.bindingCount = BINDLESS_ARRAY_COUNT;
+            layoutInfo.pBindings = bindings;
+            VULKAN_CHECK(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &m_globalDescriptorSetLayout));
+
+            //3. 全局唯一的PipelineLayout: set 0 是全局DescriptorSet, PushConstant 是UniformBuffer 的BDA
+            VkPushConstantRange pushConstantRange{};
+            pushConstantRange.stageFlags = DESCRIPTOR_SHADER_STAGES;
+            pushConstantRange.offset = 0;
+            pushConstantRange.size = DESCRIPTOR_PUSH_CONSTANT_SIZE;
+
+            VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+            pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            pipelineLayoutInfo.setLayoutCount = 1;
+            pipelineLayoutInfo.pSetLayouts = &m_globalDescriptorSetLayout;
+            pipelineLayoutInfo.pushConstantRangeCount = 1;
+            pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+            VULKAN_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &m_globalPipelineLayout));
+
+            //4. 全局DescriptorPool, 每个DescriptorSlot 从这里分配一个DescriptorSet
+            VkDescriptorPoolSize poolSizes[BINDLESS_ARRAY_COUNT]{};
+            for (uint32_t i = 0; i < BINDLESS_ARRAY_COUNT; i++) {
+                poolSizes[i].type = BINDLESS_ARRAYS[i].type;
+                poolSizes[i].descriptorCount = BINDLESS_ARRAYS[i].count * DESCRIPTOR_MAX_SET_COUNT;
+            }
+
+            VkDescriptorPoolCreateInfo poolInfo{};
+            poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+            poolInfo.maxSets = DESCRIPTOR_MAX_SET_COUNT;
+            poolInfo.poolSizeCount = BINDLESS_ARRAY_COUNT;
+            poolInfo.pPoolSizes = poolSizes;
+            VULKAN_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &m_globalDescriptorPool));
+        } catch (...) {
+            DestroyGlobal();
+            throw;
+        }
+    }
+
+    void DescriptorSlot::DestroyGlobal() {
+        if (m_globalDevice == VK_NULL_HANDLE) {
+            return;
+        }
+        //DescriptorPool 销毁时, 从它分配的DescriptorSet 一起释放
+        if (m_globalDescriptorPool != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(m_globalDevice, m_globalDescriptorPool, nullptr);
+            m_globalDescriptorPool = VK_NULL_HANDLE;
+        }
+        if (m_globalPipelineLayout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(m_globalDevice, m_globalPipelineLayout, nullptr);
+            m_globalPipelineLayout = VK_NULL_HANDLE;
+        }
+        if (m_globalDescriptorSetLayout != VK_NULL_HANDLE) {
+            vkDestroyDescriptorSetLayout(m_globalDevice, m_globalDescriptorSetLayout, nullptr);
+            m_globalDescriptorSetLayout = VK_NULL_HANDLE;
+        }
+        for (VkSampler& sampler : m_globalSamplers) {
+            if (sampler != VK_NULL_HANDLE) {
+                vkDestroySampler(m_globalDevice, sampler, nullptr);
+                sampler = VK_NULL_HANDLE;
+            }
+        }
+        m_globalDevice = VK_NULL_HANDLE;
+    }
+
+    //---------------------------------------------------------------------------------------------
+    // DescriptorSlot
+    //---------------------------------------------------------------------------------------------
+
     void DescriptorSlot::Init(Context* context) {
+        if (m_descriptorSet != VK_NULL_HANDLE) {
+            throw std::runtime_error("DescriptorSlot is already initialized");
+        }
+        if (m_globalDescriptorSetLayout == VK_NULL_HANDLE) {
+            throw std::runtime_error("DescriptorSlot::InitGlobal must be called before Init");
+        }
         m_context = context;
-        m_core = &context->GetCore();
-        m_device = m_core->GetVkDevice();
-        m_physicalDevice = m_core->GetVkPhysicalDevice();
+        m_device = context->GetCore().GetVkDevice();
 
+        {
+            std::lock_guard lock(m_globalDescriptorPoolMutex);
+            VkDescriptorSetAllocateInfo allocateInfo{};
+            allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocateInfo.descriptorPool = m_globalDescriptorPool;
+            allocateInfo.descriptorSetCount = 1;
+            allocateInfo.pSetLayouts = &m_globalDescriptorSetLayout;
+            VULKAN_CHECK(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_descriptorSet));
+        }
 
-        //获得对齐
-        VkPhysicalDeviceDescriptorHeapPropertiesEXT descriptorHeapProperties{};
-        descriptorHeapProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT;
-        descriptorHeapProperties.pNext = nullptr;
-
-        VkPhysicalDeviceProperties2 properties2{};
-        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-        properties2.pNext = &descriptorHeapProperties;
-        vkGetPhysicalDeviceProperties2(m_physicalDevice, &properties2); //查询必要的信息
-
-        m_samplerDescriptorSize = descriptorHeapProperties.samplerDescriptorSize;
-        m_samplerDescriptorAlignment = descriptorHeapProperties.samplerDescriptorAlignment;
-        m_bufferDescriptorSize = descriptorHeapProperties.bufferDescriptorSize;
-        m_bufferDescriptorAlignment = descriptorHeapProperties.bufferDescriptorAlignment;
-        m_imageDescriptorSize = descriptorHeapProperties.imageDescriptorSize;
-        m_imageDescriptorAlignment = descriptorHeapProperties.imageDescriptorAlignment;
-        m_resourceHeapAlignment = descriptorHeapProperties.resourceHeapAlignment;
-        m_samplerHeapAlignment = descriptorHeapProperties.samplerHeapAlignment;
-        m_resourceHeapReservedSize = descriptorHeapProperties.minResourceHeapReservedRange;
-        m_samplerHeapReservedSize = descriptorHeapProperties.minSamplerHeapReservedRange;
-
-        CreateAllSampler();
-        m_resourceHeapBuffer = GenerateResourceHeapBuffer(*context);
-        m_slotBuffer = GenerateSlotBuffer(*context);
-
-        const uint32_t flightFrameCount = context->GetFlightFrameCount();
-        m_currentFrame = 0;
-        m_slotBlockPendingRelease.assign(flightFrameCount, {});
-        m_bufferPendingRelease.assign(flightFrameCount, {});
-        m_texturePendingRelease.assign(flightFrameCount, {});
+        WriteAllSampler();
     }
 
     void DescriptorSlot::Update() {
-        std::scoped_lock lock(m_slotMutex, m_heapMutex);
-        m_currentFrame = (m_currentFrame + 1) % m_context->GetFlightFrameCount();
-
-        for (uint32_t block : m_slotBlockPendingRelease[m_currentFrame]) {
-            m_freeSlotBlocks.push_back(block);
-        }
-        m_slotBlockPendingRelease[m_currentFrame].clear();
-        for (uint32_t index : m_bufferPendingRelease[m_currentFrame]) {
-            m_bufferReleaseQueue.push(index);
-        }
-        m_bufferPendingRelease[m_currentFrame].clear();
-        for (uint32_t index : m_texturePendingRelease[m_currentFrame]) {
-            m_textureReleaseQueue.push(index);
-        }
-        m_texturePendingRelease[m_currentFrame].clear();
+        //Buffer 走BDA, UniformBuffer 由Context 按飞行帧延迟释放, 目前这里没有需要回收的东西
+        //TODO: Texture 实现后, 在这里按飞行帧回收SampledImage / StorageImage 数组中的索引
     }
 
     void DescriptorSlot::Destroy() {
@@ -222,154 +382,27 @@ namespace Ccino::RHI {
             throw std::runtime_error("DescriptorSlot destroyed while bindings are still alive");
         }
 
-        DestroyAllSampler();
-        m_context->DestroyBuffer(m_resourceHeapBuffer);
-        m_context->DestroyBuffer(m_slotBuffer);
-        m_resourceHeapBuffer = RID::Invalid();
-        m_resourceHeapMapped = nullptr;
-        m_resourceHeapBindInfo = {};
-        m_slotBuffer = RID::Invalid();
-        m_slotBufferMapped = nullptr;
-        m_slotBufferAddress = 0;
-
-        m_slotBlockCount = 0;
-        m_freeSlotBlocks.clear();
-        m_slotBlockPendingRelease.clear();
-        m_textureRIDList.clear();
-        m_bufferRIDList.clear();
-        m_textureIndexMap.clear();
-        m_bufferIndexMap.clear();
-        m_textureReleaseQueue = {};
-        m_bufferReleaseQueue = {};
-        m_texturePendingRelease.clear();
-        m_bufferPendingRelease.clear();
-
+        //全局DescriptorPool 已经销毁时, DescriptorSet 已经跟着释放了
+        if (m_descriptorSet != VK_NULL_HANDLE && m_globalDescriptorPool != VK_NULL_HANDLE) {
+            std::lock_guard lock(m_globalDescriptorPoolMutex);
+            VULKAN_CHECK(vkFreeDescriptorSets(m_device, m_globalDescriptorPool, 1, &m_descriptorSet));
+        }
+        m_descriptorSet = VK_NULL_HANDLE;
         m_context = nullptr;
-        m_core = nullptr;
         m_device = VK_NULL_HANDLE;
-        m_physicalDevice = VK_NULL_HANDLE;
     }
 
-    DescriptorSlotBinding DescriptorSlot::CreateSlotBinding(DescriptorSlotLayout layout) {
-        if (layout.size() > DescriptorSlotBinding::MAX_FIELD_COUNT) {
-            throw std::runtime_error("Descriptor slot layout has too many fields");
+    DescriptorSlotBinding DescriptorSlot::CreateSlotBinding(const DescriptorSlotLayout& layout) {
+        if (m_descriptorSet == VK_NULL_HANDLE) {
+            throw std::runtime_error("DescriptorSlot is not initialized");
         }
-        for (const auto& [name, descriptor] : layout) {
-            if (!IsSupportedDescriptorType(descriptor.type)) {
-                throw std::runtime_error("Descriptor type is not supported by descriptor slot: " + name);
-            }
-        }
-
-        m_liveBindingCount.fetch_add(1, std::memory_order_relaxed);
-        return DescriptorSlotBinding(this, std::move(layout));
+        //m_liveBindingCount 由DescriptorSlotBinding 的构造函数负责增加
+        return DescriptorSlotBinding(this, layout);
     }
 
-    void DescriptorSlot::BindHeaps(VkCommandBuffer commandBuffer) const {
-        m_core->GetVkCmdBindResourceHeapEXT()(commandBuffer, &m_resourceHeapBindInfo);
-        m_core->GetVkCmdBindSamplerHeapEXT()(commandBuffer, &m_samplerHeapBindInfo);
-    }
-
-    void DescriptorSlot::ReleaseBuffer(RID rid) {
-        std::lock_guard lock(m_heapMutex);
-        auto it = m_bufferIndexMap.find(rid);
-        if (it == m_bufferIndexMap.end()) {
-            return;
-        }
-        uint32_t index = it->second.index;
-        if (m_bufferRIDList[index].second > 0) {
-            m_bufferRIDList[index].second--;
-        } 
-        if (m_bufferRIDList[index].second <= 0) {
-            m_bufferRIDList[index] = std::pair<RID, uint32_t>(RID::Invalid(), 0);
-            m_bufferPendingRelease[m_currentFrame].push_back(index);
-            m_bufferIndexMap.erase(it);
-        }
-    }
-
-    void DescriptorSlot::ReleaseTexture(RID rid) {
-        std::lock_guard lock(m_heapMutex);
-        auto it = m_textureIndexMap.find(rid);
-        if (it == m_textureIndexMap.end()) {
-            return;
-        }
-        uint32_t index = it->second.index;
-        if (m_textureRIDList[index].second > 0) {
-            m_textureRIDList[index].second--;
-        } 
-        if (m_textureRIDList[index].second <= 0) {
-            m_textureRIDList[index] = std::pair<RID, uint32_t>(RID::Invalid(), 0);
-            m_texturePendingRelease[m_currentFrame].push_back(index);
-            m_textureIndexMap.erase(it);
-        }
-    }
-
-    uint32_t DescriptorSlot::AcquireBufferIndex(RID rid, VkDescriptorType type) {
-        VkBufferUsageFlags2 usage = 0;
-        if (!m_context->GetBufferUsage(rid, usage)) {
-            throw std::runtime_error("Buffer resource does not exist");
-        }
-        if (!BufferUsageMatchesLayout(type, usage)) {
-            throw std::runtime_error("Buffer type does not match descriptor slot layout");
-        }
-
-        const uint32_t firstIndex = static_cast<uint32_t>(m_bufferOffset / m_bufferDescriptorSize);
-
-        std::lock_guard lock(m_heapMutex);
-        if (auto it = m_bufferIndexMap.find(rid); it != m_bufferIndexMap.end()) {
-            if (it->second.type != type) {
-                throw std::runtime_error("Buffer is already in the descriptor heap with another descriptor type");
-            }
-            m_bufferRIDList[it->second.index].second++; //增加计数
-            return firstIndex + it->second.index;
-        }
-
-        const uint32_t index = AcquireHeapIndex(m_bufferRIDList, m_bufferReleaseQueue, DESCRIPTOR_MAX_BUFFER_COUNT, rid);
-
-        VkDeviceAddressRangeEXT addressRange{};
-        addressRange.address = m_context->GetBufferBDA(rid);
-        addressRange.size = m_context->GetBufferSize(rid);
-
-        VkResourceDescriptorInfoEXT resourceDescriptorInfo{};
-        resourceDescriptorInfo.sType = VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT;
-        resourceDescriptorInfo.type = type;
-        resourceDescriptorInfo.data.pAddressRange = &addressRange;
-
-        VkHostAddressRangeEXT dst{};
-        dst.address = m_resourceHeapMapped + m_bufferOffset + index * m_bufferDescriptorSize;
-        dst.size = m_bufferDescriptorSize;
-
-        VULKAN_CHECK(m_core->GetVkWriteResourceDescriptorsEXT()(m_device, 1, &resourceDescriptorInfo, &dst));
-
-        m_bufferIndexMap[rid] = HeapEntry{index, type};
-        return firstIndex + index;
-    }
-
-    uint32_t DescriptorSlot::AcquireTextureIndex(RID rid, VkDescriptorType type, [[maybe_unused]] const VkImageSubresourceRange& subresourceRange) {
-        VkDescriptorType resourceType = VK_DESCRIPTOR_TYPE_MAX_ENUM;
-        if (!m_context->GetImageDescriptorType(rid, resourceType)) {
-            throw std::runtime_error("Texture resource does not exist");
-        }
-        if (resourceType != type) {
-            throw std::runtime_error("Texture type does not match descriptor slot layout");
-        }
-
-        const uint32_t firstIndex = static_cast<uint32_t>(m_textureOffset / m_imageDescriptorSize);
-
-        std::lock_guard lock(m_heapMutex);
-        if (auto it = m_textureIndexMap.find(rid); it != m_textureIndexMap.end()) {
-            if (it->second.type != type) {
-                throw std::runtime_error("Texture is already in the descriptor heap with another descriptor type");
-            }
-            m_textureRIDList[it->second.index].second++; //增加计数
-            return firstIndex + it->second.index;
-        }
-
-        const uint32_t index = AcquireHeapIndex(m_textureRIDList, m_textureReleaseQueue, DESCRIPTOR_MAX_IMAGE_COUNT, rid);
-
-        //TODO: 绑定图像。 等待RHI支持Texture的创建后实现, 不同的subresourceRange 需要各自的Descriptor
-
-        m_textureIndexMap[rid] = HeapEntry{index, type};
-        return firstIndex + index;
+    void DescriptorSlot::BindDescriptorSet(VkCommandBuffer commandBuffer) const {
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_globalPipelineLayout,
+            0, 1, &m_descriptorSet, 0, nullptr);
     }
 
     uint32_t DescriptorSlot::GetSamplerIndex(SamplerType type) const {
@@ -379,102 +412,20 @@ namespace Ccino::RHI {
         return static_cast<uint32_t>(type);
     }
 
-    uint32_t DescriptorSlot::AllocateSlotBlock() {
-        std::lock_guard lock(m_slotMutex);
-        if (!m_freeSlotBlocks.empty()) {
-            const uint32_t block = m_freeSlotBlocks.back();
-            m_freeSlotBlocks.pop_back();
-            return block;
+    void DescriptorSlot::WriteAllSampler() {
+        std::array<VkDescriptorImageInfo, static_cast<size_t>(SamplerType::COUNT)> imageInfos{};
+        for (size_t i = 0; i < imageInfos.size(); i++) {
+            imageInfos[i].sampler = m_globalSamplers[i];
         }
-        if (m_slotBlockCount >= DESCRIPTOR_MAX_SLOT_COUNT) {
-            throw std::runtime_error("Descriptor slot buffer is full");
-        }
-        return m_slotBlockCount++;
-    }
 
-    void DescriptorSlot::FreeSlotBlock(uint32_t block) {
-        std::lock_guard lock(m_slotMutex);
-        m_slotBlockPendingRelease[m_currentFrame].push_back(block);
-    }
-
-    char* DescriptorSlot::GetSlotBlockMapped(uint32_t block) const {
-        return m_slotBufferMapped + static_cast<size_t>(block) * DESCRIPTOR_SLOT_BLOCK_SIZE;
-    }
-
-    VkDeviceAddress DescriptorSlot::GetSlotBlockAddress(uint32_t block) const {
-        return m_slotBufferAddress + static_cast<VkDeviceAddress>(block) * DESCRIPTOR_SLOT_BLOCK_SIZE;
-    }
-
-
-    RID DescriptorSlot::GenerateDescriptorHeapBuffer(Context& context, VkDeviceSize heapAlignment, VkBindHeapInfoEXT& bindInfo, char*& mapped) {
-        BufferCreateInfo createInfo{};
-        createInfo.hostVisible = true;
-        createInfo.size = static_cast<uint32_t>(bindInfo.heapRange.size + heapAlignment); //多留出对齐堆起点的余量
-        createInfo.usage = VK_BUFFER_USAGE_2_DESCRIPTOR_HEAP_BIT_EXT;
-        RID rid = context.CreateBuffer(createInfo);
-
-        const VkDeviceAddress bufferAddress = context.GetBufferBDA(rid);
-        //来自vkspec ，这里address 必须能被heapAlignment 对齐:
-        //resourceHeapAlignment specifies the required alignment of the heapRange->address member of VkBindHeapInfoEXT for binding resource heaps. 
-        // It must be a power-of-two value.
-        bindInfo.heapRange.address = ALIGN_UP(bufferAddress, heapAlignment);
-        mapped = static_cast<char*>(context.GetBufferMappedPtr(rid)) + (bindInfo.heapRange.address - bufferAddress);
-        return rid;
-    }
-
-    RID DescriptorSlot::GenerateSlotBuffer(Context& context) {
-        BufferCreateInfo createInfo{};
-        createInfo.hostVisible = true;
-        createInfo.size = DESCRIPTOR_SLOT_BLOCK_SIZE * DESCRIPTOR_MAX_SLOT_COUNT;
-        createInfo.usage = VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT;
-        RID rid = context.CreateBuffer(createInfo);
-
-        m_slotBufferMapped = static_cast<char*>(context.GetBufferMappedPtr(rid));
-        m_slotBufferAddress = context.GetBufferBDA(rid);
-        return rid;
-    }
-
-    RID DescriptorSlot::GenerateResourceHeapBuffer(Context& context) {
-        m_bufferOffset = 0;
-        m_textureOffset = static_cast<uint32_t>(ALIGN_UP(DESCRIPTOR_MAX_BUFFER_COUNT * m_bufferDescriptorSize, m_imageDescriptorSize)); //图像在ResourceHeap中的偏移
-        const VkDeviceSize reservedOffset = ALIGN_UP(m_textureOffset + DESCRIPTOR_MAX_IMAGE_COUNT * m_imageDescriptorSize,
-            std::max(m_bufferDescriptorAlignment, m_imageDescriptorAlignment)); //保留区约定放到末尾
-
-        m_resourceHeapBindInfo = {};
-        m_resourceHeapBindInfo.sType = VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT;
-        m_resourceHeapBindInfo.heapRange.size = reservedOffset + m_resourceHeapReservedSize;
-        m_resourceHeapBindInfo.reservedRangeOffset = reservedOffset;
-        m_resourceHeapBindInfo.reservedRangeSize = m_resourceHeapReservedSize;
-        return GenerateDescriptorHeapBuffer(context, m_resourceHeapAlignment, m_resourceHeapBindInfo, m_resourceHeapMapped);
-    }
-
-    void DescriptorSlot::CreateAllSampler() { //创建所有枚举变量的enum
-        //直接塞
-        // 1. 先创建DescriptorHeap, Sampler 之后是给驱动使用的保留区
-        // 计算Sampler大小
-        const VkDeviceSize samplerSize = ALIGN_UP(m_samplerDescriptorSize * static_cast<uint32_t>(SamplerType::COUNT), m_samplerDescriptorAlignment);
-        m_samplerHeapBindInfo = {};
-        m_samplerHeapBindInfo.sType = VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT;
-        m_samplerHeapBindInfo.heapRange.size = samplerSize + m_samplerHeapReservedSize;
-        m_samplerHeapBindInfo.reservedRangeOffset = samplerSize;
-        m_samplerHeapBindInfo.reservedRangeSize = m_samplerHeapReservedSize;
-        m_samplerHeapBuffer = GenerateDescriptorHeapBuffer(*m_context, m_samplerHeapAlignment, m_samplerHeapBindInfo, m_samplerHeapMapped);
-
-        // 2. 创建Sampler并且绑定
-        for (uint32_t i = 0; i < static_cast<uint32_t>(SamplerType::COUNT); i++) {
-            SamplerType samplerType = static_cast<SamplerType>(i);
-            VkSamplerCreateInfo createInfo = CreateSamplerCreateInfo(samplerType);
-            VkHostAddressRangeEXT dst{};
-            dst.address = m_samplerHeapMapped + i * m_samplerDescriptorSize;
-            dst.size = m_samplerDescriptorSize;
-            VULKAN_CHECK(m_core->GetVkWriteSamplerDescriptorsEXT()(m_device, 1, &createInfo, &dst));
-        }
-    }
-
-    void DescriptorSlot::DestroyAllSampler() { 
-        m_context->DestroyBuffer(m_samplerHeapBuffer);
-        m_samplerHeapBuffer = RID::Invalid();
-        m_samplerHeapMapped = nullptr;
-        m_samplerHeapBindInfo = {};
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = m_descriptorSet;
+        write.dstBinding = DESCRIPTOR_BINDING_SAMPLER;
+        write.dstArrayElement = 0;
+        write.descriptorCount = static_cast<uint32_t>(imageInfos.size());
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        write.pImageInfo = imageInfos.data();
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     }
 }

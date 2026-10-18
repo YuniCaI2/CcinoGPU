@@ -7,6 +7,7 @@
 
 #include <concepts>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
@@ -33,6 +34,7 @@ namespace Ccino::RHI {
 
         //meta
         uint32_t GetFlightFrameCount() const { return m_flightFrameCount; }
+        uint32_t GetCurrentFrameIndex() const {return m_currentFrameIndex; }
 
         //Buffer 默认使用BDA
         RID CreateBuffer(const BufferCreateInfo& createInfo); //这里使用新的的BufferUsageFlags2
@@ -133,6 +135,7 @@ namespace Ccino::RHI {
         TRIDArray<VkSemaphore> m_semaphores;
         TRIDArray<ComputePipeline> m_computePipelines;
 
+        std::mutex m_deletionMutex; //保护m_bufferDeletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
         std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列
 
         // 按队列家族索引。每个 TimelineSemaphore 自己保护目标值。

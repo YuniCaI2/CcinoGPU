@@ -1,0 +1,55 @@
+#version 460
+#extension GL_EXT_buffer_reference : require
+
+layout(local_size_x = 1) in;
+
+//把Slot 中的每个常量按分量写成32 位整数, CPU 端逐个比对, 用来验证BindParam 的std140 布局
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Result {
+    uint values[];
+};
+
+//和测试中的DescriptorSlotLayout 顺序一致, 按std140 排布
+layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer Slot {
+    Result result;  //Buffer
+    float f;        //Float
+    int i;          //Int
+    uint u;         //UInt
+    bool b;         //Bool
+    vec2 v2;        //Vec2
+    vec3 v3;        //Vec3
+    float afterV3;  //Float, 紧跟在vec3 后面
+    ivec4 iv4;      //IVec4
+    bvec3 bv3;      //BVec3
+    uvec2 uv2;      //UVec2
+    mat3 m3;        //Mat3
+    mat3x2 m32;     //Mat3x2, 3列vec2
+    mat2x3 m23;     //Mat2x3, 2列vec3
+    mat4 m4;        //Mat4
+    float tail;     //Float
+};
+
+layout(push_constant) uniform PushData {
+    Slot slot;
+} pushData;
+
+void main() {
+    Slot s = pushData.slot;
+    Result o = s.result;
+    uint k = 0;
+
+    o.values[k++] = floatBitsToUint(s.f);
+    o.values[k++] = uint(s.i);
+    o.values[k++] = s.u;
+    o.values[k++] = s.b ? 1u : 0u;
+    for (int c = 0; c < 2; ++c) o.values[k++] = floatBitsToUint(s.v2[c]);
+    for (int c = 0; c < 3; ++c) o.values[k++] = floatBitsToUint(s.v3[c]);
+    o.values[k++] = floatBitsToUint(s.afterV3);
+    for (int c = 0; c < 4; ++c) o.values[k++] = uint(s.iv4[c]);
+    for (int c = 0; c < 3; ++c) o.values[k++] = s.bv3[c] ? 1u : 0u;
+    for (int c = 0; c < 2; ++c) o.values[k++] = s.uv2[c];
+    for (int c = 0; c < 3; ++c) for (int r = 0; r < 3; ++r) o.values[k++] = floatBitsToUint(s.m3[c][r]);
+    for (int c = 0; c < 3; ++c) for (int r = 0; r < 2; ++r) o.values[k++] = floatBitsToUint(s.m32[c][r]);
+    for (int c = 0; c < 2; ++c) for (int r = 0; r < 3; ++r) o.values[k++] = floatBitsToUint(s.m23[c][r]);
+    for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r) o.values[k++] = floatBitsToUint(s.m4[c][r]);
+    o.values[k++] = floatBitsToUint(s.tail);
+}

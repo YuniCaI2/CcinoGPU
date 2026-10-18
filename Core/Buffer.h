@@ -56,10 +56,10 @@ namespace Ccino {
                 return;
             }
             if constexpr (bufferType == BufferType::Device) {
-                m_context->UploadBuffer(m_rhiBuffer, data, m_size * sizeof(DataType));
+                m_context->UploadBuffer(m_rhiBuffer, data, m_size);
             } else if constexpr (bufferType == BufferType::Host) {
                 //直接copy即可
-                std::memcpy(m_context->GetBufferMappedPtr(m_rhiBuffer), data, m_size * sizeof(DataType));
+                std::memcpy(m_context->GetBufferMappedPtr(m_rhiBuffer), data, m_size);
             } else {
                 static_assert(false, "Invalid buffer type");
             }
@@ -76,17 +76,17 @@ namespace Ccino {
             m_context = &context;
             //这里都不直接Copy
             if constexpr (bufferType == BufferType::Device) {
-                m_rhiBuffer = context.CreateStorageBuffer(m_size * sizeof(DataType), nullptr);
+                m_rhiBuffer = context.CreateStorageBuffer(m_size, nullptr);
             } else if constexpr (bufferType == BufferType::Host) {
-                m_rhiBuffer = context.CreateUniformBuffer(m_size * sizeof(DataType), nullptr);
+                m_rhiBuffer = context.CreateUniformBuffer(m_size, nullptr);
             } else {
                 static_assert(false, "Invalid buffer type");
             }
         }
 
-        uint32_t m_size; //字节数为 sizeof(DataType) * count
-        RID m_rhiBuffer; //资源Buffer
-        RHI::Context* m_context;
+        uint32_t m_size = 0; //字节数为 sizeof(DataType) * count
+        RID m_rhiBuffer = RID::Invalid(); //资源Buffer
+        RHI::Context* m_context = nullptr;
         using dataType_t = DataType; //数据类型
     };
 

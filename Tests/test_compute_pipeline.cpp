@@ -61,10 +61,10 @@ TEST(ComputePipeline, Dispatch) {
         context.UnmapBuffer(outputs[i]);
     }
 
-    //和Shader 里Slot 结构体的成员顺序一致
+    //和Shader 里Slot 结构体的成员顺序一致, Buffer 字段存的是BDA
     const Ccino::RHI::DescriptorSlotLayout layout = {
-        {"params", {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER}},
-        {"data", {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER}},
+        {"params", Ccino::RHI::UniformDataType::Buffer},
+        {"data", Ccino::RHI::UniformDataType::Buffer},
     };
 
     VkDevice device = context.GetCore().GetVkDevice();
@@ -83,7 +83,7 @@ TEST(ComputePipeline, Dispatch) {
         context.ExecuteCommand([&](Ccino::RHI::CommandContext::CommandBuffer& commandBuffer) {
             VkCommandBuffer cmd = commandBuffer.commandBuffer;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, context.GetComputePipeline(pipeline));
-            descriptorSlot.BindHeaps(cmd);
+            descriptorSlot.BindDescriptorSet(cmd);
 
             first.Push(cmd);
             vkCmdDispatch(cmd, 8, 1, 1);
@@ -117,8 +117,6 @@ TEST(ComputePipeline, Dispatch) {
 
     context.DestroyComputePipeline(pipeline);
     for (int i = 0; i < 2; ++i) {
-        descriptorSlot.ReleaseBuffer(outputs[i]);
-        descriptorSlot.ReleaseBuffer(params[i]);
         context.DestroyBuffer(outputs[i]);
         context.DestroyBuffer(params[i]);
     }
