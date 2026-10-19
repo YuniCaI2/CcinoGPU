@@ -66,32 +66,44 @@ class TRIDArray {
 public:
     struct Slot {
         T value;
-        uint64_t generation = UINT64_MAX; //UINT64_MAX 代表当前为空
+        uint64_t generation = 0;
         uint64_t type = RID::GetIndex<T>();
+        bool isAlive = false;
     };
 
     RID Add(const T& value) {
         std::unique_lock lock(m_mutex);
         if (m_freeIndices.empty()) {
-            m_data.push_back(value);
+            m_data.push_back(Slot{value, 0, RID::GetIndex<T>(), true});
             return RID(m_data.size() - 1, 0, RID::GetIndex<T>());
         } else {
-            m_data[m_freeIndices.front()] = value;
+            uint64_t index = m_freeIndices.front();
             m_freeIndices.pop();
-            return RID(m_freeIndices.front(), 0, RID::GetIndex<T>());
+            m_data[index].value = value;
+            m_data[index].isAlive = true;
+            return RID(index, m_data[index].generation, RID::GetIndex<T>());
         }
     }
 
     RID Add(T&& value) {
         std::unique_lock lock(m_mutex);
-        m_data.push_back(Slot{std::move(value), 0, RID::GetIndex<T>()});
-        return RID(m_data.size() - 1, 0, RID::GetIndex<T>());
+        if (m_freeIndices.empty()) {
+            m_data.push_back(Slot{std::move(value), 0, RID::GetIndex<T>(), true});
+            return RID(m_data.size() - 1, 0, RID::GetIndex<T>());
+        } else {
+            uint64_t index = m_freeIndices.front();
+            m_freeIndices.pop();
+            m_data[index].value = std::move(value);
+            m_data[index].isAlive = true;
+            return RID(index, m_data[index].generation, RID::GetIndex<T>());
+        }
     }
+
 
     //返回指针
     T* Get(const RID& id) {
         std::shared_lock lock(m_mutex);
-        if (id.index >= m_data.size() || id.generation != m_data[id.index].generation || id.type != RID::GetIndex<T>()) {
+        if (id.index >= m_data.size() || !m_data[id.index].isAlive || id.generation != m_data[id.index].generation || id.type != RID::GetIndex<T>()) {
             return nullptr;
         } 
         return &m_data[id.index].value;
@@ -99,10 +111,11 @@ public:
 
     bool Remove(const RID& id) {
         std::unique_lock lock(m_mutex);
-        if (id.index >= m_data.size()) {
+        if (id.index >= m_data.size() || !m_data[id.index].isAlive || id.generation != m_data[id.index].generation || id.type != RID::GetIndex<T>()) {
             return false;
         }
-        m_data[id.index].generation = UINT64_MAX;
+        m_data[id.index].isAlive = false;
+        m_data[id.index].generation++;
         m_freeIndices.push(id.index);
         return true;
     }
@@ -111,10 +124,25 @@ public:
     void ForEach(Fn&& fn) {
         std::shared_lock lock(m_mutex);
         for (auto& slot : m_data) {
-            if (slot.generation != UINT64_MAX) {
+            if (slot.isAlive) {
                 fn(slot.value);
             }
         }
+    }
+
+    //TODO: 这里的性能有点差，需要有一个更好的性能点
+    std::vector<RID> GetAllRIDs() const {
+        std::vector<RID> rids;
+        for (int i = 0; i < m_data.size(); i++) {
+            if (m_data[i].isAlive) {
+                rids.push_back(RID(i, m_data[i].generation, m_data[i].type));
+            }
+        }
+        return rids;
+    }
+
+    uint64_t Size() const {
+        return m_data.size() - m_freeIndices.size();
     }
 
 private:
