@@ -52,7 +52,10 @@ namespace Ccino {
         ShaderType shaderType;
         ThreadGroupSize threadGroupSize; //只有计算着色器需要
 
-        std::vector<Binding> bindings; //这个Binding  当为Shader时，就直接使用buffer reference 如果是Texture 放到 descriptor_indexing中
-        std::vector<UniformData> uniformDatas; 
+        //资源部分
+        DescriptorSlotLayout descriptorSlotLayout; 
+
+        //代码部分
+        std::string glsl;
     };
 }

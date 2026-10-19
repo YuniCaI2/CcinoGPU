@@ -1,5 +1,6 @@
 #pragma once
 #include <glm/glm.hpp> //Core/CcinoType.h 中的Vec / Mat 都是glm 类型的别名
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -63,10 +64,67 @@ namespace Ccino {
         DMat4x3,
     };
 
+    NLOHMANN_JSON_SERIALIZE_ENUM_STRICT(UniformDataType, {
+        //Resource
+        {UniformDataType::Buffer,       "Buffer"},
+        {UniformDataType::SampledImage, "SampledImage"},
+        {UniformDataType::StorageImage, "StorageImage"},
+        {UniformDataType::Sampler,      "Sampler"},
+
+        //Param 标量
+        {UniformDataType::Bool,   "Bool"},
+        {UniformDataType::Int,    "Int"},
+        {UniformDataType::UInt,   "UInt"},
+        {UniformDataType::Float,  "Float"},
+        {UniformDataType::Double, "Double"},
+
+        //Param 向量
+        {UniformDataType::BVec2, "BVec2"},
+        {UniformDataType::BVec3, "BVec3"},
+        {UniformDataType::BVec4, "BVec4"},
+        {UniformDataType::IVec2, "IVec2"},
+        {UniformDataType::IVec3, "IVec3"},
+        {UniformDataType::IVec4, "IVec4"},
+        {UniformDataType::UVec2, "UVec2"},
+        {UniformDataType::UVec3, "UVec3"},
+        {UniformDataType::UVec4, "UVec4"},
+        {UniformDataType::Vec2,  "Vec2"},
+        {UniformDataType::Vec3,  "Vec3"},
+        {UniformDataType::Vec4,  "Vec4"},
+        {UniformDataType::DVec2, "DVec2"},
+        {UniformDataType::DVec3, "DVec3"},
+        {UniformDataType::DVec4, "DVec4"},
+
+        //Param float 矩阵
+        {UniformDataType::Mat2,   "Mat2"},
+        {UniformDataType::Mat3,   "Mat3"},
+        {UniformDataType::Mat4,   "Mat4"},
+        {UniformDataType::Mat2x3, "Mat2x3"},
+        {UniformDataType::Mat2x4, "Mat2x4"},
+        {UniformDataType::Mat3x2, "Mat3x2"},
+        {UniformDataType::Mat3x4, "Mat3x4"},
+        {UniformDataType::Mat4x2, "Mat4x2"},
+        {UniformDataType::Mat4x3, "Mat4x3"},
+
+        //Param double 矩阵
+        {UniformDataType::DMat2,   "DMat2"},
+        {UniformDataType::DMat3,   "DMat3"},
+        {UniformDataType::DMat4,   "DMat4"},
+        {UniformDataType::DMat2x3, "DMat2x3"},
+        {UniformDataType::DMat2x4, "DMat2x4"},
+        {UniformDataType::DMat3x2, "DMat3x2"},
+        {UniformDataType::DMat3x4, "DMat3x4"},
+        {UniformDataType::DMat4x2, "DMat4x2"},
+        {UniformDataType::DMat4x3, "DMat4x3"},
+    })
+
     struct UniformData {
         std::string name;
         UniformDataType dataType;
+
+        bool operator==(const UniformData&) const = default;
     };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(UniformData, name, dataType)
 
     //字段顺序就是UniformBuffer 中成员的顺序, 对应Shader 里Slot 结构体(std140) 的成员声明顺序
     //顺序是CPU 和Shader 之间唯一的约定, 所以用vector 而不是unordered_map
@@ -75,7 +133,10 @@ namespace Ccino {
     struct UniformOffset {
         uint32_t offset;
         UniformDataType uniformDataType;
+
+        bool operator==(const UniformOffset&) const = default;
     };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(UniformOffset, offset, uniformDataType)
 
     //单个Uniform 成员在std140 下的布局信息
     struct UniformTypeInfo {
@@ -85,7 +146,10 @@ namespace Ccino {
         uint32_t rows = 1;         //向量分量数 / 矩阵行数R, 标量为1
         uint32_t scalarSize = 4;   //单个分量的字节数, double 为8
         uint32_t columnStride = 0; //矩阵相邻两列的间距, 非矩阵等于size
+
+        constexpr bool operator==(const UniformTypeInfo&) const = default;
     };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(UniformTypeInfo, size, alignment, columns, rows, scalarSize, columnStride)
 
     //UniformBuffer 按std140 排布, Shader 里的Slot 结构体需要声明为std140
     namespace Std140 {
