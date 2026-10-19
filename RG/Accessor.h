@@ -4,6 +4,7 @@
 #include "Core/RefCounted.hpp"
 #include "RHI/RHIStruct.h"
 #include "Core/Buffer.h"
+#include "Core/Flags.h"
 
 namespace Ccino {
     enum class BufferAccessFlagBits : uint32_t {
@@ -12,7 +13,7 @@ namespace Ccino {
         ReadWrite = Read | Write,
         None = 0
     };
-    using BufferAccessFlags = uint32_t;
+    using BufferAccessFlags = Flags<BufferAccessFlagBits>;
 
     enum class TextureAccessFlagBits : uint32_t {
         Sampled  = 1 << 0,
@@ -22,7 +23,7 @@ namespace Ccino {
         RenderTarget = 1 << 3,
         None = 0
     };
-    using TextureAccessFlags = uint32_t;
+    using TextureAccessFlags = Flags<TextureAccessFlagBits>;
 
     //上面两个对象是不会同时存在的
     using ResourceAccessFlags = std::variant<BufferAccessFlags, TextureAccessFlags>;
@@ -32,15 +33,13 @@ namespace Ccino {
     class Accessor {
     public:
         //Buffer Accessor实现
-        template<typename DataType, BufferType bufferType>
-        Accessor(Ref<Buffer<DataType, bufferType>> buffer, BufferAccessFlags bufferAccessFlags) {
+        Accessor(Ref<Buffer> buffer, BufferAccessFlags bufferAccessFlags) {
             m_rhi = buffer->GetRHI();
-            m_bufferAccessFlags = bufferAccessFlags;
+            m_resourceAccessFlags = bufferAccessFlags;
         }
         //TODO: 支持Texture
     private:
         RID m_rhi; //可能是Buffer或者Texture
-        BufferAccessFlags m_bufferAccessFlags = 0;
-        TextureAccessFlags m_textureAccessFlags = 0;
+        ResourceAccessFlags m_resourceAccessFlags;
     };
 }
