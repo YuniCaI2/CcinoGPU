@@ -1,0 +1,3 @@
+此目录用来作为CodeGenerator和外部库共享的头文件
+
+对UniformData等头文件进行复用

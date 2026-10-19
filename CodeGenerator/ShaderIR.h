@@ -1,5 +1,9 @@
 #pragma once
+#include "ShaderStruct/UniformData.h"
+
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Ccino {
     enum class ShaderType {
@@ -8,9 +12,14 @@ namespace Ccino {
         Fragment
     };
 
+    struct ThreadGroupSize {
+        uint32_t x;
+        uint32_t y;
+        uint32_t z;
+    };
+
 
     enum class ShaderPropertyType {
-        UniformData, //其实也是StorageBuffer ？ 思考下
         ReadOnlyStorageBuffer,
         WriteOnlyStorageBuffer,
         ReadWriteStorageBuffer,
@@ -27,43 +36,23 @@ namespace Ccino {
         ShaderPropertyType propertyType;
     };
 
-    enum class UniformDataType {
-        Bool,
-        Int,
-        UInt,
-        Float,
-        Double,
-
-        BVec2,
-        BVec3,
-        BVec4,
-        IVec2,
-        IVec3,
-        IVec4,
-        UVec2,
-        UVec3,
-        UVec4,
-        Vec2,
-        Vec3,
-        Vec4,
-        DVec2,
-        DVec3,
-        DVec4,
-
-        Mat2,
-        Mat3,
-        Mat4,
-    };
-
     struct ShaderUniformData {
         std::string name; //结构体名
 
     };
 
+    //这里只需要声明资源类型和名称
+    struct Binding {
+        std::string name;
+        ShaderPropertyType propertyType;
+    };
 
-    
     struct ShaderIR {
+        std::string passName;
         ShaderType shaderType;
-       std::string GLSLCode; //转义出来的结果,常量需要优化到Shader中
+        ThreadGroupSize threadGroupSize; //只有计算着色器需要
+
+        std::vector<Binding> bindings; //这个Binding  当为Shader时，就直接使用buffer reference 如果是Texture 放到 descriptor_indexing中
+        std::vector<UniformData> uniformDatas; 
     };
 }

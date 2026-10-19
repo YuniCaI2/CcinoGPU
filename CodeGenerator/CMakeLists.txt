@@ -26,6 +26,7 @@ target_compile_definitions(CodeGenerator PUBLIC
 )
 
 target_link_libraries(CodeGenerator PUBLIC
+    glm::glm
     nlohmann_json::nlohmann_json
     clangTooling
     clangFrontend
