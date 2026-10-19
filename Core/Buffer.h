@@ -1,7 +1,5 @@
 #pragma once
-#include <type_traits>
 #include <stdint.h>
-#include <iostream>
 #include <vulkan/vulkan_core.h>
 #include "RHI/Context.h"
 #include "RefCounted.hpp"

@@ -1,4 +1,5 @@
 #include "Core/Buffer.h"
+#include <iostream>
 
 namespace Ccino {
     void Buffer::CreateImpl(RHI::Context& context, const CreateArgs& createArgs) {

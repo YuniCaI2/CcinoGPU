@@ -2,6 +2,7 @@
 #include "Accessor.h"
 #include <unordered_map>
 #include <variant>
+#include <iostream>
 
 namespace Ccino {
     bool IsWritable(ResourceAccessFlags accessFlags) {

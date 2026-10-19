@@ -7,3 +7,8 @@
 [submodule "ThirdPart/googletest"]
 	path = ThirdPart/googletest
 	url = https://github.com/google/googletest.git
+[submodule "ThirdPart/llvm-project"]
+	path = ThirdPart/llvm-project
+	url = https://github.com/llvm/llvm-project.git
+	branch = release/19.x
+	shallow = true
