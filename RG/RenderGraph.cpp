@@ -30,6 +30,10 @@ namespace Ccino {
         return isReadable;
     }
 
+    void RGBuilder::Init(RHI::Context* context) {
+        m_context = context;
+    }
+
     void RGBuilder::BuildGraph() {
 
         //TODO: (P2) 将这里的堆分配容器放到栈上
@@ -133,6 +137,16 @@ namespace Ccino {
     }
 
 
+
+    RID RGBuilder::CreateTransientBuffer(typename Buffer::CreateArgs createArgs) {
+        auto rid = m_resources.Add(RGResource{ResourceType::Buffer, createArgs});
+        return  rid;
+    }
+
+    RID RGBuilder::CreateExternalBuffer(const Ref<Buffer>& buffer) {
+        auto rid = m_resources.Add(RGResource{ResourceType::Buffer, buffer->GetCreateArgs(), true});
+        return rid;
+    }
 
 
 

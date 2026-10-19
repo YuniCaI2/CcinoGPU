@@ -49,6 +49,7 @@ namespace Ccino {
         RID GetRHI() const { return m_rhiBuffer; }
 
 
+        CreateArgs GetCreateArgs() const { return m_createArgs; }
         
     private:
         friend class Ref<Buffer>;

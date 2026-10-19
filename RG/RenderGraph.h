@@ -29,6 +29,8 @@ namespace Ccino {
 
     class RGBuilder {
     public:
+        void Init(RHI::Context* context);
+
         template<typename Func>
         requires std::is_invocable_v<Func, RGBuilder&, RID&>
         RGBuilder& AddPass(Func&& func) {
@@ -86,6 +88,9 @@ namespace Ccino {
 
         void BuildGraph();
 
+        RID CreateTransientBuffer(typename Buffer::CreateArgs createArgs);
+        RID CreateExternalBuffer(const Ref<Buffer>& buffer);
+
     private:
         //使用擦除类型句柄管理
         TRIDArray<RGPass> m_passes;
@@ -96,5 +101,7 @@ namespace Ccino {
         std::unordered_map<RID, uint32_t> m_edgeNums; 
 
         std::vector<std::vector<RID>> m_timeline;
+
+        RHI::Context* m_context;
     };
 }
