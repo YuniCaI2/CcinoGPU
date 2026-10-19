@@ -28,12 +28,12 @@ Ccino::Buffer<UniformData, BufferType::Host> uniformBuffer{};
 Ccino::FlushAll(vertexArray, indexArray);
 
 c.AddPass(
-[&](Builder& builder) {
+[&](Builder& builder, RGPass& pass) {
     //声明一些常量或者资源句柄
     auto mvp = GetMVP(); //常量 会被打包到UniformBuffer
     //Buffer也可以在这里Flush.这个区域是每帧的RenderGraph的录制阶段
-    Ccino::Accessor indexAc = Ccino::Access(indexBuffer, Ccino::AccessType::Read, offsetStartIndex, offsetEndIndex);//End默认队尾
-    Ccino::Accessor vertexAc = Ccino::Access(vertexBuffer, Ccino::AccessType::Read, offsetStartIndex, offsetEndIndex);//End默认队尾
+    Ccino::Accessor indexAc = builder.Read(pass, indexBuffer);
+    Ccino::Accessor vertexAc = builder.Read(pass, vertexBuffer);
 
     Ccino::Vec4 color = {1.0, 0.0, 0.0, 1.0}; //这种常量会被直接优化内联，在我的编译阶段
 

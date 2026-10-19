@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <variant>
 #include "Core/RefCounted.hpp"
 #include "RHI/RHIStruct.h"
 #include "Core/Buffer.h"
@@ -22,6 +23,9 @@ namespace Ccino {
         None = 0
     };
     using TextureAccessFlags = uint32_t;
+
+    //上面两个对象是不会同时存在的
+    using ResourceAccessFlags = std::variant<BufferAccessFlags, TextureAccessFlags>;
 
 
 

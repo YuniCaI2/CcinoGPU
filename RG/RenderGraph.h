@@ -1,16 +1,27 @@
 #pragma once
-#include <concepts>
+#include "Accessor.h"
 #include "RHI/RHIStruct.h"
 #include "RG/ComputePass.h"
+#include "RG/Pass.h"
+
 
 namespace Ccino {
+    struct RGEdge {
+        uint32_t resourceIndex;
+        uint32_t version;
+        ResourceAccessFlags resourceAccessFlags;   
+    };
+
     class RGBuilder {
     public:
         template<typename Func>
-        requires std::is_invocable_v<Func, RGBuilder&>
+        requires std::is_invocable_v<Func, RGBuilder&, RGPass&>
         RGBuilder& AddPass(Func&& func) {
             //处理Accessor 并且处理Builder 内部Shader的翻译和绑定
+
         }
+
+
 
         //TODO: 定义外部RenderTarget 隐藏RHI RID
         template<typename VS, typename PS>
@@ -25,5 +36,9 @@ namespace Ccino {
             //所以这里的CS需要是一个Pipeline 其中有Shader对象并且还有其周边的设置Meta数据
         }
 
+    private:
+
+        std::vector<std::unique_ptr<RGPass>> passes;
+        std::vector<RGEdge> edges;        
     };
 }
