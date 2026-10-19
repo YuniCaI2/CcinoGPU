@@ -1,9 +1,11 @@
 #include "Core/Buffer.h"
 
 namespace Ccino {
-    void Buffer::CreateImpl(RHI::Context& context, uint32_t count, uint32_t typeSize) {
+    void Buffer::CreateImpl(RHI::Context& context, const CreateArgs& createArgs) {
 
-        m_size = typeSize * count;
+        m_size = createArgs.size;
+        m_bufferType = createArgs.bufferType;
+        m_createArgs = createArgs; 
         m_context = &context;
         //这里都不直接Copy
         if (m_bufferType == BufferType::Device) {
@@ -16,19 +18,6 @@ namespace Ccino {
         }
     }
 
-    void Buffer::CreateImpl(RHI::Context& context, uint32_t size) {
-        m_size = size;
-        m_context = &context;
-        //这里都不直接Copy
-        if (m_bufferType == BufferType::Device) {
-            m_rhiBuffer = context.CreateStorageBuffer(m_size, nullptr);
-        } else if (m_bufferType == BufferType::Host) {
-            m_rhiBuffer = context.CreateUniformBuffer(m_size, nullptr);
-        } else {
-            std::cerr << "Invalid buffer type" << std::endl;
-            return;
-        }
-    }
 
     void Buffer::Delete() {
         if (m_rhiBuffer == RID::Invalid()) {

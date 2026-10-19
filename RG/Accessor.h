@@ -29,17 +29,23 @@ namespace Ccino {
     using ResourceAccessFlags = std::variant<BufferAccessFlags, TextureAccessFlags>;
 
 
-
+    //这个模板用来让Accessor模拟View
+    template<typename BufferResourceType>
     class Accessor {
     public:
-        //Buffer Accessor实现
-        Accessor(Ref<Buffer> buffer, BufferAccessFlags bufferAccessFlags) {
-            m_rhi = buffer->GetRHI();
-            m_resourceAccessFlags = bufferAccessFlags;
+        Accessor(RID& resource, BufferAccessFlags bufferAccessFlags) {
+            m_resource = resource;
+            m_bufferAccessFlags = bufferAccessFlags;
         }
         //TODO: 支持Texture
+
+        BufferResourceType operator[](uint32_t index) {
+            //dummy 本质是占位符并且将类型传递出去让ClangAST看到，方便后续转换代码处理auto时可用 
+        }
+
     private:
-        RID m_rhi; //可能是Buffer或者Texture
-        ResourceAccessFlags m_resourceAccessFlags;
+        RID m_resource; //这里是RGResource逻辑资源的RID
+        BufferAccessFlags m_bufferAccessFlags;
     };
+    //只作为Buffer的视图，后续再实现Texture确认边界
 }

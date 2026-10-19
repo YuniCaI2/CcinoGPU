@@ -23,18 +23,18 @@ namespace Ccino {
             Delete();
         }
 
+        struct CreateArgs {
+            BufferType bufferType = BufferType::Device;
+            uint32_t size{};
+        };
+
         //两种构造方式
-        static Ref<Buffer> Create(RHI::Context& context, uint32_t count, uint32_t typeSize) {
+        static Ref<Buffer> Create(RHI::Context& context, const CreateArgs& createArgs) {
             auto buffer = Ref<Buffer>::Make();
-            buffer->CreateImpl(context, count, typeSize);
+            buffer->CreateImpl(context, createArgs);
             return buffer; 
         }
 
-        static Ref<Buffer> Create(RHI::Context& context, uint32_t size) {
-            auto buffer = Ref<Buffer>::Make();
-            buffer->CreateImpl(context, size);
-            return buffer; 
-        }
         
 
 
@@ -54,14 +54,14 @@ namespace Ccino {
         friend class Ref<Buffer>;
         Buffer() = default;
 
-        void CreateImpl(RHI::Context& context, uint32_t count, uint32_t typeSize);
-        void CreateImpl(RHI::Context& context, uint32_t size);
+        void CreateImpl(RHI::Context& context, const CreateArgs& createArgs);
 
         uint32_t m_size = 0; //字节数为 sizeof(DataType) * count
         RID m_rhiBuffer = RID::Invalid(); //资源Buffer
         RHI::Context* m_context = nullptr;
 
         BufferType m_bufferType =  BufferType::Device;
+        CreateArgs m_createArgs{}; //中转访问描述
     };
 
 }
