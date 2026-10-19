@@ -11,12 +11,18 @@ endif()
 
 add_library(CodeGenerator STATIC ${CODE_GENERATOR_SOURCES})
 
-target_include_directories(CodeGenerator PUBLIC
+target_include_directories(CodeGenerator SYSTEM PUBLIC
     ${CMAKE_SOURCE_DIR}/ThirdPart/llvm-project/llvm/include
     ${CMAKE_BINARY_DIR}/ThirdPart/llvm-project/llvm/include
     ${CMAKE_SOURCE_DIR}/ThirdPart/llvm-project/clang/include
     ${CMAKE_BINARY_DIR}/ThirdPart/llvm-project/llvm/tools/clang/include
+)
+target_include_directories(CodeGenerator PUBLIC
     ${CMAKE_SOURCE_DIR}
+)
+
+target_compile_definitions(CodeGenerator PUBLIC
+    _SILENCE_CXX23_ALIGNED_UNION_DEPRECATION_WARNING
 )
 
 target_link_libraries(CodeGenerator PUBLIC
