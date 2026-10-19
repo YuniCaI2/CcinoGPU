@@ -25,13 +25,6 @@ target_compile_definitions(CodeGenerator PUBLIC
     _SILENCE_CXX23_ALIGNED_UNION_DEPRECATION_WARNING
 )
 
-# 用来得到执行文件位置保证生成的路径可得到
-target_compile_definitions(CodeGenerator PUBLIC
-    CCINO_EXEC_DIR=\"$<TARGET_FILE_DIR:CcinoGPU>\"
-    CCINO_EXEC_PATH=\"$<TARGET_FILE:CcinoGPU>\"
-)
-
-
 target_link_libraries(CodeGenerator PUBLIC
     glm::glm
     nlohmann_json::nlohmann_json

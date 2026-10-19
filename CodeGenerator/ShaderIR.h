@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Ccino {
@@ -56,6 +57,12 @@ namespace Ccino {
         DescriptorSlotLayout descriptorSlotLayout; 
 
         //代码部分
+        std::string glsl;
+    };
+
+    //这里统一丢到HugeHeader中，并且只需要处理下其中的类型
+    struct ShaderFunction {
+        std::string name;
         std::string glsl;
     };
 }

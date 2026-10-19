@@ -12,6 +12,12 @@ set(RHI_VULKAN ON)
 
 add_executable(CcinoGPU main.cpp)
 
+target_compile_definitions(CcinoGPU PUBLIC
+    CCINO_PROJECT_DIR=\"${CMAKE_SOURCE_DIR}\"
+    CCINO_SHADER_DIR=\"${CMAKE_SOURCE_DIR}/.CcinoGPU/Shaders\"
+    CCINO_SHADER_HUGE_HEADER_PATH=\"${CMAKE_SOURCE_DIR}/.CcinoGPU/Shaders/HugeHeader.glsl\"
+)
+
 enable_testing()
 add_subdirectory(ThirdPart)
 add_subdirectory(RHI)
