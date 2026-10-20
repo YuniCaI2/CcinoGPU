@@ -32,20 +32,16 @@ namespace Ccino {
         */
     };
 
-    struct ShaderProperty {
+    //这个也是资源绑定，并且加上资源声明
+    struct ShaderPropertyBinding {
         std::string name;
         ShaderPropertyType propertyType;
     };
 
-    struct ShaderUniformData {
+    struct ShaderUniformDataBinding {
         std::string name; //结构体名
-
-    };
-
-    //这里只需要声明资源类型和名称
-    struct Binding {
-        std::string name;
-        ShaderPropertyType propertyType;
+        uint32_t offset; // 当前的Pass的Lambda的堆偏移,后续Cpp消费这个堆偏移实现绑定
+        UniformDataType uniformDataType;
     };
 
     struct ShaderIR {
@@ -53,8 +49,12 @@ namespace Ccino {
         ShaderType shaderType;
         ThreadGroupSize threadGroupSize; //只有计算着色器需要
 
-        //资源部分
+        //资源部分,声明布局
         DescriptorSlotLayout descriptorSlotLayout; 
+
+        //实际绑定，被Cpp消费
+        std::vector<ShaderPropertyBinding> propertyBindings;
+        std::vector<ShaderUniformDataBinding> uniformDataBindings;
 
         //代码部分
         std::string glsl;
