@@ -26,6 +26,8 @@ namespace Ccino {
         static std::string ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op);
         static std::string ChangeCppOperatorToGLSLOperator(clang::OverloadedOperatorKind op);
         static std::string ChangeAccessorToSSBOReference(clang::ValueDecl* value);
+        static std::string ChangeCppExprToGLSLExpr(clang::Expr* expr); //这里遇到函数不会处理
+        static std::string GenerateGlobalFunctionToGLSL(clang::FunctionDecl* functionDecl); //把全局函数统一翻译成GLSL函数放到统一的GLSL头文件，保证所有Pass可以共享函数
 
         static std::string GetGLSLDefine(clang::QualType type, bool needStructHeader = false);
         static UniformDataType GetUniformDataType(clang::QualType type);

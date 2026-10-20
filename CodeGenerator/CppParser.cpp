@@ -85,7 +85,7 @@ namespace Ccino {
     std::string CppParser::ChangeAccessorToSSBOReference(clang::ValueDecl* value) {
         std::string ssboBinding = ""; //SSBO 默认使用STD430
         clang::QualType type = value->getType();
-        auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
+        auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType(); //去掉引用 去掉别名 去掉cv
         if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
             if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
                 llvm::StringRef tmplName = spec->getName();
@@ -114,6 +114,83 @@ namespace Ccino {
                 }
             }
         }
+        return {};
+    }
+
+
+    std::string CppParser::ChangeCppExprToGLSLExpr(clang::Expr* expr) {
+        expr = expr->IgnoreUnlessSpelledInSource(); //剔除重复的代码
+        if (auto* DRE = llvm::dyn_cast<clang::DeclRefExpr>(expr)) { //只有一个值时走,引用表达式
+            return DRE->getDecl()->getNameAsString(); 
+        } 
+        
+        if (auto* Op = llvm::dyn_cast<clang::CXXOperatorCallExpr>(expr)) {
+            std::string op = clang::getOperatorSpelling(Op->getOperator());
+
+            if (Op->getOperator() == clang::OO_PlusPlus ||
+                Op->getOperator() == clang::OO_MinusMinus) {
+                const clang::Expr* operand = Op->getArg(0);
+                std::string operandGLSL = ChangeCppExprToGLSLExpr(const_cast<clang::Expr*>(operand));
+
+                return Op->getNumArgs() == 2 //如果为2 则为后缀 如果为1 则为前缀
+                    ? "(" + operandGLSL + op + ")"
+                    : "(" + op + operandGLSL + ")";
+            }
+
+            if (Op->isInfixBinaryOp()) { //中缀
+                return "("
+                    + ChangeCppExprToGLSLExpr(Op->getArg(0))
+                    + " " + op + " "
+                    + ChangeCppExprToGLSLExpr(Op->getArg(1))
+                    + ")";
+            }
+
+            if (Op->getNumArgs() == 1) { //前缀
+                // -a、!a、~a 等前缀一元运算符
+                return "(" + op + ChangeCppExprToGLSLExpr(Op->getArg(0)) + ")";
+            }
+        }
+        
+        if (auto* Op = llvm::dyn_cast<clang::BinaryOperator>(expr)) {
+            std::string op = Op->getOpcodeStr().str();
+            return "("
+                + ChangeCppExprToGLSLExpr(Op->getLHS())
+                + " " + op + " "
+                + ChangeCppExprToGLSLExpr(Op->getRHS())
+                + ")";
+        }
+        
+        //浮点数字面量
+        if (auto* FL = llvm::dyn_cast<clang::FloatingLiteral>(expr)) {
+            llvm::SmallString<16> S;
+            FL->getValue().toString(S);
+            return S.str().str();
+        }
+        
+        //构造函数
+        if (auto* Cstr = llvm::dyn_cast<clang::CXXConstructExpr>(expr)) { //调用构造函数
+            std::string R = ChangeCppTypeToGLSLType(Cstr->getType()) + "("; 
+            for (int i = 0; i < Cstr->getNumArgs()(); ++i) {
+                R += (i ? "," : "") + ChangeCppExprToGLSLExpr(Cstr->getArg(i)); 
+            }
+            return R + ")";
+        }
+        
+        //函数调用侧
+        if (auto *Call = llvm::dyn_cast<clang::CallExpr>(expr))             // glm::dot(a,b) -> dot(a,b)
+            if (auto *FD = Call->getDirectCallee()) {
+                std::string R = FD->getName().str() + "(";
+                for (unsigned i = 0; i < Call->getNumArgs(); ++i)
+                    R += (i ? ", " : "") + ChangeCppExprToGLSLExpr(Call->getArg(i));
+                return R + ")";
+            }
+        
+        llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: " + std::string(expr->getStmtClassName()) + "\n"; 
+        return {}; //直接返回空
+    }
+
+    std::string CppParser::GenerateGlobalFunctionToGLSL(clang::FunctionDecl* functionDecl) {
+
         return {};
     }
 
