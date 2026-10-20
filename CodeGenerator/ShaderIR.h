@@ -52,9 +52,8 @@ namespace Ccino {
         //资源部分,声明布局
         DescriptorSlotLayout descriptorSlotLayout; 
 
-        //实际绑定，被Cpp消费
-        std::vector<ShaderPropertyBinding> propertyBindings;
-        std::vector<ShaderUniformDataBinding> uniformDataBindings;
+        //实际绑定，被Cpp消费. SSBO和Texture在声明Accessor时会被显式绑定
+        std::vector<ShaderUniformDataBinding> uniformDataBindings; //这里负责的是常量
 
         //代码部分
         std::string glsl;

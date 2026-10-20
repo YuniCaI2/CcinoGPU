@@ -30,6 +30,7 @@ namespace Ccino {
         static std::string GetGLSLDefine(clang::QualType type, bool needStructHeader = false);
         static UniformDataType GetUniformDataType(clang::QualType type);
         static std::vector<ShaderUniformDataBinding> GetUniformDataBindings(clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
+        static DescriptorSlotLayout GetDescriptorSlotLayout(clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
 
         static bool IsGlobalVariable(clang::ValueDecl* value);
 

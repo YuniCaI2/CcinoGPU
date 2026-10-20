@@ -262,12 +262,14 @@ namespace Ccino {
             uint32_t offset = static_cast<uint32_t>(lambdaClassLayout.getFieldOffset(fieldIndex) / 8);
             UniformDataType uniformDataType = GetUniformDataType(field->getType()); //QualType转换为uniformData对应的类型
             uniformDataBindings.push_back(ShaderUniformDataBinding{varName, offset, uniformDataType});
+            fieldIndex++;
         }
 
         return uniformDataBindings;
     }
 
-    bool IsGlobalVariable(clang::ValueDecl* value) {
+
+    bool CppParser::IsGlobalVariable(clang::ValueDecl* value) {
         if (const auto* varDecl = llvm::dyn_cast<clang::VarDecl>(value)) { //值声明变为变量声明
             // 1. 判断是否在文件/命名空间作用域声明（真正的全局变量 + 类的 static 静态成员变量）
             bool isGlobalScopeVar = varDecl->isFileVarDecl();
@@ -281,5 +283,19 @@ namespace Ccino {
             return isGlobalScopeVar && hasGlobalStorage && !isLocalVar;
         }
         return false;
+    }
+
+    DescriptorSlotLayout CppParser::GetDescriptorSlotLayout(clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
+        DescriptorSlotLayout descriptorSlotLayout;
+        const clang::CXXRecordDecl* lambdaClass = lambdaExpr->getLambdaClass();
+
+        for (const auto* field : lambdaClass->fields()) {
+
+            std::string varName = field->getNameAsString();
+            UniformDataType uniformDataType = GetUniformDataType(field->getType()); //QualType转换为uniformData对应的类型
+            descriptorSlotLayout.emplace_back(varName, uniformDataType);
+
+        }
+        return descriptorSlotLayout;
     }
 }
