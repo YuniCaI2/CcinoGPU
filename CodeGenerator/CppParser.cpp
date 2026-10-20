@@ -22,6 +22,14 @@ namespace Ccino {
         return {};
     }
 
+    std::string CppParser::GenerateBindingInfo() {
+        return {}; 
+    }
+
+    std::string CppParser::ProcessSTMT(clang::Stmt* stmt) {
+        return {}; 
+    }
+
     // AST 转换工具函数
     std::string CppParser::ChangeCppTypeToGLSLType(clang::QualType type) {
         if (type.isNull()) return "";
@@ -190,8 +198,56 @@ namespace Ccino {
     }
 
     std::string CppParser::GenerateGlobalFunctionToGLSL(clang::FunctionDecl* functionDecl) {
+        if (!functionDecl) return {}; 
+        auto definition = functionDecl->getDefinition();
+        if (!definition) {
+            llvm::errs() << "Error: No definition found\n"; 
+            return {};
+        }
+        
+        
+        if (!functionDecl->hasBody()) {
+            llvm::errs() << "Error: No body found\n";
+            return {};  
+        }
+        clang::Stmt* body = definition->getBody();
+        
+        std::string result = ChangeCppTypeToGLSLType(definition->getReturnType()) + " ";
+        result += definition->getNameAsString() + "(";  
+        
+        for (unsigned int i = 0; i < definition->getNumParams(); ++i) {
+            result += i ? "," : "";
+            auto* paramDecl = definition->getParamDecl(i);
+            result += ChangeCppTypeToGLSLType(paramDecl->getType()) + " " + paramDecl->getNameAsString();
+        }
+        result += ") { \n";
+        
+        auto* compound = llvm::dyn_cast_or_null<clang::CompoundStmt>(body);
 
-        return {};
+        if (!compound) {
+            return {};
+        }
+
+        for (clang::Stmt* stmt : compound->body()) {
+            
+            //处理return语句
+            if (auto* ret = llvm::dyn_cast<clang::ReturnStmt>(stmt)) {
+                if (clang::Expr* expr = ret->getRetValue()) {
+                    result += "    return " +
+                              ChangeCppExprToGLSLExpr(expr) + ";\n";
+                } else {
+                    result += "    return;\n";
+                }
+                continue;
+            }
+
+            // 其他语句先标记为未支持，避免悄悄丢代码
+            result += "    /* unsupported stmt: " +
+                      std::string(stmt->getStmtClassName()) + " */\n";
+        }
+
+        result += "}\n";
+        return result;
     }
 
     std::string CppParser::ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op) {
