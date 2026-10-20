@@ -57,31 +57,31 @@ namespace Ccino {
 
         //依赖创建(外部资源) 分两步，注册为RG的外部资源然后创建依赖
         template<typename BufferResourceType>
-        Accessor<BufferResourceType> Read(Ref<Buffer> buffer, RID& passRID);
+        Accessor<BufferResourceType, BufferAccessFlagBits::Read> Read(Ref<Buffer> buffer, RID& passRID);
 
         template<typename BufferResourceType>
-        Accessor<BufferResourceType> Write(Ref<Buffer> buffer, RID& passRID);
+        Accessor<BufferResourceType, BufferAccessFlagBits::Write> Write(Ref<Buffer> buffer, RID& passRID);
 
         //依赖创建(内部资源)
         template<typename BufferResourceType>
-        Accessor<BufferResourceType> Read(RID& resource, RID& passRID) {
+        Accessor<BufferResourceType, BufferAccessFlagBits::Read> Read(RID& resource, RID& passRID) {
             uint32_t version = m_edgeNums[resource]; //Read不会改变版本，RWR所读的资源都一致
             m_edges.push_back(RGEdge{resource, passRID, version, BufferAccessFlagBits::Read});
-            return Accessor<BufferResourceType>(resource, BufferAccessFlagBits::Read);
+            return Accessor<BufferResourceType, BufferAccessFlagBits::Read>(resource);
         }
 
         template<typename BufferResourceType>
-        Accessor<BufferResourceType> Write(RID& resource, RID& passRID) {
+        Accessor<BufferResourceType, BufferAccessFlagBits::Write> Write(RID& resource, RID& passRID) {
             uint32_t version = m_edgeNums[resource]++;
             m_edges.push_back(RGEdge{resource, passRID, version, BufferAccessFlagBits::Write});
-            return Accessor<BufferResourceType>(resource, BufferAccessFlagBits::Write);
+            return Accessor<BufferResourceType, BufferAccessFlagBits::Write>(resource);
         }
 
         template<typename BufferResourceType>
-        Accessor<BufferResourceType> ReadWrite(RID& resource, RID& passRID) {
+        Accessor<BufferResourceType, BufferAccessFlagBits::ReadWrite> ReadWrite(RID& resource, RID& passRID) {
             uint32_t version = m_edgeNums[resource]++;
             m_edges.push_back(RGEdge{resource, passRID, version, BufferAccessFlagBits::ReadWrite});
-            return Accessor<BufferResourceType>(resource, BufferAccessFlagBits::Write);
+            return Accessor<BufferResourceType, BufferAccessFlagBits::ReadWrite>(resource);
         }
 
         //处理Texture依赖

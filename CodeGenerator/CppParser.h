@@ -1,4 +1,6 @@
 #pragma once
+#include <clang/AST/Decl.h>
+#include <clang/AST/Type.h>
 #include <vector>
 #include <string>
 #include <clang/AST/ASTContext.h>
@@ -16,9 +18,15 @@ namespace Ccino {
         // 内部 AST 处理函数（在 MatchFinder::MatchCallback::run 内部调用，此时 AST 存活）：
         static ShaderIR ProcessLambdaExpr(const clang::LambdaExpr* lambda, clang::ASTContext& context);
 
+        static std::string GenerateBindingInfo();
+
         // AST 转换工具函数
         static std::string ChangeCppTypeToGLSLType(clang::QualType type);
+
         static std::string ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op);
         static std::string ChangeCppOperatorToGLSLOperator(clang::OverloadedOperatorKind op);
+        static std::string ChangeAccessorToSSBOReference(clang::ValueDecl* value);
+
+        static std::string GetGLSLDefine(clang::QualType type, bool needStructHeader = false);
     };
 }

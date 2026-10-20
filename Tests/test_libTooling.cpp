@@ -15,12 +15,15 @@ using namespace clang::ast_matchers;
 class VarTypeCollector : public MatchFinder::MatchCallback {
 public:
     std::unordered_map<std::string, std::string> VarGLSLTypes;
+    std::unordered_map<std::string, std::string> VarSSBOReferences;
     std::unordered_map<std::string, std::string> FuncReturnGLSLTypes;
 
     void run(const MatchFinder::MatchResult& Result) override {
         if (const auto* Var = Result.Nodes.getNodeAs<VarDecl>("var")) {
             VarGLSLTypes[Var->getNameAsString()] =
                 Ccino::CppParser::ChangeCppTypeToGLSLType(Var->getType());
+            VarSSBOReferences[Var->getNameAsString()] =
+                Ccino::CppParser::ChangeAccessorToSSBOReference(const_cast<VarDecl*>(Var));
         }
         if (const auto* Func = Result.Nodes.getNodeAs<FunctionDecl>("func")) {
             FuncReturnGLSLTypes[Func->getNameAsString()] =
@@ -248,4 +251,110 @@ TEST(CppParserTest, ChangeCppTypeToGLSLType_ArrayAndCustomStruct) {
     EXPECT_EQ(result.VarGLSLTypes["p"], "Particle");
     EXPECT_EQ(result.VarGLSLTypes["p_ref"], "Particle");
 }
+
+TEST(CppParserTest, ChangeAccessorToSSBOReference_ReadWriteAccessFlags) {
+    const char* code = R"(
+        using uint32_t = unsigned int;
+
+        template <typename BitType>
+        struct Flags {
+            uint32_t mask = 0;
+            constexpr Flags() = default;
+            constexpr Flags(BitType bit) : mask(static_cast<uint32_t>(bit)) {}
+            constexpr explicit Flags(uint32_t flags) : mask(flags) {}
+        };
+
+        enum class BufferAccessFlagBits : uint32_t {
+            Read = 1 << 0,
+            Write = 1 << 1,
+            ReadWrite = Read | Write,
+            None = 0
+        };
+        using BufferAccessFlags = Flags<BufferAccessFlagBits>;
+
+        namespace std {
+            template<typename T, unsigned long long N>
+            struct array {};
+        }
+        namespace glm {
+            template<int L, typename T>
+            struct vec {};
+        }
+        namespace Ccino {
+            template<typename T, unsigned long long N>
+            using Array = std::array<T, N>;
+            using Vec3 = glm::vec<3, float>;
+
+            template<typename BufferResourceType, BufferAccessFlags bufferAccessFlags>
+            class Accessor {};
+        }
+
+        struct Particle {
+            Ccino::Vec3 pos;
+            float mass;
+            Ccino::Array<int, 4> indices;
+        };
+
+        void TestEntry() {
+            Ccino::Accessor<Particle, BufferAccessFlagBits::Read> readAc;
+            Ccino::Accessor<Particle, BufferAccessFlagBits::Write> writeAc;
+            Ccino::Accessor<Particle, BufferAccessFlagBits::ReadWrite> rwAc;
+
+            const auto& readAcRef = readAc;
+            Particle normalStruct;
+            int normalInt = 0;
+        }
+    )";
+
+    auto result = CollectTypesFromCode(code);
+
+    const std::string expectedBody =
+        "Particle {\n"
+        "    vec3 pos;\n"
+        "    float mass;\n"
+        "    int[4] indices;\n"
+        "};\n";
+
+    EXPECT_EQ(
+        result.VarSSBOReferences["readAc"],
+        "layout(buffer_reference, std430) readonly buffer " + expectedBody
+    );
+    EXPECT_EQ(
+        result.VarSSBOReferences["writeAc"],
+        "layout(buffer_reference, std430) writeonly buffer " + expectedBody
+    );
+    EXPECT_EQ(
+        result.VarSSBOReferences["rwAc"],
+        "layout(buffer_reference, std430) readwrite buffer " + expectedBody
+    );
+    EXPECT_EQ(
+        result.VarSSBOReferences["readAcRef"],
+        "layout(buffer_reference, std430) readonly buffer " + expectedBody
+    );
+
+    // 非 Accessor 变量应返回空字符串
+    EXPECT_EQ(result.VarSSBOReferences["normalStruct"], "");
+    EXPECT_EQ(result.VarSSBOReferences["normalInt"], "");
+}
+
+TEST(CppParserTest, ChangeAccessorToSSBOReference_InvalidSecondArgReturnsEmpty) {
+    const char* code = R"(
+        namespace Ccino {
+            template<typename BufferResourceType, typename InvalidSecondArg>
+            class Accessor {};
+        }
+
+        struct Particle {
+            float mass;
+        };
+
+        void TestEntry() {
+            Ccino::Accessor<Particle, int> invalidAc;
+        }
+    )";
+
+    auto result = CollectTypesFromCode(code);
+    EXPECT_EQ(result.VarSSBOReferences["invalidAc"], "");
+}
+
 

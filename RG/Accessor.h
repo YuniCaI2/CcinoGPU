@@ -5,37 +5,17 @@
 #include "RHI/RHIStruct.h"
 #include "Core/Buffer.h"
 #include "Core/Flags.h"
+#include "RG/AccessorEnums.h"
 
 namespace Ccino {
-    enum class BufferAccessFlagBits : uint32_t {
-        Read = 1 << 0,
-        Write = 1 << 1,
-        ReadWrite = Read | Write,
-        None = 0
-    };
-    using BufferAccessFlags = Flags<BufferAccessFlagBits>;
-
-    enum class TextureAccessFlagBits : uint32_t {
-        Sampled  = 1 << 0,
-        StorageRead = 1 << 1,
-        StorageWrite = 1 << 2,
-        StorageReadWrite = StorageRead | StorageWrite,
-        RenderTarget = 1 << 3,
-        None = 0
-    };
-    using TextureAccessFlags = Flags<TextureAccessFlagBits>;
-
-    //上面两个对象是不会同时存在的
-    using ResourceAccessFlags = std::variant<BufferAccessFlags, TextureAccessFlags>;
 
 
     //这个模板用来让Accessor模拟View
-    template<typename BufferResourceType>
+    template<typename BufferResourceType, BufferAccessFlags bufferAccessFlags>
     class Accessor {
     public:
-        Accessor(RID& resource, BufferAccessFlags bufferAccessFlags) {
+        Accessor(RID& resource) {
             m_resource = resource;
-            m_bufferAccessFlags = bufferAccessFlags;
         }
         //TODO: 支持Texture
 
@@ -45,7 +25,7 @@ namespace Ccino {
 
     private:
         RID m_resource; //这里是RGResource逻辑资源的RID
-        BufferAccessFlags m_bufferAccessFlags;
+        BufferAccessFlags m_bufferAccessFlags = bufferAccessFlags;
     };
     //只作为Buffer的视图，后续再实现Texture确认边界
 }
