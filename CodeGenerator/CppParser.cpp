@@ -1,14 +1,22 @@
 #include "CppParser.h"
+#include "CodeGenerator/ShaderIR.h"
 #include "RG/AccessorEnums.h"
+#include <clang/AST/ASTContext.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
+#include <clang/AST/ExprCXX.h>
 #include <clang/AST/RecordLayout.h>
 #include <clang/AST/Stmt.h>
 #include <clang/AST/TemplateBase.h>
 #include <clang/AST/Type.h>
 #include <clang/Basic/OperatorKinds.h>
+#include <format>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
+#include <regex>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace Ccino
 {
@@ -18,16 +26,57 @@ namespace Ccino
 
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
     std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& filePath) {
+        
+
         return {};
     }
 
     // 内部 AST 处理函数（在 MatchFinder::MatchCallback::run 内部调用，此时 AST 存活）：
-    ShaderIR CppParser::ProcessLambdaExpr(const clang::LambdaExpr* lambda, clang::ASTContext& context) {
-        return {};
+    ShaderIR CppParser::ProcessLambdaExpr(const clang::LambdaExpr* lambda, ShaderType shaderType, clang::ASTContext& context) {
+        return{};
     }
 
-    std::string CppParser::GenerateBindingInfo() {
-        return {};
+    ShaderIR CppParser::ProcessComputeShader(const clang::LambdaExpr* lambda, clang::ASTContext& context, const std::string& passName, ThreadGroupSize threadGroupSize) {
+        ShaderIR shaderIR;
+        shaderIR.threadGroupSize = threadGroupSize;
+        shaderIR.shaderType = ShaderType::Compute;
+        shaderIR.descriptorSlotLayout = GetDescriptorSlotLayout(lambda, context);
+        shaderIR.passName = passName;
+        shaderIR.uniformDataBindings = GetUniformDataBindings(lambda, context);
+        shaderIR.glsl += "#version 460\n"
+                "#extension GL_EXT_buffer_reference : require\n";
+        std::string localSizeArgs;
+        auto appendLocalSize = [&](const char* name, uint32_t size) {
+            if (!size) return;
+            if (!localSizeArgs.empty()) localSizeArgs += ", ";
+            localSizeArgs += std::string(name) + " = " + std::to_string(size);
+        };
+        appendLocalSize("local_size_x", threadGroupSize.x);
+        appendLocalSize("local_size_y", threadGroupSize.y);
+        appendLocalSize("local_size_z", threadGroupSize.z);
+        shaderIR.glsl += "layout(" + localSizeArgs + ") in\n";
+        
+        shaderIR.glsl += GenerateSSBOBinding(lambda, context);
+        shaderIR.glsl += GenerateUniformDataReference(lambda, context);
+        shaderIR.glsl += GeneratePushConstant();
+
+        //函数体
+        shaderIR.glsl += "void main() { \n";
+        //处理lambda
+        shaderIR.glsl += ProcessSTMT(lambda->getBody());
+        shaderIR.glsl += "}\n";
+
+        //处理名字
+        //得到第一个参数的名字
+        std::unordered_map<std::string, std::string> mp;
+        if (auto* callOp = lambda->getCallOperator()) {
+            if (callOp->getNumParams() > 0) {
+                mp[callOp->getParamDecl(0)->getNameAsString()] = "gl_GlobalInvocationID";
+            }
+        }
+        ChangeBuildInName(shaderIR.glsl, mp);
+
+        return shaderIR;
     }
 
     std::string CppParser::ProcessSTMT(clang::Stmt* stmt) {
@@ -66,7 +115,7 @@ namespace Ccino
         }
         if (auto* expr = llvm::dyn_cast<clang::Expr>(stmt)) {
             std::string exprStr = ChangeCppExprToGLSLExpr(expr);
-            return exprStr.empty() ? std::string{} : (exprStr + ";\n");
+            return exprStr.empty() ? std::string {} : (exprStr + ";\n");
         }
 
         llvm::errs() << "Error: Unsupported Stmt: " << stmt->getStmtClassName() << "\n";
@@ -125,6 +174,11 @@ namespace Ccino
                     int64_t count = args[1].getAsIntegral().getExtValue();
                     return elemGLSL + "[" + std::to_string(count) + "]";
                 }
+
+                // 匹配Accessor<T, Flags> ->提取内部Buffer类型
+                if (tmplName == "Accessor" && args.size() == 2) {
+                    return ChangeCppTypeToGLSLType(args[0].getAsType());
+                }
             }
 
             // 普通用户自定义结构体（如 struct Particle），直接返回结构体名
@@ -134,7 +188,8 @@ namespace Ccino
     }
 
     // 单独处理Accessor 生成layout(buffer) binding 信息
-    std::string CppParser::ChangeAccessorToSSBOReference(clang::ValueDecl* value) {
+    std::string CppParser::ChangeAccessorToSSBOReference(const clang::ValueDecl* value) {
+        if (!value) return {};
         std::string ssboBinding = "";  // SSBO 默认使用STD430
         clang::QualType type = value->getType();
         auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();  // 去掉引用 去掉别名
@@ -215,7 +270,7 @@ namespace Ccino
                    ChangeCppExprToGLSLExpr(Op->getRHS()) + ")";
         }
 
-        //处理没用重载的表达式
+        // 处理没用重载的表达式
         if (auto* UO = llvm::dyn_cast<clang::UnaryOperator>(expr)) {
             std::string op = clang::UnaryOperator::getOpcodeStr(UO->getOpcode()).str();
             std::string sub = ChangeCppExprToGLSLExpr(UO->getSubExpr());
@@ -226,7 +281,12 @@ namespace Ccino
         if (auto* FL = llvm::dyn_cast<clang::FloatingLiteral>(expr)) {
             llvm::SmallString<16> S;
             FL->getValue().toString(S);
-            return S.str().str();
+            std::string str = S.str().str();
+            if (str.find('.') == std::string::npos && str.find('e') == std::string::npos &&
+                str.find('E') == std::string::npos) {
+                str += ".0";
+            }
+            return str;
         }
 
         if (auto* IL = llvm::dyn_cast<clang::IntegerLiteral>(expr)) {
@@ -384,6 +444,11 @@ namespace Ccino
             for (const clang::Expr* element : list->inits()) {
                 if (element) elements.push_back(element);
             }
+            if (var->getType()->isRecordType()) { //struct class enum 类型
+                const std::string type = ChangeCppTypeToGLSLType(var->getType());
+                if (type.empty()) return {};
+                return type + "(" + ChangeCppExprListToGLSLExprList(elements) + ")";
+            }
             return "{" + ChangeCppExprListToGLSLExprList(elements) + "}";
         }
 
@@ -449,6 +514,37 @@ namespace Ccino
         return rtStr;
     }
 
+    void CppParser::ChangeBuildInName(std::string& code, const std::unordered_map<std::string, std::string>& buildInMap) {
+        if (code.empty() || buildInMap.empty()) return;
+
+        static const std::regex identRegex(R"(\b[A-Za-z_]\w*\b)");
+
+        std::string result;
+        result.reserve(code.size());
+
+        std::sregex_iterator it(code.begin(), code.end(), identRegex);
+        std::sregex_iterator end;
+        std::size_t lastPos = 0;
+
+        for (; it != end; ++it) {
+            const std::smatch& match = *it;
+            result.append(code, lastPos, match.position() - lastPos);
+
+            auto found = buildInMap.find(match.str());
+            if (found != buildInMap.end()) {
+                result.append(found->second);
+            }
+            else {
+                result.append(match.str());
+            }
+
+            lastPos = match.position() + match.length();
+        }
+
+        result.append(code, lastPos, std::string::npos);
+        code = std::move(result);
+    }
+
 
     std::string CppParser::GenerateGlobalFunctionToGLSL(clang::FunctionDecl* functionDecl) {
         if (!functionDecl) return {};
@@ -476,6 +572,56 @@ namespace Ccino
         result += ProcessSTMT(body);
         result += "}\n";
         return result;
+    }
+
+    std::string CppParser::GenerateSSBOBinding(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
+        if (!lambdaExpr) return {};
+
+        const clang::CXXRecordDecl* lambdaClass = lambdaExpr->getLambdaClass();
+        if (!lambdaClass) return {};
+
+        std::string result;
+        std::unordered_set<std::string> emittedSSBOs;
+
+        for (const auto* field : lambdaClass->fields()) {
+            std::string ssbo = ChangeAccessorToSSBOReference(field);
+            if (!ssbo.empty() && emittedSSBOs.insert(ssbo).second) {
+                result += ssbo;
+            }
+        }
+
+        return result;
+    }
+
+
+
+    std::string CppParser::GenerateUniformDataReference(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
+        std::string result =
+            "layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer UniformData { \n";
+
+        const clang::CXXRecordDecl* lambdaClass = lambdaExpr->getLambdaClass();
+        uint32_t fieldIndex = 0;
+
+        for (const auto* field : lambdaClass->fields()) {
+            std::string varName = field->getNameAsString();
+            if (varName.empty() && fieldIndex < lambdaClass->capture_size()) {
+                const auto* capture = lambdaClass->getCapture(fieldIndex);
+                if (capture && capture->capturesVariable()) {
+                    varName = capture->getCapturedVar()->getNameAsString();
+                }
+            }
+            std::string varType = ChangeCppTypeToGLSLType(field->getType());
+            result += varType + " " + varName + "; \n";
+            fieldIndex++;
+        }
+
+        return result + "}; \n";
+    }
+
+    std::string CppParser::GeneratePushConstant() {
+        return "layout(push_constant) uniform PC {\n"
+               "    UniformData uniformData;\n"
+               "} pc;\n";
     }
 
     std::string CppParser::ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op) {
@@ -615,7 +761,7 @@ namespace Ccino
         throw std::invalid_argument("Unsupported QualType for UniformDataType: " + canonical.getAsString());
     }
 
-    std::vector<ShaderUniformDataBinding> CppParser::GetUniformDataBindings(clang::LambdaExpr* lambdaExpr,
+    std::vector<ShaderUniformDataBinding> CppParser::GetUniformDataBindings(const clang::LambdaExpr* lambdaExpr,
                                                                             clang::ASTContext& context) {
         std::vector<ShaderUniformDataBinding> uniformDataBindings;
 
@@ -626,6 +772,12 @@ namespace Ccino
 
         for (const auto* field : lambdaClass->fields()) {
             std::string varName = field->getNameAsString();
+            if (varName.empty() && fieldIndex < lambdaClass->capture_size()) {
+                const auto* capture = lambdaClass->getCapture(fieldIndex);
+                if (capture && capture->capturesVariable()) {
+                    varName = capture->getCapturedVar()->getNameAsString();
+                }
+            }
             uint32_t offset = static_cast<uint32_t>(lambdaClassLayout.getFieldOffset(fieldIndex) / 8);
             UniformDataType uniformDataType =
                 GetUniformDataType(field->getType());  // QualType转换为uniformData对应的类型
@@ -654,15 +806,23 @@ namespace Ccino
         return false;
     }
 
-    DescriptorSlotLayout CppParser::GetDescriptorSlotLayout(clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
+    DescriptorSlotLayout CppParser::GetDescriptorSlotLayout(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
         DescriptorSlotLayout descriptorSlotLayout;
         const clang::CXXRecordDecl* lambdaClass = lambdaExpr->getLambdaClass();
+        uint32_t fieldIndex = 0;
 
         for (const auto* field : lambdaClass->fields()) {
             std::string varName = field->getNameAsString();
+            if (varName.empty() && fieldIndex < lambdaClass->capture_size()) {
+                const auto* capture = lambdaClass->getCapture(fieldIndex);
+                if (capture && capture->capturesVariable()) {
+                    varName = capture->getCapturedVar()->getNameAsString();
+                }
+            }
             UniformDataType uniformDataType =
                 GetUniformDataType(field->getType());  // QualType转换为uniformData对应的类型
             descriptorSlotLayout.emplace_back(varName, uniformDataType);
+            fieldIndex++;
         }
         return descriptorSlotLayout;
     }
