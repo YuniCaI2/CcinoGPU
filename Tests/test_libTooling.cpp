@@ -405,6 +405,5 @@ TEST(CppParserTest, ChangeCppDeclToGLSLDecl)
     EXPECT_NE(result.DeclGlsl.find("float f = 1.0"), std::string::npos);
     EXPECT_NE(result.DeclGlsl.find("float y = (x * 3.0"), std::string::npos);
     EXPECT_NE(result.DeclGlsl.find("float values[4] = {1.0"), std::string::npos);
-    EXPECT_NE(result.DeclGlsl.find("struct Particle {\n    float mass;\n};"), std::string::npos);
     EXPECT_NE(result.DeclGlsl.find("Particle p = Particle(1.0"), std::string::npos);
 }

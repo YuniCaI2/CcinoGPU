@@ -3,10 +3,13 @@
 #include <clang/ASTMatchers/ASTMatchers.h>
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Tooling/Tooling.h>
+#include <cstddef>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
 #include "CodeGenerator/CppParser.h"
+#include "RHI/DescriptorSlot.h"
 
 namespace
 {
@@ -734,4 +737,437 @@ TEST(ProcessStmtTest, GenerateGlobalFunctionToGLSL_NullAndFullFunction) {
 
     EXPECT_EQ(result.FuncGlsl, expectedFunc);
 }
+
+// ============================================================================
+// 11. ProcessComputeShader 端到端集成测试 (ProcessComputeShaderTest)
+// ============================================================================
+
+namespace
+{
+    class ComputeShaderLambdaCollector : public MatchFinder::MatchCallback
+    {
+    public:
+        std::string PassName = "TestComputePass";
+        Ccino::ThreadGroupSize GroupSize{64, 1, 1};
+        std::vector<Ccino::ShaderIR> Shaders;
+
+        void run(const MatchFinder::MatchResult& Result) override {
+            const auto* Lambda = Result.Nodes.getNodeAs<LambdaExpr>("lambda");
+            if (!Lambda || !Result.Context) return;
+            Shaders.push_back(
+                Ccino::CppParser::ProcessComputeShader(Lambda, *Result.Context, PassName, GroupSize));
+        }
+    };
+
+    std::vector<Ccino::ShaderIR> RunProcessComputeShaderOnCode(
+        const std::string& code,
+        const std::string& passName = "TestComputePass",
+        Ccino::ThreadGroupSize groupSize = {64, 1, 1})
+    {
+        ComputeShaderLambdaCollector collector;
+        collector.PassName = passName;
+        collector.GroupSize = groupSize;
+
+        MatchFinder finder;
+        finder.addMatcher(
+            lambdaExpr(hasAncestor(functionDecl(hasName("TestEntry")))).bind("lambda"),
+            &collector);
+
+        EXPECT_TRUE(tooling::runToolOnCodeWithArgs(
+            tooling::newFrontendActionFactory(&finder)->create(),
+            code,
+            {"-std=c++20"}));
+        return collector.Shaders;
+    }
+}  // namespace
+
+TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
+    const auto shaders = RunProcessComputeShaderOnCode(
+        kShaderTestPreamble + R"(
+            struct Particle {
+                Ccino::Vec3 pos;
+                float mass;
+            };
+
+            struct DebugInfo {
+                int stepCount;
+                uint32_t flags;
+            };
+
+            void TestEntry() {
+                Ccino::Accessor<Particle, BufferAccessFlagBits::Read> inParticles;
+                Ccino::Accessor<Particle, BufferAccessFlagBits::ReadWrite> outParticles;
+                Ccino::Accessor<DebugInfo, BufferAccessFlagBits::Write> debugOut;
+                float dt = 0.016f;
+                Ccino::Vec3 gravity(0, -9, 0);
+                int maxSteps = 4;
+                Ccino::Mat4 worldMat;
+
+                auto cs = [inParticles, outParticles, debugOut, dt, gravity, maxSteps, worldMat](Ccino::UVec3 threadID) {
+                    Ccino::UVec3 globalID = threadID;
+                    Ccino::Vec3 vel = gravity;
+                    int step = 0;
+
+                    for (int i = 0; i < maxSteps; ++i) {
+                        vel = vel + gravity;
+                        if (i == 2) {
+                            continue;
+                        } else {
+                            step += 1;
+                        }
+                    }
+
+                    while (step > 10) {
+                        step -= 1;
+                    }
+
+                    glm::barrier();
+                };
+            }
+        )",
+        "ParticleSimulatePass",
+        Ccino::ThreadGroupSize{64, 4, 1});
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    // 1. 验证基础元数据
+    EXPECT_EQ(ir.passName, "ParticleSimulatePass");
+    EXPECT_EQ(ir.shaderType, Ccino::ShaderType::Compute);
+    EXPECT_EQ(ir.threadGroupSize.x, 64u);
+    EXPECT_EQ(ir.threadGroupSize.y, 4u);
+    EXPECT_EQ(ir.threadGroupSize.z, 1u);
+
+    // 2. 验证 DescriptorSlotLayout
+    const Ccino::DescriptorSlotLayout expectedLayout = {
+        {"inParticles",  Ccino::UniformDataType::Buffer},
+        {"outParticles", Ccino::UniformDataType::Buffer},
+        {"debugOut",     Ccino::UniformDataType::Buffer},
+        {"dt",           Ccino::UniformDataType::Float},
+        {"gravity",      Ccino::UniformDataType::Vec3},
+        {"maxSteps",     Ccino::UniformDataType::Int},
+        {"worldMat",     Ccino::UniformDataType::Mat4},
+    };
+    EXPECT_EQ(ir.descriptorSlotLayout, expectedLayout);
+
+    // 3. 验证与 RHI DescriptorSlotBinding::GetOffsetsTable 及 JSON 序列化的衔接
+    uint32_t totalSlotSize = 0;
+    const auto gpuOffsets = Ccino::RHI::DescriptorSlotBinding::GetOffsetsTable(ir.descriptorSlotLayout, totalSlotSize);
+    EXPECT_EQ(gpuOffsets.at("inParticles").offset, 0u);
+    EXPECT_EQ(gpuOffsets.at("outParticles").offset, 8u);
+    EXPECT_EQ(gpuOffsets.at("debugOut").offset, 16u);
+    EXPECT_EQ(gpuOffsets.at("dt").offset, 24u);
+    EXPECT_EQ(gpuOffsets.at("gravity").offset, 32u);
+    EXPECT_EQ(gpuOffsets.at("maxSteps").offset, 44u);
+    EXPECT_EQ(gpuOffsets.at("worldMat").offset, 48u);
+    EXPECT_EQ(totalSlotSize, 112u);
+
+    const nlohmann::json layoutJson = ir.descriptorSlotLayout;
+    EXPECT_EQ(layoutJson.get<Ccino::DescriptorSlotLayout>(), expectedLayout);
+
+    // 4. 验证 UniformDataBindings (Lambda 闭包字段偏移与类型)
+    ASSERT_EQ(ir.uniformDataBindings.size(), 7u);
+    EXPECT_EQ(ir.uniformDataBindings[0].name, "inParticles");
+    EXPECT_EQ(ir.uniformDataBindings[0].uniformDataType, Ccino::UniformDataType::Buffer);
+    EXPECT_EQ(ir.uniformDataBindings[0].offset, 0u);
+    for (size_t i = 0; i < ir.uniformDataBindings.size(); ++i) {
+        EXPECT_EQ(ir.uniformDataBindings[i].name, expectedLayout[i].name);
+        EXPECT_EQ(ir.uniformDataBindings[i].uniformDataType, expectedLayout[i].dataType);
+    }
+
+    // 5. 验证完整生成的 GLSL 文本
+    const std::string expectedGlsl =
+        "#version 460\n"
+        "#extension GL_EXT_buffer_reference : require\n"
+        "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in\n"
+        "layout(buffer_reference, std430) readonly buffer Particle {\n"
+        "    vec3 pos;\n"
+        "    float mass;\n"
+        "};\n"
+        "layout(buffer_reference, std430) readwrite buffer Particle {\n"
+        "    vec3 pos;\n"
+        "    float mass;\n"
+        "};\n"
+        "layout(buffer_reference, std430) writeonly buffer DebugInfo {\n"
+        "    int stepCount;\n"
+        "    uint flags;\n"
+        "};\n"
+        "layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer UniformData { \n"
+        "Particle inParticles; \n"
+        "Particle outParticles; \n"
+        "DebugInfo debugOut; \n"
+        "float dt; \n"
+        "vec3 gravity; \n"
+        "int maxSteps; \n"
+        "mat4 worldMat; \n"
+        "}; \n"
+        "layout(push_constant) uniform PC {\n"
+        "    UniformData uniformData;\n"
+        "} pc;\n"
+        "void main() { \n"
+        "uvec3 globalID = uvec3(gl_GlobalInvocationID);\n"
+        "vec3 vel = vec3(gravity);\n"
+        "int step = 0;\n"
+        "for (int i = 0;\n(i < maxSteps);(++i)) { \n"
+        "(vel = (vel + gravity));\n"
+        "if ((i == 2)) \n"
+        "{ \n"
+        "continue;\n"
+        "}\n"
+        "else {\n"
+        "(step += 1);\n"
+        "}\n"
+        "}"
+        "while ((step > 10)) {\n"
+        "(step -= 1);\n"
+        "}"
+        "barrier();\n"
+        "}\n";
+
+    EXPECT_EQ(ir.glsl, expectedGlsl);
+}
+
+TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
+    const auto shaders = RunProcessComputeShaderOnCode(
+        kShaderTestPreamble + R"(
+            struct Particle {
+                Ccino::Vec3 pos;
+                float mass;
+            };
+
+            void TestEntry() {
+                Ccino::Accessor<Particle, BufferAccessFlagBits::Read> inA;
+                Ccino::Accessor<Particle, BufferAccessFlagBits::Read> inB;
+                Ccino::Accessor<Particle, BufferAccessFlagBits::Write> outC;
+
+                auto cs = [inA, inB, outC](Ccino::UVec3 id) {
+                    int x = 1;
+                };
+            }
+        )",
+        "DeduplicatePass",
+        Ccino::ThreadGroupSize{32, 1, 1});
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    // 两个相同类型+相同权限的 Accessor 只应生成一次 readonly buffer Particle 声明
+    const std::string readOnlyBlock =
+        "layout(buffer_reference, std430) readonly buffer Particle {\n"
+        "    vec3 pos;\n"
+        "    float mass;\n"
+        "};\n";
+    const size_t firstReadPos = ir.glsl.find(readOnlyBlock);
+    ASSERT_NE(firstReadPos, std::string::npos);
+    EXPECT_EQ(ir.glsl.find(readOnlyBlock, firstReadPos + 1), std::string::npos);
+
+    // 但 UniformData 和 DescriptorSlotLayout 中必须保留全部 3 个字段
+    EXPECT_NE(ir.glsl.find("Particle inA; \nParticle inB; \nParticle outC; \n"), std::string::npos);
+    ASSERT_EQ(ir.descriptorSlotLayout.size(), 3u);
+    EXPECT_EQ(ir.descriptorSlotLayout[0].name, "inA");
+    EXPECT_EQ(ir.descriptorSlotLayout[1].name, "inB");
+    EXPECT_EQ(ir.descriptorSlotLayout[2].name, "outC");
+    ASSERT_EQ(ir.uniformDataBindings.size(), 3u);
+}
+
+TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
+    const std::string extraTypesPreamble = R"(
+        using uint64_t = unsigned long long;
+        namespace Ccino {
+            using IVec2 = glm::vec<2, int>;
+            using IVec4 = glm::vec<4, int>;
+            using UVec2 = glm::vec<2, unsigned int>;
+            using UVec4 = glm::vec<4, unsigned int>;
+            using BVec2 = glm::vec<2, bool>;
+            using BVec4 = glm::vec<4, bool>;
+            using DVec2 = glm::vec<2, double>;
+            using DVec3 = glm::vec<3, double>;
+            using DVec4 = glm::vec<4, double>;
+            using Mat2 = glm::mat<2, 2, float>;
+            using Mat3 = glm::mat<3, 3, float>;
+            using Mat2x3 = glm::mat<2, 3, float>;
+            using Mat3x4 = glm::mat<3, 4, float>;
+            using DMat2 = glm::mat<2, 2, double>;
+            using DMat4x3 = glm::mat<4, 3, double>;
+        }
+    )";
+
+    const auto shaders = RunProcessComputeShaderOnCode(
+        kShaderTestPreamble + extraTypesPreamble + R"(
+            void TestEntry() {
+                uint64_t bda = 0;
+                double d = 1.0;
+                float f = 2.0f;
+                int i = -3;
+                uint32_t u = 4u;
+                bool b = true;
+                Ccino::Vec2 v2;
+                Ccino::Vec3 v3;
+                Ccino::Vec4 v4;
+                Ccino::IVec2 iv2;
+                Ccino::IVec4 iv4;
+                Ccino::UVec2 uv2;
+                Ccino::UVec4 uv4;
+                Ccino::BVec2 bv2;
+                Ccino::BVec4 bv4;
+                Ccino::DVec2 dv2;
+                Ccino::DVec3 dv3;
+                Ccino::DVec4 dv4;
+                Ccino::Mat2 m2;
+                Ccino::Mat3 m3;
+                Ccino::Mat4 m4;
+                Ccino::Mat2x3 m2x3;
+                Ccino::Mat3x4 m3x4;
+                Ccino::DMat2 dm2;
+                Ccino::DMat4x3 dm4x3;
+
+                auto cs = [bda, d, f, i, u, b, v2, v3, v4, iv2, iv4, uv2, uv4, bv2, bv4, dv2, dv3, dv4, m2, m3, m4, m2x3, m3x4, dm2, dm4x3](Ccino::UVec3 tid) {
+                    int dummy = i;
+                };
+            }
+        )",
+        "AllUniformTypesPass",
+        Ccino::ThreadGroupSize{1, 1, 1});
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    const Ccino::DescriptorSlotLayout expectedLayout = {
+        {"bda",   Ccino::UniformDataType::Buffer},
+        {"d",     Ccino::UniformDataType::Double},
+        {"f",     Ccino::UniformDataType::Float},
+        {"i",     Ccino::UniformDataType::Int},
+        {"u",     Ccino::UniformDataType::UInt},
+        {"b",     Ccino::UniformDataType::Bool},
+        {"v2",    Ccino::UniformDataType::Vec2},
+        {"v3",    Ccino::UniformDataType::Vec3},
+        {"v4",    Ccino::UniformDataType::Vec4},
+        {"iv2",   Ccino::UniformDataType::IVec2},
+        {"iv4",   Ccino::UniformDataType::IVec4},
+        {"uv2",   Ccino::UniformDataType::UVec2},
+        {"uv4",   Ccino::UniformDataType::UVec4},
+        {"bv2",   Ccino::UniformDataType::BVec2},
+        {"bv4",   Ccino::UniformDataType::BVec4},
+        {"dv2",   Ccino::UniformDataType::DVec2},
+        {"dv3",   Ccino::UniformDataType::DVec3},
+        {"dv4",   Ccino::UniformDataType::DVec4},
+        {"m2",    Ccino::UniformDataType::Mat2},
+        {"m3",    Ccino::UniformDataType::Mat3},
+        {"m4",    Ccino::UniformDataType::Mat4},
+        {"m2x3",  Ccino::UniformDataType::Mat2x3},
+        {"m3x4",  Ccino::UniformDataType::Mat3x4},
+        {"dm2",   Ccino::UniformDataType::DMat2},
+        {"dm4x3", Ccino::UniformDataType::DMat4x3},
+    };
+
+    EXPECT_EQ(ir.descriptorSlotLayout, expectedLayout);
+    ASSERT_EQ(ir.uniformDataBindings.size(), expectedLayout.size());
+
+    // 验证前 6 个基础标量字段在 C++ Lambda 结构体中的精确字节偏移
+    struct ExpectedScalarCapturePrefix {
+        uint64_t bda;
+        double d;
+        float f;
+        int i;
+        uint32_t u;
+        bool b;
+    };
+    EXPECT_EQ(ir.uniformDataBindings[0].offset, offsetof(ExpectedScalarCapturePrefix, bda));
+    EXPECT_EQ(ir.uniformDataBindings[1].offset, offsetof(ExpectedScalarCapturePrefix, d));
+    EXPECT_EQ(ir.uniformDataBindings[2].offset, offsetof(ExpectedScalarCapturePrefix, f));
+    EXPECT_EQ(ir.uniformDataBindings[3].offset, offsetof(ExpectedScalarCapturePrefix, i));
+    EXPECT_EQ(ir.uniformDataBindings[4].offset, offsetof(ExpectedScalarCapturePrefix, u));
+    EXPECT_EQ(ir.uniformDataBindings[5].offset, offsetof(ExpectedScalarCapturePrefix, b));
+}
+
+TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
+    // 1. 验证第一个参数名被替换为 gl_GlobalInvocationID，且不误伤包含该子串的其他标识符
+    const auto withParamShaders = RunProcessComputeShaderOnCode(
+        kShaderTestPreamble + R"(
+            void TestEntry() {
+                auto cs = [](Ccino::UVec3 tid, int secondParam) {
+                    Ccino::UVec3 tid_copy = tid;
+                    int tid_local = secondParam + 1;
+                    int my_tid = tid_local * 2;
+                };
+            }
+        )",
+        "WordBoundaryPass",
+        Ccino::ThreadGroupSize{16, 16, 1});
+
+    ASSERT_EQ(withParamShaders.size(), 1u);
+    const std::string& glsl = withParamShaders[0].glsl;
+    EXPECT_NE(glsl.find("uvec3 tid_copy = uvec3(gl_GlobalInvocationID);\n"), std::string::npos);
+    EXPECT_NE(glsl.find("int tid_local = (secondParam + 1);\n"), std::string::npos);
+    EXPECT_NE(glsl.find("int my_tid = (tid_local * 2);\n"), std::string::npos);
+
+    // 2. 验证无参数 Lambda 与匿名参数 Lambda 均能正常生成且不崩溃
+    const auto noParamShaders = RunProcessComputeShaderOnCode(
+        kShaderTestPreamble + R"(
+            void TestEntry() {
+                auto cs1 = []() {
+                    int a = 42;
+                };
+                auto cs2 = [](Ccino::UVec3) {
+                    int b = 99;
+                };
+            }
+        )",
+        "NoParamPass",
+        Ccino::ThreadGroupSize{0, 0, 8});
+
+    ASSERT_EQ(noParamShaders.size(), 2u);
+    EXPECT_NE(noParamShaders[0].glsl.find("layout(local_size_z = 8) in\n"), std::string::npos);
+    EXPECT_NE(noParamShaders[0].glsl.find("int a = 42;\n"), std::string::npos);
+    EXPECT_NE(noParamShaders[1].glsl.find("int b = 99;\n"), std::string::npos);
+}
+
+TEST(ProcessComputeShaderTest, ImplicitCaptureAndInitCapture) {
+    // 测试 [=] 隐式捕获（仅捕获体内 odr-used 的变量）以及 C++14 广义初始化捕获 [scale = 2.0f]
+    const auto shaders = RunProcessComputeShaderOnCode(
+        kShaderTestPreamble + R"(
+            void TestEntry() {
+                Ccino::Vec3 usedDir(1, 0, 0);
+                Ccino::Vec3 unusedDir(0, 1, 0);
+                int baseCount = 8;
+
+                auto cs = [=, scale = 2.5f](Ccino::UVec3 threadID) {
+                    Ccino::Vec3 d = usedDir;
+                    int total = baseCount + 1;
+                    float s = scale;
+                };
+            }
+        )",
+        "ImplicitCapturePass",
+        Ccino::ThreadGroupSize{8, 8, 1});
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    // unusedDir 未在 Lambda 体内使用，不应出现在捕获布局中；scale / usedDir / baseCount 均应正确提取名称
+    ASSERT_EQ(ir.descriptorSlotLayout.size(), 3u);
+    EXPECT_EQ(ir.glsl.find("unusedDir"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("float scale; \n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("vec3 usedDir; \n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("int baseCount; \n"), std::string::npos);
+}
+
+TEST(ProcessComputeShaderTest, UnsupportedCaptureTypeThrowsInvalidArgument) {
+    // 直接捕获非 Accessor 的自定义结构体应抛出 std::invalid_argument
+    EXPECT_THROW(
+        RunProcessComputeShaderOnCode(
+            kShaderTestPreamble + R"(
+                struct RawStruct {
+                    float a;
+                };
+
+                void TestEntry() {
+                    RawStruct raw{1.0f};
+                    auto cs = [raw](Ccino::UVec3 id) {};
+                }
+            )"),
+        std::invalid_argument);
+}
+
+
 

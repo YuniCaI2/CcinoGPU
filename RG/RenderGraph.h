@@ -1,11 +1,13 @@
 #pragma once
 #include "Accessor.h"
+#include "ComputePass.h"
 #include "Pass.h"
 #include "RGResource.h"
 #include "RHI/RHIStruct.h"
 #include "RG/ComputePass.h"
 #include "RG/Pass.h"
 #include "RefCounted.hpp"
+#include <concepts>
 
 
 namespace Ccino {
@@ -31,10 +33,18 @@ namespace Ccino {
     public:
         void Init(RHI::Context* context);
 
-        template<typename Func>
+        template<int N, const char passName[N], typename Func>
         requires std::is_invocable_v<Func, RGBuilder&, RID&>
         RGBuilder& AddPass(Func&& func) {
             //处理Accessor 并且处理Builder 内部Shader的翻译和绑定
+            auto passRID = m_passes.Add(RGPass{});
+            func(*this, passRID);
+            return *this;
+        }
+
+        template<typename Func>
+        requires std::is_invocable_v<Func, RGBuilder&, RID&>
+        RGBuilder& AddPass(Func&& func) {
             auto passRID = m_passes.Add(RGPass{});
             func(*this, passRID);
             return *this;
@@ -49,6 +59,7 @@ namespace Ccino {
         }
 
         template<ThreadGroupSize threadGroupSize, typename CS> //ThreadGraphSize一定要作为编译器的,这样可以被ClangAST看到
+        requires std::invocable<CS, ComputeGlobalID>
         void AddCS(CS&& cs) {
             //这里的CS是一个Dummy，需要在编译时将其翻译成Pipeline 对象和ShaderModule
             //所以这里需要留一个槽位方便后续绑定使用
