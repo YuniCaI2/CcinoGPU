@@ -7,63 +7,79 @@
 
 #include "CodeGenerator/CppParser.h"
 
-namespace {
+namespace
+{
+    using namespace clang;
+    using namespace clang::ast_matchers;
 
-using namespace clang;
-using namespace clang::ast_matchers;
+    class VarTypeCollector: public MatchFinder::MatchCallback
+    {
+    public:
+        std::unordered_map<std::string, std::string> VarGLSLTypes;
+        std::unordered_map<std::string, std::string> VarSSBOReferences;
+        std::unordered_map<std::string, std::string> FuncReturnGLSLTypes;
+        std::string DeclGlsl;
 
-class VarTypeCollector : public MatchFinder::MatchCallback {
-public:
-    std::unordered_map<std::string, std::string> VarGLSLTypes;
-    std::unordered_map<std::string, std::string> VarSSBOReferences;
-    std::unordered_map<std::string, std::string> FuncReturnGLSLTypes;
-
-    void run(const MatchFinder::MatchResult& Result) override {
-        if (const auto* Var = Result.Nodes.getNodeAs<VarDecl>("var")) {
-            VarGLSLTypes[Var->getNameAsString()] =
-                Ccino::CppParser::ChangeCppTypeToGLSLType(Var->getType());
-            VarSSBOReferences[Var->getNameAsString()] =
-                Ccino::CppParser::ChangeAccessorToSSBOReference(const_cast<VarDecl*>(Var));
+        void run(const MatchFinder::MatchResult& Result) override
+        {
+            if (const auto* Decl = Result.Nodes.getNodeAs<DeclStmt>("decl")) {
+                const auto result = Ccino::CppParser::ChangeCppDeclToGLSLDecl(
+                    const_cast<DeclStmt*>(Decl));
+                if (!DeclGlsl.empty()) DeclGlsl += '\n';
+                DeclGlsl += result;
+            }
+            if (const auto* Var = Result.Nodes.getNodeAs<VarDecl>("var")) {
+                VarGLSLTypes[Var->getNameAsString()] =
+                    Ccino::CppParser::ChangeCppTypeToGLSLType(Var->getType());
+                VarSSBOReferences[Var->getNameAsString()] =
+                    Ccino::CppParser::ChangeAccessorToSSBOReference(const_cast<VarDecl*>(Var));
+            }
+            if (const auto* Func = Result.Nodes.getNodeAs<FunctionDecl>("func")) {
+                FuncReturnGLSLTypes[Func->getNameAsString()] =
+                    Ccino::CppParser::ChangeCppTypeToGLSLType(Func->getReturnType());
+            }
         }
-        if (const auto* Func = Result.Nodes.getNodeAs<FunctionDecl>("func")) {
-            FuncReturnGLSLTypes[Func->getNameAsString()] =
-                Ccino::CppParser::ChangeCppTypeToGLSLType(Func->getReturnType());
-        }
+    };
+
+    VarTypeCollector CollectTypesFromCode(const std::string& code)
+    {
+        VarTypeCollector collector;
+        MatchFinder finder;
+
+        finder.addMatcher(
+            varDecl(hasAncestor(functionDecl(hasName("TestEntry")))).bind("var"),
+            &collector
+            );
+        finder.addMatcher(
+            functionDecl(hasName("TestEntry")).bind("func"),
+            &collector
+            );
+        finder.addMatcher(
+            declStmt(isExpansionInMainFile()).bind("decl"),
+            &collector
+            );
+
+        EXPECT_TRUE(tooling::runToolOnCodeWithArgs(
+            tooling::newFrontendActionFactory(&finder)->create(),
+            code,
+            {"-std=c++20"}
+        ));
+        return collector;
     }
-};
-
-VarTypeCollector CollectTypesFromCode(const std::string& code) {
-    VarTypeCollector collector;
-    MatchFinder finder;
-
-    finder.addMatcher(
-        varDecl(hasAncestor(functionDecl(hasName("TestEntry")))).bind("var"),
-        &collector
-    );
-    finder.addMatcher(
-        functionDecl(hasName("TestEntry")).bind("func"),
-        &collector
-    );
-
-    EXPECT_TRUE(tooling::runToolOnCodeWithArgs(
-        tooling::newFrontendActionFactory(&finder)->create(),
-        code,
-        {"-std=c++20"}
-    ));
-    return collector;
-}
-
 } // namespace
 
-TEST(runToolOnCode, CanSyntaxCheckCode) {
+TEST(runToolOnCode, CanSyntaxCheckCode)
+{
     EXPECT_TRUE(clang::tooling::runToolOnCode(std::make_unique<clang::SyntaxOnlyAction>(), "class X {};"));
 }
 
-TEST(CppParserTest, ChangeCppTypeToGLSLType_NullQualType) {
+TEST(CppParserTest, ChangeCppTypeToGLSLType_NullQualType)
+{
     EXPECT_EQ(Ccino::CppParser::ChangeCppTypeToGLSLType(clang::QualType{}), "");
 }
 
-TEST(CppParserTest, ChangeCppTypeToGLSLType_BuiltinAndQualifiers) {
+TEST(CppParserTest, ChangeCppTypeToGLSLType_BuiltinAndQualifiers)
+{
     const char* code = R"(
         using uint32_t = unsigned int;
 
@@ -95,7 +111,8 @@ TEST(CppParserTest, ChangeCppTypeToGLSLType_BuiltinAndQualifiers) {
     EXPECT_EQ(result.VarGLSLTypes["auto_f"], "float");
 }
 
-TEST(CppParserTest, ChangeCppTypeToGLSLType_CcinoVectorsAndAutoDeduction) {
+TEST(CppParserTest, ChangeCppTypeToGLSLType_CcinoVectorsAndAutoDeduction)
+{
     const char* code = R"(
         namespace glm {
             enum qualifier { defaultp };
@@ -167,7 +184,8 @@ TEST(CppParserTest, ChangeCppTypeToGLSLType_CcinoVectorsAndAutoDeduction) {
     EXPECT_EQ(result.VarGLSLTypes["ref_v4"], "vec4");
 }
 
-TEST(CppParserTest, ChangeCppTypeToGLSLType_CcinoMatrices) {
+TEST(CppParserTest, ChangeCppTypeToGLSLType_CcinoMatrices)
+{
     const char* code = R"(
         namespace glm {
             enum qualifier { defaultp };
@@ -215,7 +233,8 @@ TEST(CppParserTest, ChangeCppTypeToGLSLType_CcinoMatrices) {
     EXPECT_EQ(result.VarGLSLTypes["dm4x3"], "dmat4x3");
 }
 
-TEST(CppParserTest, ChangeCppTypeToGLSLType_ArrayAndCustomStruct) {
+TEST(CppParserTest, ChangeCppTypeToGLSLType_ArrayAndCustomStruct)
+{
     const char* code = R"(
         namespace std {
             template<typename T, unsigned long long N>
@@ -252,7 +271,8 @@ TEST(CppParserTest, ChangeCppTypeToGLSLType_ArrayAndCustomStruct) {
     EXPECT_EQ(result.VarGLSLTypes["p_ref"], "Particle");
 }
 
-TEST(CppParserTest, ChangeAccessorToSSBOReference_ReadWriteAccessFlags) {
+TEST(CppParserTest, ChangeAccessorToSSBOReference_ReadWriteAccessFlags)
+{
     const char* code = R"(
         using uint32_t = unsigned int;
 
@@ -318,26 +338,27 @@ TEST(CppParserTest, ChangeAccessorToSSBOReference_ReadWriteAccessFlags) {
     EXPECT_EQ(
         result.VarSSBOReferences["readAc"],
         "layout(buffer_reference, std430) readonly buffer " + expectedBody
-    );
+        );
     EXPECT_EQ(
         result.VarSSBOReferences["writeAc"],
         "layout(buffer_reference, std430) writeonly buffer " + expectedBody
-    );
+        );
     EXPECT_EQ(
         result.VarSSBOReferences["rwAc"],
         "layout(buffer_reference, std430) readwrite buffer " + expectedBody
-    );
+        );
     EXPECT_EQ(
         result.VarSSBOReferences["readAcRef"],
         "layout(buffer_reference, std430) readonly buffer " + expectedBody
-    );
+        );
 
     // 非 Accessor 变量应返回空字符串
     EXPECT_EQ(result.VarSSBOReferences["normalStruct"], "");
     EXPECT_EQ(result.VarSSBOReferences["normalInt"], "");
 }
 
-TEST(CppParserTest, ChangeAccessorToSSBOReference_InvalidSecondArgReturnsEmpty) {
+TEST(CppParserTest, ChangeAccessorToSSBOReference_InvalidSecondArgReturnsEmpty)
+{
     const char* code = R"(
         namespace Ccino {
             template<typename BufferResourceType, typename InvalidSecondArg>
@@ -357,4 +378,33 @@ TEST(CppParserTest, ChangeAccessorToSSBOReference_InvalidSecondArgReturnsEmpty) 
     EXPECT_EQ(result.VarSSBOReferences["invalidAc"], "");
 }
 
+TEST(CppParserTest, ChangeCppDeclToGLSLDecl)
+{
+    const char* code = R"(
+        using uint32_t = unsigned int;
 
+        struct Particle {
+            float mass;
+        };
+
+        void TestEntry() {
+            int i = -1;
+            int a, b;
+            const float& f = 1.0f;
+            float x = 2.0f;
+            auto y = x * 3.0f;
+            float values[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+            Particle p{1.0f};
+        }
+    )";
+
+    const auto result = CollectTypesFromCode(code);
+
+    EXPECT_NE(result.DeclGlsl.find("int i = (-1);"), std::string::npos);
+    EXPECT_NE(result.DeclGlsl.find("int a;\nint b;"), std::string::npos);
+    EXPECT_NE(result.DeclGlsl.find("float f = 1.0"), std::string::npos);
+    EXPECT_NE(result.DeclGlsl.find("float y = (x * 3.0"), std::string::npos);
+    EXPECT_NE(result.DeclGlsl.find("float values[4] = {1.0"), std::string::npos);
+    EXPECT_NE(result.DeclGlsl.find("struct Particle {\n    float mass;\n};"), std::string::npos);
+    EXPECT_NE(result.DeclGlsl.find("Particle p = Particle(1.0"), std::string::npos);
+}

@@ -3,11 +3,15 @@
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
 #include <clang/AST/RecordLayout.h>
+#include <clang/AST/Stmt.h>
 #include <clang/AST/TemplateBase.h>
 #include <clang/AST/Type.h>
 #include <clang/Basic/OperatorKinds.h>
+#include <llvm/Support/Casting.h>
+#include <llvm/Support/raw_ostream.h>
 
-namespace Ccino {
+namespace Ccino
+{
     std::vector<std::string> CppParser::GetAllValidFilePaths(const std::string& projectDir) {
         return {};
     }
@@ -23,100 +27,147 @@ namespace Ccino {
     }
 
     std::string CppParser::GenerateBindingInfo() {
-        return {}; 
+        return {};
     }
 
     std::string CppParser::ProcessSTMT(clang::Stmt* stmt) {
-        return {}; 
+        if (!stmt) return {};
+
+        if (auto* compoundStmt = llvm::dyn_cast<clang::CompoundStmt>(stmt)) {
+            std::string result;
+            for (clang::Stmt* subStmt : compoundStmt->body()) {
+                result += ProcessSTMT(subStmt);
+            }
+            return result;
+        }
+        if (auto* ifStmt = llvm::dyn_cast<clang::IfStmt>(stmt)) {
+            return ChangeCppIfToGLSLIf(ifStmt);
+        }
+        if (auto* forStmt = llvm::dyn_cast<clang::ForStmt>(stmt)) {
+            return ChangeCppForToGLSLFor(forStmt);
+        }
+        if (auto* whileStmt = llvm::dyn_cast<clang::WhileStmt>(stmt)) {
+            return ChangeCppWhileToGLSLWhile(whileStmt);
+        }
+        if (auto* declStmt = llvm::dyn_cast<clang::DeclStmt>(stmt)) {
+            return ChangeCppDeclToGLSLDecl(declStmt);
+        }
+        if (auto* returnStmt = llvm::dyn_cast<clang::ReturnStmt>(stmt)) {
+            return ChangeCppReturnToGLSLReturn(returnStmt);
+        }
+        if (llvm::isa<clang::BreakStmt>(stmt)) {
+            return "break;\n";
+        }
+        if (llvm::isa<clang::ContinueStmt>(stmt)) {
+            return "continue;\n";
+        }
+        if (llvm::isa<clang::NullStmt>(stmt)) {
+            return ";\n";
+        }
+        if (auto* expr = llvm::dyn_cast<clang::Expr>(stmt)) {
+            std::string exprStr = ChangeCppExprToGLSLExpr(expr);
+            return exprStr.empty() ? std::string{} : (exprStr + ";\n");
+        }
+
+        llvm::errs() << "Error: Unsupported Stmt: " << stmt->getStmtClassName() << "\n";
+        return {};
     }
 
     // AST 转换工具函数
     std::string CppParser::ChangeCppTypeToGLSLType(clang::QualType type) {
         if (type.isNull()) return "";
-        //剥离引用(&)、const/volatile，并拿到去糖后的底层真实类型 (穿透 using Vec3 / uint32_t / auto)
+        // 剥离引用(&)、const/volatile，并拿到去糖后的底层真实类型 (穿透 using Vec3 / uint32_t / auto)
         clang::QualType canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
-        //处理基础内置类型 (int, uint32_t, float, double, bool, void)
+        // 处理基础内置类型 (int, uint32_t, float, double, bool, void)
         if (const auto* builtin = canonical->getAs<clang::BuiltinType>()) {
             switch (builtin->getKind()) {
-                case clang::BuiltinType::Void:   return "void";
-                case clang::BuiltinType::Bool:   return "bool";
-                case clang::BuiltinType::Int:    return "int";
-                case clang::BuiltinType::UInt:   return "uint"; // uint32_t 和 unsigned int 在这都会命中
-                case clang::BuiltinType::Float:  return "float";
+                case clang::BuiltinType::Void: return "void";
+                case clang::BuiltinType::Bool: return "bool";
+                case clang::BuiltinType::Int: return "int";
+                case clang::BuiltinType::UInt: return "uint";  // uint32_t 和 unsigned int 在这都会命中
+                case clang::BuiltinType::Float: return "float";
                 case clang::BuiltinType::Double: return "double";
                 default: break;
             }
         }
-        //处理结构体与模板特化 (CcinoType.h 中的 Vec / Mat / Array 以及用户自定义 struct)
+        // 处理结构体与模板特化 (CcinoType.h 中的 Vec / Mat / Array 以及用户自定义 struct)
         if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
             if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
                 llvm::StringRef tmplName = spec->getName();
-                const clang::TemplateArgumentList& args = spec->getTemplateArgs(); //这里直接得到模板名并且没有命名空间
-                //匹配 glm::vec<L, T, Q> -> 自动合成 vec3 / dvec3 / ivec3 / uvec3 / bvec3
+                const clang::TemplateArgumentList& args =
+                    spec->getTemplateArgs();  // 这里直接得到模板名并且没有命名空间
+                // 匹配 glm::vec<L, T, Q> -> 自动合成 vec3 / dvec3 / ivec3 / uvec3 / bvec3
                 if (tmplName == "vec" && args.size() >= 2) {
-                    int64_t len = args[0].getAsIntegral().getExtValue(); // 2, 3, 4
+                    int64_t len = args[0].getAsIntegral().getExtValue();  // 2, 3, 4
                     clang::QualType elemType = args[1].getAsType();
                     std::string prefix;
-                    if (elemType->isBooleanType())                 prefix = "b"; //确认模板参数
-                    else if (elemType->isSignedIntegerType())      prefix = "i";
-                    else if (elemType->isUnsignedIntegerType())    prefix = "u";
+                    if (elemType->isBooleanType()) prefix = "b";  // 确认模板参数
+                    else if (elemType->isSignedIntegerType()) prefix = "i";
+                    else if (elemType->isUnsignedIntegerType()) prefix = "u";
                     else if (elemType->isSpecificBuiltinType(clang::BuiltinType::Double)) prefix = "d";
                     // float 前缀为空
                     return prefix + "vec" + std::to_string(len);
                 }
-                //匹配 glm::mat<C, R, T, Q> -> 自动合成 mat4 / mat3x4 / dmat4 等
+                // 匹配 glm::mat<C, R, T, Q> -> 自动合成 mat4 / mat3x4 / dmat4 等
                 if (tmplName == "mat" && args.size() >= 3) {
-                    int64_t cols = args[0].getAsIntegral().getExtValue(); //转换为int64_t 
+                    int64_t cols = args[0].getAsIntegral().getExtValue();  // 转换为int64_t
                     int64_t rows = args[1].getAsIntegral().getExtValue();
                     clang::QualType elemType = args[2].getAsType();
                     std::string prefix = elemType->isSpecificBuiltinType(clang::BuiltinType::Double) ? "d" : "";
                     if (cols == rows) {
-                        return prefix + "mat" + std::to_string(cols); // 如 mat4, dmat3
+                        return prefix + "mat" + std::to_string(cols);  // 如 mat4, dmat3
                     }
-                    return prefix + "mat" + std::to_string(cols) + "x" + std::to_string(rows); // 如 mat3x4
+                    return prefix + "mat" + std::to_string(cols) + "x" + std::to_string(rows);  // 如 mat3x4
                 }
-                //匹配 Ccino::Array<T, N> (底层为 std::array<T, N>) -> 合成 T[N]
+                // 匹配 Ccino::Array<T, N> (底层为 std::array<T, N>) -> 合成 T[N]
                 if (tmplName == "array" && args.size() >= 2) {
-                    std::string elemGLSL = ChangeCppTypeToGLSLType(args[0].getAsType()); //递归处理内部类型
+                    std::string elemGLSL = ChangeCppTypeToGLSLType(args[0].getAsType());  // 递归处理内部类型
                     int64_t count = args[1].getAsIntegral().getExtValue();
                     return elemGLSL + "[" + std::to_string(count) + "]";
                 }
             }
 
-            //普通用户自定义结构体（如 struct Particle），直接返回结构体名
+            // 普通用户自定义结构体（如 struct Particle），直接返回结构体名
             return record->getNameAsString();
         }
         return canonical.getAsString();
     }
 
-    //单独处理Accessor 生成layout(buffer) binding 信息
+    // 单独处理Accessor 生成layout(buffer) binding 信息
     std::string CppParser::ChangeAccessorToSSBOReference(clang::ValueDecl* value) {
-        std::string ssboBinding = ""; //SSBO 默认使用STD430
+        std::string ssboBinding = "";  // SSBO 默认使用STD430
         clang::QualType type = value->getType();
-        auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType(); //去掉引用 去掉别名 去掉cv
+        auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();  // 去掉引用 去掉别名
+                                                                                              // 去掉cv
         if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
             if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
                 llvm::StringRef tmplName = spec->getName();
-                const clang::TemplateArgumentList& args = spec->getTemplateArgs(); //这里直接得到模板名并且没有命名空间
+                const clang::TemplateArgumentList& args =
+                    spec->getTemplateArgs();  // 这里直接得到模板名并且没有命名空间
                 if (tmplName == "Accessor" && args.size() >= 2) {
                     if (args[1].getKind() == clang::TemplateArgument::Declaration) {
-                        if (const auto* tpo = llvm::dyn_cast<clang::TemplateParamObjectDecl>(args[1].getAsDecl())) { //NTTP 会被当为TemplateParamObjectDecl
+                        if (const auto* tpo = llvm::dyn_cast<clang::TemplateParamObjectDecl>(args[1].getAsDecl())) {
+                            // NTTP 会被当为TemplateParamObjectDecl
                             const clang::APValue& structVal = tpo->getValue();
                             if (structVal.isStruct()) {
                                 auto maskField = structVal.getStructField(0).getInt().getExtValue();
                                 if (maskField == static_cast<int64_t>(BufferAccessFlagBits::ReadWrite)) {
                                     ssboBinding = "layout(buffer_reference, std430) readwrite buffer";
-                                } else if (maskField == static_cast<int64_t>(BufferAccessFlagBits::Read)) {
+                                }
+                                else if (maskField == static_cast<int64_t>(BufferAccessFlagBits::Read)) {
                                     ssboBinding = "layout(buffer_reference, std430) readonly buffer";
-                                } else if (maskField == static_cast<int64_t>(BufferAccessFlagBits::Write)) {
+                                }
+                                else if (maskField == static_cast<int64_t>(BufferAccessFlagBits::Write)) {
                                     ssboBinding = "layout(buffer_reference, std430) writeonly buffer";
                                 }
                                 ssboBinding += " " + GetGLSLDefine(args[0].getAsType(), false);
                                 return ssboBinding;
                             }
                         }
-                    } else {
-                        llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: " << tmplName << "\n";
+                    }
+                    else {
+                        llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: "
+                                     << tmplName << "\n";
                         return {};
                     }
                 }
@@ -127,149 +178,328 @@ namespace Ccino {
 
 
     std::string CppParser::ChangeCppExprToGLSLExpr(clang::Expr* expr) {
-        expr = expr->IgnoreUnlessSpelledInSource(); //剔除重复的代码
-        if (auto* DRE = llvm::dyn_cast<clang::DeclRefExpr>(expr)) { //只有一个值时走,引用表达式
-            return DRE->getDecl()->getNameAsString(); 
-        } 
-        
+        expr = expr->IgnoreUnlessSpelledInSource();  // 剔除重复的代码
+        if (auto* DRE = llvm::dyn_cast<clang::DeclRefExpr>(expr)) {
+            // 只有一个值时走,引用表达式
+            return DRE->getDecl()->getNameAsString();
+        }
+
         if (auto* Op = llvm::dyn_cast<clang::CXXOperatorCallExpr>(expr)) {
             std::string op = clang::getOperatorSpelling(Op->getOperator());
 
-            if (Op->getOperator() == clang::OO_PlusPlus ||
-                Op->getOperator() == clang::OO_MinusMinus) {
+            if (Op->getOperator() == clang::OO_PlusPlus || Op->getOperator() == clang::OO_MinusMinus) {
                 const clang::Expr* operand = Op->getArg(0);
                 std::string operandGLSL = ChangeCppExprToGLSLExpr(const_cast<clang::Expr*>(operand));
 
-                return Op->getNumArgs() == 2 //如果为2 则为后缀 如果为1 则为前缀
-                    ? "(" + operandGLSL + op + ")"
-                    : "(" + op + operandGLSL + ")";
+                return Op->getNumArgs() == 2  // 如果为2 则为后缀 如果为1 则为前缀
+                           ? "(" + operandGLSL + op + ")"
+                           : "(" + op + operandGLSL + ")";
             }
 
-            if (Op->isInfixBinaryOp()) { //中缀
-                return "("
-                    + ChangeCppExprToGLSLExpr(Op->getArg(0))
-                    + " " + op + " "
-                    + ChangeCppExprToGLSLExpr(Op->getArg(1))
-                    + ")";
+            if (Op->isInfixBinaryOp()) {
+                // 中缀
+                return "(" + ChangeCppExprToGLSLExpr(Op->getArg(0)) + " " + op + " " +
+                       ChangeCppExprToGLSLExpr(Op->getArg(1)) + ")";
             }
 
-            if (Op->getNumArgs() == 1) { //前缀
-                // -a、!a、~a 等前缀一元运算符
+            if (Op->getNumArgs() == 1) {
+                // 前缀
+                //  -a、!a、~a 等前缀一元运算符
                 return "(" + op + ChangeCppExprToGLSLExpr(Op->getArg(0)) + ")";
             }
         }
-        
+
         if (auto* Op = llvm::dyn_cast<clang::BinaryOperator>(expr)) {
             std::string op = Op->getOpcodeStr().str();
-            return "("
-                + ChangeCppExprToGLSLExpr(Op->getLHS())
-                + " " + op + " "
-                + ChangeCppExprToGLSLExpr(Op->getRHS())
-                + ")";
+            return "(" + ChangeCppExprToGLSLExpr(Op->getLHS()) + " " + op + " " +
+                   ChangeCppExprToGLSLExpr(Op->getRHS()) + ")";
         }
-        
-        //浮点数字面量
+
+        //处理没用重载的表达式
+        if (auto* UO = llvm::dyn_cast<clang::UnaryOperator>(expr)) {
+            std::string op = clang::UnaryOperator::getOpcodeStr(UO->getOpcode()).str();
+            std::string sub = ChangeCppExprToGLSLExpr(UO->getSubExpr());
+            return UO->isPostfix() ? "(" + sub + op + ")" : "(" + op + sub + ")";
+        }
+
+        // 浮点数字面量
         if (auto* FL = llvm::dyn_cast<clang::FloatingLiteral>(expr)) {
             llvm::SmallString<16> S;
             FL->getValue().toString(S);
             return S.str().str();
         }
-        
-        //构造函数
-        if (auto* Cstr = llvm::dyn_cast<clang::CXXConstructExpr>(expr)) { //调用构造函数
-            std::string R = ChangeCppTypeToGLSLType(Cstr->getType()) + "("; 
-            for (int i = 0; i < Cstr->getNumArgs()(); ++i) {
-                R += (i ? "," : "") + ChangeCppExprToGLSLExpr(Cstr->getArg(i)); 
+
+        if (auto* IL = llvm::dyn_cast<clang::IntegerLiteral>(expr)) {
+            llvm::SmallString<32> S;
+            IL->getValue().toString(S, 10, IL->getType()->isSignedIntegerType());
+            return S.str().str();
+        }
+
+        if (auto* BL = llvm::dyn_cast<clang::CXXBoolLiteralExpr>(expr)) {
+            return BL->getValue() ? "true" : "false";
+        }
+
+        // 构造函数
+        if (auto* Cstr = llvm::dyn_cast<clang::CXXConstructExpr>(expr)) {
+            // 调用构造函数
+            std::string R = ChangeCppTypeToGLSLType(Cstr->getType()) + "(";
+            for (uint32_t i = 0; i < Cstr->getNumArgs(); ++i) {
+                R += (i ? "," : "") + ChangeCppExprToGLSLExpr(Cstr->getArg(i));
             }
             return R + ")";
         }
-        
-        //函数调用侧
-        if (auto *Call = llvm::dyn_cast<clang::CallExpr>(expr))             // glm::dot(a,b) -> dot(a,b)
-            if (auto *FD = Call->getDirectCallee()) {
+
+        // 函数调用侧
+        if (auto* Call = llvm::dyn_cast<clang::CallExpr>(expr))  // glm::dot(a,b) -> dot(a,b)
+            if (auto* FD = Call->getDirectCallee()) {
                 std::string R = FD->getName().str() + "(";
                 for (unsigned i = 0; i < Call->getNumArgs(); ++i)
                     R += (i ? ", " : "") + ChangeCppExprToGLSLExpr(Call->getArg(i));
                 return R + ")";
             }
-        
-        llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: " + std::string(expr->getStmtClassName()) + "\n"; 
-        return {}; //直接返回空
+
+        llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: " +
+                            std::string(expr->getStmtClassName()) + "\n";
+        return {};  // 直接返回空
     }
 
-    std::string CppParser::GenerateGlobalFunctionToGLSL(clang::FunctionDecl* functionDecl) {
-        if (!functionDecl) return {}; 
-        auto definition = functionDecl->getDefinition();
-        if (!definition) {
-            llvm::errs() << "Error: No definition found\n"; 
+    std::string CppParser::ChangeCppExprListToGLSLExprList(llvm::ArrayRef<const clang::Expr*> exprs) {
+        std::string result;
+        for (size_t i = 0; i < exprs.size(); ++i) {
+            if (!exprs[i]) return {};
+            const std::string converted = ChangeCppExprToGLSLExpr(const_cast<clang::Expr*>(exprs[i]));
+            if (converted.empty()) return {};
+            if (i != 0) result += ", ";
+            result += converted;
+        }
+        return result;
+    }
+
+    std::string CppParser::ChangeCppReturnToGLSLReturn(clang::ReturnStmt* returnStmt) {
+        std::string rtStr = "return ";
+        if (auto* expr = returnStmt->getRetValue()) {
+            rtStr += ChangeCppExprToGLSLExpr(expr);
+        }
+        return rtStr + ";\n";
+    }
+
+    std::string CppParser::ChangeCppIfToGLSLIf(clang::IfStmt* ifStmt) {
+        std::string rtStr = "if (";
+        if (auto* initStmt = ifStmt->getInit()) {
+            llvm::errs() << "GLSL does not support if init-statement\n";
             return {};
         }
-        
-        
-        if (!functionDecl->hasBody()) {
+        if (auto* condExpr = ifStmt->getCond()) {
+            rtStr += ChangeCppExprToGLSLExpr(condExpr);
+            rtStr += ") \n";
+        }
+        auto* thenStmt = ifStmt->getThen();
+        auto* elseStmt = ifStmt->getElse();
+
+
+        if (thenStmt) {
+            rtStr += "{ \n";
+            rtStr += ProcessSTMT(thenStmt);
+            rtStr += "}\n";
+        }
+        else {
+            llvm::errs() << "GLSL does not support Non if then-statement\n";
+        }
+
+        if (elseStmt) {
+            rtStr += "else {\n";
+            rtStr += ProcessSTMT(elseStmt);
+            rtStr += "}\n";
+        }
+
+        return rtStr;
+    }
+
+    std::string CppParser::ChangeCppForToGLSLFor(clang::ForStmt* forStmt) {
+        if (auto* range = llvm::dyn_cast<clang::CXXForRangeStmt>(forStmt)) {
+            llvm::errs() << "GLSL does not support range-for declaration\n";
+            return {};
+        }
+
+        if (auto* declStmt = forStmt->getConditionVariableDeclStmt()) {
+            llvm::errs() << "GLSL does not support condition-variable declaration\n";
+            return {};
+        }
+
+
+        std::string rtStr = "for (";
+        if (auto* initStmt = forStmt->getInit()) {
+            rtStr += ProcessSTMT(initStmt);
+        }
+        else {
+            rtStr += ";";
+        }
+
+        if (auto* condExpr = forStmt->getCond()) {
+            rtStr += ChangeCppExprToGLSLExpr(condExpr);
+        }
+        rtStr += ";";
+
+        if (auto* incStmt = forStmt->getInc()) {
+            rtStr += ChangeCppExprToGLSLExpr(incStmt);
+        }
+
+
+        rtStr += ") { \n";
+        rtStr += ProcessSTMT(forStmt->getBody());
+        rtStr += "}";
+
+
+        return rtStr;
+    }
+
+    std::string CppParser::ChangeCppWhileToGLSLWhile(clang::WhileStmt* whileStmt) {
+        // 初版本简单点不支持复杂的语法
+        if (whileStmt->getConditionVariable()) {
+            // 例如 while (int x = f())，第一版可不支持
+            llvm::errs() << "GLSL does not support condition-variable declaration in While STMT\n";
+            return {};
+        }
+
+        const std::string cond = ChangeCppExprToGLSLExpr(const_cast<clang::Expr*>(whileStmt->getCond()));
+
+        const std::string body = ProcessSTMT(const_cast<clang::Stmt*>(whileStmt->getBody()));
+
+        if (cond.empty()) {
+            return {};
+        }
+
+        return "while (" + cond + ") {\n" + body + "}";
+    }
+
+    std::string CppParser::ChangeCppInitToGLSLInitializer(const clang::VarDecl* var) {
+        if (!var) return {};
+        const clang::Expr* init = var->getInit();
+        if (!init) return {};
+
+        if (const auto* list = llvm::dyn_cast<clang::InitListExpr>(init)) {
+            if (const auto* semantic = list->getSemanticForm()) list = semantic;
+            std::vector<const clang::Expr*> elements;
+            elements.reserve(list->getNumInits());
+            for (const clang::Expr* element : list->inits()) {
+                if (element) elements.push_back(element);
+            }
+            return "{" + ChangeCppExprListToGLSLExprList(elements) + "}";
+        }
+
+        if (const auto* construct = llvm::dyn_cast<clang::CXXConstructExpr>(init)) {
+            const std::string type = ChangeCppTypeToGLSLType(var->getType());
+            if (type.empty()) return {};
+            std::vector<const clang::Expr*> args;
+            args.reserve(construct->getNumArgs());
+            for (const clang::Expr* arg : construct->arguments()) {
+                if (arg) args.push_back(arg);
+            }
+            return type + "(" + ChangeCppExprListToGLSLExprList(args) + ")";
+        }
+
+        return ChangeCppExprToGLSLExpr(const_cast<clang::Expr*>(init));
+    }
+
+    std::string CppParser::ChangeCppDeclToGLSLDecl(clang::DeclStmt* declStmt) {
+        if (!declStmt) return {};
+
+        // GLSL 的一次声明只能有一个类型，例如 C++ 的 "int a = 1, b = 2"
+        // 要拆成 "int a = 1;\nint b = 2;\n"。
+        std::string rtStr;
+        for (const clang::Decl* decl : declStmt->decls()) {
+            const auto* var = llvm::dyn_cast<clang::VarDecl>(decl);
+            if (!var) {
+                llvm::errs() << "Error: unsupported declaration in DeclStmt: " << decl->getDeclKindName() << "\n";
+                return {};
+            }
+
+            const std::string name = var->getNameAsString();
+            if (name.empty()) return {};
+
+            clang::QualType canonical = var->getType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+            if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
+                if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
+                    if (spec->getName() == "Accessor") {
+                        llvm::errs() << "Error: Accessor cannot be declared inside shader function body: " << name
+                                     << "\n";
+                        return {};
+                    }
+                }
+            }
+
+            // getType() 对 auto 返回已经推导完成的类型，而不是源码里的 auto。
+            const std::string type = ChangeCppTypeToGLSLType(var->getType());
+            if (type.empty()) return {};
+
+            // GLSL 的数组维度必须写在变量名后：float values[4]。
+            const size_t bracket = type.find('[');
+            const std::string typeName = type.substr(0, bracket);
+            const std::string dimensions = bracket == std::string::npos ? std::string() : type.substr(bracket);
+            if (typeName.empty()) return {};
+
+            // GLSL 没有 C++ 的 static/extern 局部变量语义；着色器里按普通变量处理。
+            rtStr += typeName + " " + name + dimensions;
+            const std::string initializer = ChangeCppInitToGLSLInitializer(var);
+            if (!initializer.empty()) {
+                rtStr += " = " + initializer;
+            }
+            rtStr += ";\n";
+        }
+        return rtStr;
+    }
+
+
+    std::string CppParser::GenerateGlobalFunctionToGLSL(clang::FunctionDecl* functionDecl) {
+        if (!functionDecl) return {};
+        auto* definition = functionDecl->getDefinition();
+        if (!definition) {
+            llvm::errs() << "Error: No definition found\n";
+            return {};
+        }
+
+        if (!definition->hasBody()) {
             llvm::errs() << "Error: No body found\n";
-            return {};  
+            return {};
         }
         clang::Stmt* body = definition->getBody();
-        
+
         std::string result = ChangeCppTypeToGLSLType(definition->getReturnType()) + " ";
-        result += definition->getNameAsString() + "(";  
-        
+        result += definition->getNameAsString() + "(";
+
         for (unsigned int i = 0; i < definition->getNumParams(); ++i) {
-            result += i ? "," : "";
+            result += i ? ", " : "";
             auto* paramDecl = definition->getParamDecl(i);
             result += ChangeCppTypeToGLSLType(paramDecl->getType()) + " " + paramDecl->getNameAsString();
         }
-        result += ") { \n";
-        
-        auto* compound = llvm::dyn_cast_or_null<clang::CompoundStmt>(body);
-
-        if (!compound) {
-            return {};
-        }
-
-        for (clang::Stmt* stmt : compound->body()) {
-            
-            //处理return语句
-            if (auto* ret = llvm::dyn_cast<clang::ReturnStmt>(stmt)) {
-                if (clang::Expr* expr = ret->getRetValue()) {
-                    result += "    return " +
-                              ChangeCppExprToGLSLExpr(expr) + ";\n";
-                } else {
-                    result += "    return;\n";
-                }
-                continue;
-            }
-
-            // 其他语句先标记为未支持，避免悄悄丢代码
-            result += "    /* unsupported stmt: " +
-                      std::string(stmt->getStmtClassName()) + " */\n";
-        }
-
+        result += ") {\n";
+        result += ProcessSTMT(body);
         result += "}\n";
         return result;
     }
 
     std::string CppParser::ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op) {
-        //仅仅支持简单的操作
-        return clang::BinaryOperator::getOpcodeStr(op).str(); //这里把OP_Plus -> + 这种形式
+        // 仅仅支持简单的操作
+        return clang::BinaryOperator::getOpcodeStr(op).str();  // 这里把OP_Plus -> + 这种形式
     }
 
     std::string CppParser::ChangeCppOperatorToGLSLOperator(clang::OverloadedOperatorKind op) {
         if (auto spelling = clang::getOperatorSpelling(op)) {
             return std::string(spelling);
         }
-        return {}; //空则不支持此操作
+        return {};  // 空则不支持此操作
     }
 
     std::string CppParser::GetGLSLDefine(clang::QualType type, bool needStructHeader) {
         clang::QualType canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
         std::string glslDefine = "";
         if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
-            if (const auto def = record->getDefinition()) { //直接得到完整类型，防止隐式类型
+            if (const auto def = record->getDefinition()) {
+                // 直接得到完整类型，防止隐式类型
                 if (needStructHeader) {
                     glslDefine += "struct " + def->getNameAsString() + " {\n";
-                } else {
+                }
+                else {
                     glslDefine += def->getNameAsString() + " {\n";
                 }
 
@@ -296,13 +526,13 @@ namespace Ccino {
         // 1. 基础内置标量类型 (bool, int, uint32_t, uint64_t, float, double)
         if (const auto* builtin = canonical->getAs<clang::BuiltinType>()) {
             switch (builtin->getKind()) {
-                case clang::BuiltinType::Bool:      return UniformDataType::Bool;
-                case clang::BuiltinType::Int:       return UniformDataType::Int;
-                case clang::BuiltinType::UInt:      return UniformDataType::UInt;
+                case clang::BuiltinType::Bool: return UniformDataType::Bool;
+                case clang::BuiltinType::Int: return UniformDataType::Int;
+                case clang::BuiltinType::UInt: return UniformDataType::UInt;
                 case clang::BuiltinType::ULong:
-                case clang::BuiltinType::ULongLong: return UniformDataType::Buffer; // uint64_t (BDA)
-                case clang::BuiltinType::Float:     return UniformDataType::Float;
-                case clang::BuiltinType::Double:    return UniformDataType::Double;
+                case clang::BuiltinType::ULongLong: return UniformDataType::Buffer;  // uint64_t (BDA)
+                case clang::BuiltinType::Float: return UniformDataType::Float;
+                case clang::BuiltinType::Double: return UniformDataType::Double;
                 default: break;
             }
         }
@@ -329,25 +559,29 @@ namespace Ccino {
                             case 3: return UniformDataType::BVec3;
                             case 4: return UniformDataType::BVec4;
                         }
-                    } else if (elemType->isSignedIntegerType()) {
+                    }
+                    else if (elemType->isSignedIntegerType()) {
                         switch (len) {
                             case 2: return UniformDataType::IVec2;
                             case 3: return UniformDataType::IVec3;
                             case 4: return UniformDataType::IVec4;
                         }
-                    } else if (elemType->isUnsignedIntegerType()) {
+                    }
+                    else if (elemType->isUnsignedIntegerType()) {
                         switch (len) {
                             case 2: return UniformDataType::UVec2;
                             case 3: return UniformDataType::UVec3;
                             case 4: return UniformDataType::UVec4;
                         }
-                    } else if (elemType->isSpecificBuiltinType(clang::BuiltinType::Float)) {
+                    }
+                    else if (elemType->isSpecificBuiltinType(clang::BuiltinType::Float)) {
                         switch (len) {
                             case 2: return UniformDataType::Vec2;
                             case 3: return UniformDataType::Vec3;
                             case 4: return UniformDataType::Vec4;
                         }
-                    } else if (elemType->isSpecificBuiltinType(clang::BuiltinType::Double)) {
+                    }
+                    else if (elemType->isSpecificBuiltinType(clang::BuiltinType::Double)) {
                         switch (len) {
                             case 2: return UniformDataType::DVec2;
                             case 3: return UniformDataType::DVec3;
@@ -364,15 +598,15 @@ namespace Ccino {
                     bool isDouble = elemType->isSpecificBuiltinType(clang::BuiltinType::Double);
 
                     switch (cols * 10 + rows) {
-                        case 22: return isDouble ? UniformDataType::DMat2   : UniformDataType::Mat2;
+                        case 22: return isDouble ? UniformDataType::DMat2 : UniformDataType::Mat2;
                         case 23: return isDouble ? UniformDataType::DMat2x3 : UniformDataType::Mat2x3;
                         case 24: return isDouble ? UniformDataType::DMat2x4 : UniformDataType::Mat2x4;
                         case 32: return isDouble ? UniformDataType::DMat3x2 : UniformDataType::Mat3x2;
-                        case 33: return isDouble ? UniformDataType::DMat3   : UniformDataType::Mat3;
+                        case 33: return isDouble ? UniformDataType::DMat3 : UniformDataType::Mat3;
                         case 34: return isDouble ? UniformDataType::DMat3x4 : UniformDataType::Mat3x4;
                         case 42: return isDouble ? UniformDataType::DMat4x2 : UniformDataType::Mat4x2;
                         case 43: return isDouble ? UniformDataType::DMat4x3 : UniformDataType::Mat4x3;
-                        case 44: return isDouble ? UniformDataType::DMat4   : UniformDataType::Mat4;
+                        case 44: return isDouble ? UniformDataType::DMat4 : UniformDataType::Mat4;
                     }
                 }
             }
@@ -381,7 +615,8 @@ namespace Ccino {
         throw std::invalid_argument("Unsupported QualType for UniformDataType: " + canonical.getAsString());
     }
 
-    std::vector<ShaderUniformDataBinding> CppParser::GetUniformDataBindings(clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
+    std::vector<ShaderUniformDataBinding> CppParser::GetUniformDataBindings(clang::LambdaExpr* lambdaExpr,
+                                                                            clang::ASTContext& context) {
         std::vector<ShaderUniformDataBinding> uniformDataBindings;
 
         const clang::CXXRecordDecl* lambdaClass = lambdaExpr->getLambdaClass();
@@ -390,11 +625,11 @@ namespace Ccino {
         uint32_t fieldIndex = 0;
 
         for (const auto* field : lambdaClass->fields()) {
-
             std::string varName = field->getNameAsString();
             uint32_t offset = static_cast<uint32_t>(lambdaClassLayout.getFieldOffset(fieldIndex) / 8);
-            UniformDataType uniformDataType = GetUniformDataType(field->getType()); //QualType转换为uniformData对应的类型
-            uniformDataBindings.push_back(ShaderUniformDataBinding{varName, offset, uniformDataType});
+            UniformDataType uniformDataType =
+                GetUniformDataType(field->getType());  // QualType转换为uniformData对应的类型
+            uniformDataBindings.push_back(ShaderUniformDataBinding {varName, offset, uniformDataType});
             fieldIndex++;
         }
 
@@ -403,8 +638,9 @@ namespace Ccino {
 
 
     bool CppParser::IsGlobalVariable(clang::ValueDecl* value) {
-        if (const auto* varDecl = llvm::dyn_cast<clang::VarDecl>(value)) { //值声明变为变量声明
-            // 1. 判断是否在文件/命名空间作用域声明（真正的全局变量 + 类的 static 静态成员变量）
+        if (const auto* varDecl = llvm::dyn_cast<clang::VarDecl>(value)) {
+            // 值声明变为变量声明
+            //  1. 判断是否在文件/命名空间作用域声明（真正的全局变量 + 类的 static 静态成员变量）
             bool isGlobalScopeVar = varDecl->isFileVarDecl();
 
             // 2. 判断是否具有全局存储期（包含上面的全局变量 + 函数内部的 static 局部变量）
@@ -423,12 +659,11 @@ namespace Ccino {
         const clang::CXXRecordDecl* lambdaClass = lambdaExpr->getLambdaClass();
 
         for (const auto* field : lambdaClass->fields()) {
-
             std::string varName = field->getNameAsString();
-            UniformDataType uniformDataType = GetUniformDataType(field->getType()); //QualType转换为uniformData对应的类型
+            UniformDataType uniformDataType =
+                GetUniformDataType(field->getType());  // QualType转换为uniformData对应的类型
             descriptorSlotLayout.emplace_back(varName, uniformDataType);
-
         }
         return descriptorSlotLayout;
     }
-}
+}  // namespace Ccino
