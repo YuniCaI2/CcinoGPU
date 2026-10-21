@@ -77,6 +77,8 @@ namespace
             template<typename T, unsigned long long N>
             struct array {
                 T elems[N];
+                T& operator[](unsigned long long i) { return elems[i]; }
+                const T& operator[](unsigned long long i) const { return elems[i]; }
             };
         }
 
@@ -85,11 +87,15 @@ namespace
 
             template<int L, typename T, qualifier Q = defaultp>
             struct vec {
+                T x{}, y{}, z{}, w{};
                 vec() = default;
                 vec(T s) {}
                 vec(T x, T y) {}
                 vec(T x, T y, T z) {}
                 vec(T x, T y, T z, T w) {}
+
+                T& operator[](int i) { return x; }
+                const T& operator[](int i) const { return x; }
 
                 vec operator+(const vec& rhs) const { return *this; }
                 vec operator-(const vec& rhs) const { return *this; }
@@ -135,11 +141,43 @@ namespace
             using BVec3 = glm::vec<3, bool>;
             using Mat4 = glm::mat<4, 4, float>;
 
+            struct ComputeGlobalID {
+                uint32_t x;
+                uint32_t y;
+                uint32_t z;
+            };
+
             template<typename T, unsigned long long N>
             using Array = std::array<T, N>;
 
             template<typename BufferResourceType, BufferAccessFlags bufferAccessFlags>
-            class Accessor {};
+            class Accessor {
+            public:
+                BufferResourceType& operator[](uint32_t index) const {
+                    static BufferResourceType dummy{};
+                    return dummy;
+                }
+            };
+
+            template <typename... Args>
+            constexpr decltype(auto) Dot(Args&&... args) {
+                return glm::dot( args... );
+            }
+
+            template <typename... Args>
+            constexpr decltype(auto) Cross(Args&&... args) {
+                return glm::cross( args... );
+            }
+
+            template <typename... Args>
+            constexpr decltype(auto) Normalize(Args&&... args) {
+                return glm::normalize( args... );
+            }
+
+            template <typename... Args>
+            constexpr decltype(auto) Clamp(Args&&... args) {
+                return glm::clamp( args... );
+            }
         }
     )";
 }  // namespace
@@ -374,6 +412,34 @@ TEST(ProcessStmtTest, ExprStmt_FunctionCallsAndConstructors) {
     EXPECT_EQ(result.TopLevelStmtGlsls[4], "(x = clamp((x + 1), 0, 10));\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[5], "(a = normalize(cross(a, b)));\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[6], "(b = (vec3(1,2,3) + a));\n");
+}
+
+TEST(ProcessStmtTest, ExprStmt_MemberAccessSubscriptAndCcinoWrappers) {
+    const auto result = RunProcessStmtOnCode(kShaderTestPreamble + R"(
+        struct Particle {
+            Ccino::Vec3 pos;
+            float mass;
+        };
+
+        void TestEntry(Ccino::Accessor<Particle, BufferAccessFlagBits::ReadWrite> buf) {
+            int rawArr[4] = {1, 2, 3, 4};
+            Ccino::Array<float, 4> stdArr;
+            Ccino::Vec3 v(1.0f, 2.0f, 3.0f);
+
+            rawArr[2] = rawArr[0] + 1;
+            stdArr[1] = v.x + v[2];
+            buf[0].pos = Ccino::Normalize(Ccino::Cross(v, buf[1].pos));
+            buf[0].mass = Ccino::Dot(v, buf[0].pos);
+            rawArr[3] = Ccino::Clamp(rawArr[2], 0, 10);
+        }
+    )");
+
+    ASSERT_EQ(result.TopLevelStmtGlsls.size(), 8u);
+    EXPECT_EQ(result.TopLevelStmtGlsls[3], "(rawArr[2] = (rawArr[0] + 1));\n");
+    EXPECT_EQ(result.TopLevelStmtGlsls[4], "(stdArr[1] = (v.x + v[2]));\n");
+    EXPECT_EQ(result.TopLevelStmtGlsls[5], "(buf[0].pos = normalize(cross(v, buf[1].pos)));\n");
+    EXPECT_EQ(result.TopLevelStmtGlsls[6], "(buf[0].mass = dot(v, buf[0].pos));\n");
+    EXPECT_EQ(result.TopLevelStmtGlsls[7], "(rawArr[3] = clamp(rawArr[2], 0, 10));\n");
 }
 
 // ============================================================================
@@ -805,7 +871,8 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
 
                 auto cs = [inParticles, outParticles, debugOut, dt, gravity, maxSteps, worldMat](Ccino::UVec3 threadID) {
                     Ccino::UVec3 globalID = threadID;
-                    Ccino::Vec3 vel = gravity;
+                    uint32_t idx = globalID.x;
+                    Ccino::Vec3 vel = inParticles[idx].pos + gravity;
                     int step = 0;
 
                     for (int i = 0; i < maxSteps; ++i) {
@@ -821,6 +888,8 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
                         step -= 1;
                     }
 
+                    outParticles[idx].pos = vel;
+                    debugOut[0].stepCount = step;
                     glm::barrier();
                 };
             }
@@ -878,8 +947,8 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
     // 5. 验证完整生成的 GLSL 文本
     const std::string expectedGlsl =
         "#version 460\n"
-        "#extension GL_EXT_buffer_reference : require\n"
-        "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in\n"
+        "#extension GL_EXT_buffer_reference2 : require\n"
+        "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"
         "layout(buffer_reference, std430) buffer Particle {\n"
         "    vec3 pos;\n"
         "    float mass;\n"
@@ -902,10 +971,11 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "} pc;\n"
         "void main() { \n"
         "uvec3 globalID = uvec3(gl_GlobalInvocationID);\n"
-        "vec3 vel = vec3(gravity);\n"
+        "uint idx = globalID.x;\n"
+        "vec3 vel = (pc.uniformData.inParticles[idx].pos + pc.uniformData.gravity);\n"
         "int step = 0;\n"
-        "for (int i = 0;\n(i < maxSteps);(++i)) { \n"
-        "(vel = (vel + gravity));\n"
+        "for (int i = 0;\n(i < pc.uniformData.maxSteps);(++i)) { \n"
+        "(vel = (vel + pc.uniformData.gravity));\n"
         "if ((i == 2)) \n"
         "{ \n"
         "continue;\n"
@@ -917,6 +987,8 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "while ((step > 10)) {\n"
         "(step -= 1);\n"
         "}"
+        "(pc.uniformData.outParticles[idx].pos = vel);\n"
+        "(pc.uniformData.debugOut[0].stepCount = step);\n"
         "barrier();\n"
         "}\n";
 
@@ -1113,7 +1185,7 @@ TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
         Ccino::ThreadGroupSize{0, 0, 8});
 
     ASSERT_EQ(noParamShaders.size(), 2u);
-    EXPECT_NE(noParamShaders[0].glsl.find("layout(local_size_z = 8) in\n"), std::string::npos);
+    EXPECT_NE(noParamShaders[0].glsl.find("layout(local_size_z = 8) in;\n"), std::string::npos);
     EXPECT_NE(noParamShaders[0].glsl.find("int a = 42;\n"), std::string::npos);
     EXPECT_NE(noParamShaders[1].glsl.find("int b = 99;\n"), std::string::npos);
 }
@@ -1146,6 +1218,9 @@ TEST(ProcessComputeShaderTest, ImplicitCaptureAndInitCapture) {
     EXPECT_NE(ir.glsl.find("float scale; \n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("vec3 usedDir; \n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("int baseCount; \n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("vec3 d = vec3(pc.uniformData.usedDir);\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("int total = (pc.uniformData.baseCount + 1);\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("float s = pc.uniformData.scale;\n"), std::string::npos);
 }
 
 TEST(ProcessComputeShaderTest, UnsupportedCaptureTypeThrowsInvalidArgument) {

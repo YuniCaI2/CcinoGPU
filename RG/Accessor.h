@@ -19,8 +19,10 @@ namespace Ccino {
         }
         //TODO: 支持Texture
 
-        BufferResourceType operator[](uint32_t index) {
+        BufferResourceType& operator[](uint32_t index) const {
             //dummy 本质是占位符并且将类型传递出去让ClangAST看到，方便后续转换代码处理auto时可用 
+            static BufferResourceType dummy{};
+            return dummy;
         }
 
     private:

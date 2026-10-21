@@ -1,6 +1,9 @@
 #include "CppParser.h"
 #include "CodeGenerator/ShaderIR.h"
+#include "Core/CcinoType.h"
 #include "RG/AccessorEnums.h"
+#include <algorithm>
+#include <cctype>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
@@ -44,7 +47,7 @@ namespace Ccino
         shaderIR.passName = passName;
         shaderIR.uniformDataBindings = GetUniformDataBindings(lambda, context);
         shaderIR.glsl += "#version 460\n"
-                "#extension GL_EXT_buffer_reference : require\n";
+                "#extension GL_EXT_buffer_reference2 : require\n";
         std::string localSizeArgs;
         auto appendLocalSize = [&](const char* name, uint32_t size) {
             if (!size) return;
@@ -54,27 +57,35 @@ namespace Ccino
         appendLocalSize("local_size_x", threadGroupSize.x);
         appendLocalSize("local_size_y", threadGroupSize.y);
         appendLocalSize("local_size_z", threadGroupSize.z);
-        shaderIR.glsl += "layout(" + localSizeArgs + ") in\n";
+        shaderIR.glsl += "layout(" + localSizeArgs + ") in;\n";
         
         shaderIR.glsl += GenerateSSBOBinding(lambda, context);
         shaderIR.glsl += GenerateUniformDataReference(lambda, context);
         shaderIR.glsl += GeneratePushConstant();
 
-        //函数体
-        shaderIR.glsl += "void main() { \n";
-        //处理lambda
-        shaderIR.glsl += ProcessSTMT(lambda->getBody());
-        shaderIR.glsl += "}\n";
+        //处理lambda函数体
+        std::string bodyGlsl = ProcessSTMT(lambda->getBody());
 
-        //处理名字
-        //得到第一个参数的名字
+        //处理名字：将第一个参数名替换为 gl_GlobalInvocationID，并将捕获变量替换为 pc.uniformData.<name>
         std::unordered_map<std::string, std::string> mp;
         if (auto* callOp = lambda->getCallOperator()) {
             if (callOp->getNumParams() > 0) {
-                mp[callOp->getParamDecl(0)->getNameAsString()] = "gl_GlobalInvocationID";
+                std::string paramName = callOp->getParamDecl(0)->getNameAsString();
+                if (!paramName.empty()) {
+                    mp[paramName] = "gl_GlobalInvocationID";
+                }
             }
         }
-        ChangeBuildInName(shaderIR.glsl, mp);
+        for (const auto& binding : shaderIR.uniformDataBindings) {
+            if (!binding.name.empty()) {
+                mp[binding.name] = "pc.uniformData." + binding.name;
+            }
+        }
+        ChangeBuildInName(bodyGlsl, mp);
+
+        shaderIR.glsl += "void main() { \n";
+        shaderIR.glsl += bodyGlsl;
+        shaderIR.glsl += "}\n";
 
         return shaderIR;
     }
@@ -218,14 +229,35 @@ namespace Ccino
 
 
     std::string CppParser::ChangeCppExprToGLSLExpr(clang::Expr* expr) {
+        if (!expr) return {};
         expr = expr->IgnoreUnlessSpelledInSource();  // 剔除重复的代码
         if (auto* DRE = llvm::dyn_cast<clang::DeclRefExpr>(expr)) {
             // 只有一个值时走,引用表达式
             return DRE->getDecl()->getNameAsString();
         }
 
+        if (auto* ME = llvm::dyn_cast<clang::MemberExpr>(expr)) {
+            if (ME->isImplicitAccess()) {
+                return ME->getMemberDecl()->getNameAsString();
+            }
+            std::string base = ChangeCppExprToGLSLExpr(ME->getBase());
+            std::string member = ME->getMemberDecl()->getNameAsString();
+            if (base.empty() || member.empty()) return {};
+            return base + "." + member;
+        }
+
+        if (auto* ASE = llvm::dyn_cast<clang::ArraySubscriptExpr>(expr)) {
+            return ChangeCppExprToGLSLExpr(ASE->getBase()) + "[" +
+                   ChangeCppExprToGLSLExpr(ASE->getIdx()) + "]";
+        }
+
         if (auto* Op = llvm::dyn_cast<clang::CXXOperatorCallExpr>(expr)) {
             std::string op = clang::getOperatorSpelling(Op->getOperator());
+
+            if (Op->getOperator() == clang::OO_Subscript && Op->getNumArgs() == 2) {
+                return ChangeCppExprToGLSLExpr(Op->getArg(0)) + "[" +
+                       ChangeCppExprToGLSLExpr(Op->getArg(1)) + "]";
+            }
 
             if (Op->getOperator() == clang::OO_PlusPlus || Op->getOperator() == clang::OO_MinusMinus) {
                 const clang::Expr* operand = Op->getArg(0);
@@ -295,13 +327,22 @@ namespace Ccino
         }
 
         // 函数调用侧
-        if (auto* Call = llvm::dyn_cast<clang::CallExpr>(expr))  // glm::dot(a,b) -> dot(a,b)
+        if (auto* Call = llvm::dyn_cast<clang::CallExpr>(expr)) {  // glm::dot(a,b) / Ccino::Dot(a,b) -> dot(a,b)
             if (auto* FD = Call->getDirectCallee()) {
-                std::string R = FD->getName().str() + "(";
+                std::string funcName = FD->getName().str();
+                std::string lowerName = funcName;
+                std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                if (GLSLBuiltinFuncSet.contains(lowerName)) {
+                    funcName = std::move(lowerName);
+                }
+                std::string R = funcName + "(";
                 for (unsigned i = 0; i < Call->getNumArgs(); ++i)
                     R += (i ? ", " : "") + ChangeCppExprToGLSLExpr(Call->getArg(i));
                 return R + ")";
             }
+        }
 
         llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: " +
                             std::string(expr->getStmtClassName()) + "\n";
@@ -515,7 +556,9 @@ namespace Ccino
             const std::smatch& match = *it;
             result.append(code, lastPos, match.position() - lastPos);
 
-            auto found = buildInMap.find(match.str());
+            const bool isMemberAccess =
+                (match.position() > 0 && code[static_cast<std::size_t>(match.position() - 1)] == '.');
+            auto found = isMemberAccess ? buildInMap.end() : buildInMap.find(match.str());
             if (found != buildInMap.end()) {
                 result.append(found->second);
             }
