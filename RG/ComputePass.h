@@ -1,22 +1,10 @@
 #pragma once
 #include "Core/ComputePipeline.h"
+#include "ShaderStruct/ShaderCommon.h"
 #include <cstdint>
 
 //TODO: 生成合适的Pipeline IR 并传入Core层
 namespace Ccino {
-
-    struct ThreadGroupSize {
-        uint32_t x;
-        uint32_t y;
-        uint32_t z;
-    };
-
-    struct ComputeGlobalID {
-        uint32_t x;
-        uint32_t y;
-        uint32_t z;
-    };
-
     class ComputePass {
     public:
         ComputePass();

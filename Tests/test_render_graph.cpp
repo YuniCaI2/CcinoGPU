@@ -89,7 +89,7 @@ TEST(RenderGraphTimeline, SinglePass) {
     RID resA = CreateDummyBufferResource(builder);
 
     RID p0;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
     });
@@ -110,13 +110,13 @@ TEST(RenderGraphTimeline, ParallelIndependentPasses) {
     RID resC = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Write<uint32_t>(resB, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Write<uint32_t>(resC, passRID);
     });
@@ -136,14 +136,14 @@ TEST(RenderGraphTimeline, LinearRAWChain) {
     RID resB = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Read<uint32_t>(resA, passRID);
         rg.Write<uint32_t>(resB, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Read<uint32_t>(resB, passRID);
     });
@@ -164,16 +164,16 @@ TEST(RenderGraphTimeline, ForkMultipleReaders) {
     RID resA = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2, p3;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Read<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Read<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P3">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p3 = passRID;
         rg.Read<uint32_t>(resA, passRID);
     });
@@ -194,13 +194,13 @@ TEST(RenderGraphTimeline, JoinMultipleProducers) {
     RID resB = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Write<uint32_t>(resB, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Read<uint32_t>(resA, passRID);
         rg.Read<uint32_t>(resB, passRID);
@@ -221,19 +221,19 @@ TEST(RenderGraphTimeline, WriteAfterReadDependency) {
     RID resA = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2, p3, p4;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Read<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Read<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P3">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p3 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P4">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p4 = passRID;
         rg.Read<uint32_t>(resA, passRID);
     });
@@ -255,13 +255,13 @@ TEST(RenderGraphTimeline, InitialReadThenWrite) {
     RID resA = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Read<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Read<uint32_t>(resA, passRID);
     });
@@ -282,13 +282,13 @@ TEST(RenderGraphTimeline, WriteAfterWriteDependency) {
     RID resA = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Write<uint32_t>(resA, passRID);
     });
@@ -309,13 +309,13 @@ TEST(RenderGraphTimeline, ReadWriteChain) {
     RID resA = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.ReadWrite<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Read<uint32_t>(resA, passRID);
     });
@@ -344,23 +344,23 @@ TEST(RenderGraphTimeline, DiamondDAG) {
     RID resD = CreateDummyBufferResource(builder);
 
     RID p0, p1, p2, p3, p4;
-    builder.AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
         rg.Write<uint32_t>(resA, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Read<uint32_t>(resA, passRID);
         rg.Write<uint32_t>(resB, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Read<uint32_t>(resA, passRID);
         rg.Write<uint32_t>(resC, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P3">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p3 = passRID;
         rg.Read<uint32_t>(resB, passRID);
         rg.Read<uint32_t>(resC, passRID);
         rg.Write<uint32_t>(resD, passRID);
-    }).AddPass([&](Ccino::RGBuilder& rg, RID& passRID) {
+    }).AddPass<"P4">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p4 = passRID;
         rg.Read<uint32_t>(resD, passRID);
     });

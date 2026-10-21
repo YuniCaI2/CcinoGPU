@@ -33,18 +33,10 @@ namespace Ccino {
     public:
         void Init(RHI::Context* context);
 
-        template<int N, const char passName[N], typename Func>
+        template<FixedString passName, typename Func>
         requires std::is_invocable_v<Func, RGBuilder&, RID&>
         RGBuilder& AddPass(Func&& func) {
             //处理Accessor 并且处理Builder 内部Shader的翻译和绑定
-            auto passRID = m_passes.Add(RGPass{});
-            func(*this, passRID);
-            return *this;
-        }
-
-        template<typename Func>
-        requires std::is_invocable_v<Func, RGBuilder&, RID&>
-        RGBuilder& AddPass(Func&& func) {
             auto passRID = m_passes.Add(RGPass{});
             func(*this, passRID);
             return *this;

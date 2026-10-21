@@ -190,7 +190,6 @@ namespace Ccino
     // 单独处理Accessor 生成layout(buffer) binding 信息
     std::string CppParser::ChangeAccessorToSSBOReference(const clang::ValueDecl* value) {
         if (!value) return {};
-        std::string ssboBinding = "";  // SSBO 默认使用STD430
         clang::QualType type = value->getType();
         auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();  // 去掉引用 去掉别名
                                                                                               // 去掉cv
@@ -201,23 +200,9 @@ namespace Ccino
                     spec->getTemplateArgs();  // 这里直接得到模板名并且没有命名空间
                 if (tmplName == "Accessor" && args.size() >= 2) {
                     if (args[1].getKind() == clang::TemplateArgument::Declaration) {
-                        if (const auto* tpo = llvm::dyn_cast<clang::TemplateParamObjectDecl>(args[1].getAsDecl())) {
-                            // NTTP 会被当为TemplateParamObjectDecl
-                            const clang::APValue& structVal = tpo->getValue();
-                            if (structVal.isStruct()) {
-                                auto maskField = structVal.getStructField(0).getInt().getExtValue();
-                                if (maskField == static_cast<int64_t>(BufferAccessFlagBits::ReadWrite)) {
-                                    ssboBinding = "layout(buffer_reference, std430) readwrite buffer";
-                                }
-                                else if (maskField == static_cast<int64_t>(BufferAccessFlagBits::Read)) {
-                                    ssboBinding = "layout(buffer_reference, std430) readonly buffer";
-                                }
-                                else if (maskField == static_cast<int64_t>(BufferAccessFlagBits::Write)) {
-                                    ssboBinding = "layout(buffer_reference, std430) writeonly buffer";
-                                }
-                                ssboBinding += " " + GetGLSLDefine(args[0].getAsType(), false);
-                                return ssboBinding;
-                            }
+                        if (llvm::isa<clang::TemplateParamObjectDecl>(args[1].getAsDecl())) {
+                            return "layout(buffer_reference, std430) buffer " +
+                                   GetGLSLDefine(args[0].getAsType(), false);
                         }
                     }
                     else {

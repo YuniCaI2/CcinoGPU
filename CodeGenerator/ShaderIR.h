@@ -1,4 +1,5 @@
 #pragma once
+#include "ShaderStruct/ShaderCommon.h"
 #include "ShaderStruct/UniformData.h"
 
 #include <cstdint>
@@ -7,21 +8,6 @@
 #include <vector>
 
 namespace Ccino {
-    enum class ShaderType {
-        Compute,
-        Vertex,
-        Fragment
-    };
-
-    struct ThreadGroupSize {
-        
-
-        uint32_t x;
-        uint32_t y;
-        uint32_t z;
-    };
-
-
     enum class ShaderPropertyType {
         ReadOnlyStorageBuffer,
         WriteOnlyStorageBuffer,

@@ -337,19 +337,19 @@ TEST(CppParserTest, ChangeAccessorToSSBOReference_ReadWriteAccessFlags)
 
     EXPECT_EQ(
         result.VarSSBOReferences["readAc"],
-        "layout(buffer_reference, std430) readonly buffer " + expectedBody
+        "layout(buffer_reference, std430) buffer " + expectedBody
         );
     EXPECT_EQ(
         result.VarSSBOReferences["writeAc"],
-        "layout(buffer_reference, std430) writeonly buffer " + expectedBody
+        "layout(buffer_reference, std430) buffer " + expectedBody
         );
     EXPECT_EQ(
         result.VarSSBOReferences["rwAc"],
-        "layout(buffer_reference, std430) readwrite buffer " + expectedBody
+        "layout(buffer_reference, std430) buffer " + expectedBody
         );
     EXPECT_EQ(
         result.VarSSBOReferences["readAcRef"],
-        "layout(buffer_reference, std430) readonly buffer " + expectedBody
+        "layout(buffer_reference, std430) buffer " + expectedBody
         );
 
     // 非 Accessor 变量应返回空字符串

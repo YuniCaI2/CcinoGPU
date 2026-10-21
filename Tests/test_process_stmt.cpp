@@ -880,15 +880,11 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "#version 460\n"
         "#extension GL_EXT_buffer_reference : require\n"
         "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in\n"
-        "layout(buffer_reference, std430) readonly buffer Particle {\n"
+        "layout(buffer_reference, std430) buffer Particle {\n"
         "    vec3 pos;\n"
         "    float mass;\n"
         "};\n"
-        "layout(buffer_reference, std430) readwrite buffer Particle {\n"
-        "    vec3 pos;\n"
-        "    float mass;\n"
-        "};\n"
-        "layout(buffer_reference, std430) writeonly buffer DebugInfo {\n"
+        "layout(buffer_reference, std430) buffer DebugInfo {\n"
         "    int stepCount;\n"
         "    uint flags;\n"
         "};\n"
@@ -951,15 +947,15 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
     ASSERT_EQ(shaders.size(), 1u);
     const Ccino::ShaderIR& ir = shaders[0];
 
-    // 两个相同类型+相同权限的 Accessor 只应生成一次 readonly buffer Particle 声明
-    const std::string readOnlyBlock =
-        "layout(buffer_reference, std430) readonly buffer Particle {\n"
+    // 多个相同底层结构体的 Accessor（无论读写权限是否相同）只应生成一次 buffer Particle 声明
+    const std::string particleBlock =
+        "layout(buffer_reference, std430) buffer Particle {\n"
         "    vec3 pos;\n"
         "    float mass;\n"
         "};\n";
-    const size_t firstReadPos = ir.glsl.find(readOnlyBlock);
-    ASSERT_NE(firstReadPos, std::string::npos);
-    EXPECT_EQ(ir.glsl.find(readOnlyBlock, firstReadPos + 1), std::string::npos);
+    const size_t firstPos = ir.glsl.find(particleBlock);
+    ASSERT_NE(firstPos, std::string::npos);
+    EXPECT_EQ(ir.glsl.find(particleBlock, firstPos + 1), std::string::npos);
 
     // 但 UniformData 和 DescriptorSlotLayout 中必须保留全部 3 个字段
     EXPECT_NE(ir.glsl.find("Particle inA; \nParticle inB; \nParticle outC; \n"), std::string::npos);
