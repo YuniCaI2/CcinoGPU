@@ -4,6 +4,7 @@
 #include "RG/AccessorEnums.h"
 #include <algorithm>
 #include <cctype>
+#include <clang/AST/APValue.h>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
@@ -12,6 +13,7 @@
 #include <clang/AST/Stmt.h>
 #include <clang/AST/TemplateBase.h>
 #include <clang/AST/Type.h>
+#include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/OperatorKinds.h>
 #include <format>
 #include <llvm/Support/Casting.h>
@@ -21,15 +23,87 @@
 #include <unordered_map>
 #include <unordered_set>
 
+namespace {
+    class PassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
+    public:
+        void run(const clang::ast_matchers::MatchFinder::MatchResult& result) override {
+            //先只处理compute Lambda 图形后续再处理
+            const auto* csLambda      = result.Nodes.getNodeAs<clang::LambdaExpr>("csLambda");
+            const auto* addPassMethod = result.Nodes.getNodeAs<clang::CXXMethodDecl>("addPassMethod");
+            const auto* addCSMethod   = result.Nodes.getNodeAs<clang::CXXMethodDecl>("addCSMethod");
+
+            if (!csLambda || !addPassMethod || !addCSMethod || !result.Context) {
+                return;
+            }
+
+            //需要保证Lambda定义的文件在主要文件中
+            if (!result.SourceManager->isWrittenInMainFile(csLambda->getBeginLoc())) {
+                return;
+            }
+            std::string passName = ExtractPassName(addPassMethod);
+            Ccino::ThreadGroupSize threadGroupSize = ExtractGroupSize(addCSMethod);
+            // 趁 ASTContext 存活，直接生成 ShaderIR
+            shaderIRs.push_back(Ccino::CppParser::ProcessComputeShader(
+                csLambda, *result.Context, passName, threadGroupSize));
+            
+        }
+
+        std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
+            std::string result = "Invalid Name";
+            const auto* args = passMethod->getTemplateSpecializationArgs();
+            const clang::TemplateArgument& arg0 = args->get(0);
+
+            if (arg0.getKind() != clang::TemplateArgument::StructuralValue) {
+                llvm::errs() << "Can't Find Lambda In AddPass! \n";
+                return {};
+            }
+
+            //这里获取FixString
+            const clang::APValue& structVal = arg0.getAsStructuralValue();
+            if (!structVal.isStruct() || structVal.getStructNumFields() == 0) return {};
+
+            const clang::APValue& charArray = structVal.getStructField(0);
+            if (!charArray.isArray()) return {};
+
+            uint32_t len = charArray.getArrayInitializedElts(); //需要确认
+            for (unsigned i = 0; i < len; ++i) {
+                char c = static_cast<char>(charArray.getArrayInitializedElt(i).getInt().getZExtValue());
+                if (c == '\0') break; // 遇到末尾 '\0' 停止
+                result.push_back(c);
+            }
+
+            return result;
+        }
+        
+        Ccino::ThreadGroupSize ExtractGroupSize(const clang::CXXMethodDecl* passMethod) { //成员函数声明
+            Ccino::ThreadGroupSize size = {1, 1, 1};
+            const auto* args = passMethod->getTemplateSpecializationArgs();
+            const clang::TemplateArgument& arg0 = args->get(0);
+
+            if (arg0.getKind() != clang::TemplateArgument::StructuralValue) {
+                llvm::errs() << "Can't Find Lambda In AddPass! \n";
+                return size;
+            }
+
+            //这里获取编译器静态变量
+            const clang::APValue& structVal = arg0.getAsStructuralValue();
+            if (!structVal.isStruct() || structVal.getStructNumFields() < 3) return size;
+
+            size.x = static_cast<uint32_t>(structVal.getStructField(0).getInt().getExtValue());
+            size.y = static_cast<uint32_t>(structVal.getStructField(1).getInt().getExtValue());
+            size.z = static_cast<uint32_t>(structVal.getStructField(2).getInt().getExtValue());
+            return size;
+        }
+    private:
+        std::vector<Ccino::ShaderIR> shaderIRs;
+    };
+}
+
 namespace Ccino
 {
-    std::vector<std::string> CppParser::GetAllValidFilePaths(const std::string& projectDir) {
-        return {};
-    }
-
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
-    std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& filePath) {
-        
+    std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath) {
+                
 
         return {};
     }
