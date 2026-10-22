@@ -11,5 +11,7 @@ struct Flags {
     constexpr explicit Flags(MaskType flags) : mask(flags) {}
     constexpr Flags operator|(Flags other) const { return Flags(mask | other.mask); }
     constexpr Flags operator&(Flags other) const { return Flags(mask & other.mask); }
+    constexpr Flags& operator|=(Flags other) { mask |= other.mask; return *this; }
+    constexpr Flags& operator&=(Flags other) { mask &= other.mask; return *this; }
     constexpr explicit operator bool() const { return mask != 0; }
 };

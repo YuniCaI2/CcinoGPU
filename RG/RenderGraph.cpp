@@ -1,6 +1,10 @@
 #include "RenderGraph.h"
 #include "Accessor.h"
+#include "AccessorEnums.h"
+#include "ResourceConcept.h"
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <iostream>
 
@@ -86,6 +90,8 @@ namespace Ccino {
             }
         }        
         
+        //Buffer Barrier
+        std::unordered_map<RID, std::vector<RGBufferBarrier>> bufferBarrierMap; 
 
         // 初始化所有的Pass的入度 
         for (const auto& dependency : passDependencies) {
@@ -93,10 +99,30 @@ namespace Ccino {
                 dependecyGraph[dependency.srcPassRID].push_back(dependency.dstPassRID);
                 passInDegrees[dependency.dstPassRID]++; //入度+1
                 //Barrier注入 这里先不做，后续注册, 需要向RHI转换
+                auto* resource = m_resources.Get(dependency.resourceRID);
+                if (resource->resourceType == ResourceType::Buffer) {
+                    RGBufferBarrier bufferBarrier;
+                    std::visit([&](const auto& resourceFlags){
+                        if constexpr (std::is_same_v<BufferAccessFlags, std::decay_t<decltype(resourceFlags)>>) {
+                            bufferBarrier.dstFlags = resourceFlags;
+                        }
+                    }, dependency.dstAccessFlags);
+                    
+                    std::visit([&](const auto& resourceFlags){
+                        if constexpr (std::is_same_v<BufferAccessFlags, std::decay_t<decltype(resourceFlags)>>) {
+                            bufferBarrier.srcFlags = resourceFlags;
+                        }
+                    }, dependency.srcAccessFlags);
+                    bufferBarrier.srcPassType = m_passes.Get(dependency.srcPassRID)->passType;
+                    bufferBarrier.dstPassType = m_passes.Get(dependency.dstPassRID)->passType;
+
+                    bufferBarrier.resourceRID = dependency.resourceRID;
+
+                    bufferBarrierMap[dependency.dstPassRID].push_back(std::move(bufferBarrier));
+                }
+
             }
         }
-
-        //TODO: Barrier 处理
 
 
         m_timeline.clear();
@@ -116,15 +142,36 @@ namespace Ccino {
 
 
             std::vector<RID> nextLayer;
+            std::unordered_map<RID, RGBufferBarrier> bufferBarrierLayer;
+
             for (const auto& passRID : currentLayer) {
                 for (const auto& dstPassRID : dependecyGraph[passRID]) {
+                    for (auto& bufferBarrier : bufferBarrierMap[dstPassRID]) {
+                        if (bufferBarrierLayer.contains(bufferBarrier.resourceRID)) {
+                            bufferBarrierLayer[bufferBarrier.resourceRID].srcFlags |= bufferBarrier.srcFlags;
+                            bufferBarrierLayer[bufferBarrier.resourceRID].dstFlags |= bufferBarrier.dstFlags;
+                            bufferBarrierLayer[bufferBarrier.resourceRID].srcPassType |= bufferBarrier.srcPassType;
+                            bufferBarrierLayer[bufferBarrier.resourceRID].dstPassType |= bufferBarrier.dstPassType;
+                        } else {
+                            bufferBarrierLayer[bufferBarrier.resourceRID] = bufferBarrier;
+                        }
+                    }
                     passInDegrees[dstPassRID]--;
+                    std::vector<RGBufferBarrier> currentBufferBarriers;
+                    for (auto& [_, barrier] : bufferBarrierLayer) {
+                        currentBufferBarriers.push_back(std::move(barrier));
+                    }
+
+                    //Buffer
+                    m_bufferBarriers.push_back(std::move(currentBufferBarriers));
                     if (passInDegrees[dstPassRID] == 0) {
                         nextLayer.push_back(dstPassRID);
                     }
                 }
             }
             currentLayer = std::move(nextLayer);
+
+
         }
 
         if (scheduledCount < m_passes.Size()) {

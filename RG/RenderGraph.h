@@ -1,5 +1,6 @@
 #pragma once
 #include "Accessor.h"
+#include "AccessorEnums.h"
 #include "ComputePass.h"
 #include "Pass.h"
 #include "RGResource.h"
@@ -27,6 +28,21 @@ namespace Ccino {
         uint32_t dstResourceVersion; //这里表示在dstPass视角下这个资源的Verison是
         ResourceAccessFlags srcAccessFlags;
         ResourceAccessFlags dstAccessFlags;
+    };
+
+    //Buffer和Image需要分别处理
+    struct RGBufferBarrier {
+        BufferAccessFlags srcFlags;
+        BufferAccessFlags dstFlags;
+        RGPassTypeFlags srcPassType;
+        RGPassTypeFlags dstPassType;
+        RID resourceRID;
+    };
+
+    //TODO:完善TextureBarrier这个结构体，其中还缺少很多对象
+    struct RGTextureBarrier {
+        TextureAccessFlags srcFlags;
+        TextureAccessFlags dstFlags;
     };
 
     class RGBuilder {
@@ -104,6 +120,11 @@ namespace Ccino {
         std::unordered_map<RID, uint32_t> m_edgeNums; 
 
         std::vector<std::vector<RID>> m_timeline;
+
+
+        //类型粒度分开
+        std::vector<std::vector<RGBufferBarrier>> m_bufferBarriers; //这个和timeline需要对齐 | timeline 0 || barrier 0 || timeline 1 || barrier 1 || timeline2
+        std::vector<RGTextureBarrier> m_textureBarriers; 
 
         RHI::Context* m_context;
     };
