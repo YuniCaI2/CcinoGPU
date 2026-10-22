@@ -125,6 +125,8 @@ namespace Ccino {
 
         void GenerateCommands(VkCommandBuffer buffer); //现在先单线程处理后续增加多线程
 
+        void GeneratePipeline();
+
         //使用擦除类型句柄管理
         TRIDArray<RGPass> m_passes;
         TRIDArray<RGResource> m_resources;

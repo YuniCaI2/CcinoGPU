@@ -6,6 +6,7 @@
 #include <cctype>
 #include <clang/AST/APValue.h>
 #include <clang/AST/ASTContext.h>
+#include <clang/AST/Decl.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
 #include <clang/AST/ExprCXX.h>
@@ -31,25 +32,41 @@ namespace {
     class PassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
     public:
         void run(const clang::ast_matchers::MatchFinder::MatchResult& result) override {
-            //先只处理compute Lambda 图形后续再处理
+            if (!result.Context) return;
+
+
+            // 1. 处理 calledFuncMatcher 命中的全局函数
+            if (const auto* globalFunction = result.Nodes.getNodeAs<clang::FunctionDecl>("calledFunc")) {
+                if (!Ccino::GLSLBuiltinFuncSet.contains(globalFunction->getNameAsString())) {
+                    globalFunctions += Ccino::CppParser::GenerateGlobalFunctionToGLSL(globalFunction);
+                    globalFunctions += "\n";
+                }
+                return;
+            }
+
+            // 2. 处理 globalStructMatcher 命中的结构体
+            if (const auto* usedStruct = result.Nodes.getNodeAs<clang::CXXRecordDecl>("usedStruct")) {
+                globalFunctions += Ccino::CppParser::GetGLSLDefine(usedStruct, true);
+                globalFunctions += "n";
+                return;
+            }
+
+            // 3. 处理 csCallMatcher 
             const auto* csLambda      = result.Nodes.getNodeAs<clang::LambdaExpr>("csLambda");
             const auto* addPassMethod = result.Nodes.getNodeAs<clang::CXXMethodDecl>("addPassMethod");
             const auto* addCSMethod   = result.Nodes.getNodeAs<clang::CXXMethodDecl>("addCSMethod");
-
-            if (!csLambda || !addPassMethod || !addCSMethod || !result.Context) {
-                return;
-            }
+            if (!csLambda || !addPassMethod || !addCSMethod) return;
 
             //需要保证Lambda定义的文件在主要文件中
             if (!result.SourceManager->isWrittenInMainFile(csLambda->getBeginLoc())) {
                 return;
             }
+
             std::string passName = ExtractPassName(addPassMethod);
             Ccino::ThreadGroupSize threadGroupSize = ExtractGroupSize(addCSMethod);
             // 趁 ASTContext 存活，直接生成 ShaderIR
             shaderIRs.push_back(Ccino::CppParser::ProcessComputeShader(
                 csLambda, *result.Context, passName, threadGroupSize));
-            
         }
 
         const clang::APValue* ExtractStructuralAPValue(const clang::TemplateArgument& arg) {
@@ -119,13 +136,14 @@ namespace {
         }
 
         std::vector<Ccino::ShaderIR> shaderIRs;
+        std::string globalFunctions;
     };
 }
 
 namespace Ccino
 {
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
-    std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath) {
+    std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath, std::string* globalFunctions) {
         using namespace clang::ast_matchers;
         std::string errorMsg;
         auto compilationDB = clang::tooling::JSONCompilationDatabase::loadFromFile(
@@ -161,12 +179,60 @@ namespace Ccino
                 ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("csLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
             ))
         );
+
+        auto csLambdaNode = lambdaExpr(
+            forEachDescendant( //遍历后代
+                callExpr( //匹配所有表达式
+                    unless(cxxOperatorCallExpr()), //unless 排除所有重载
+                    unless(cxxMemberCallExpr()), //排除所有成员函数
+                    callee(functionDecl().bind("calledFunc")) //从函数调用点到声明的位置
+                )
+            )
+        );
+
+        // 匹配 Lambda 内部声明的自定义结构体变量类型
+        auto structLambdaNode = lambdaExpr(
+            forEachDescendant(
+                varDecl(
+                    hasType(cxxRecordDecl(
+                        unless(classTemplateSpecializationDecl()), // 排除 Vec3 / Mat4 / Array / Accessor 等模板类
+                        unless(isImplicit())                       // 排除编译器隐式生成的类
+                    ).bind("usedStruct"))
+                )
+            )
+        );
+
+        auto calledFuncMatcher = cxxMemberCallExpr(
+            callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder")))),
+            hasArgument(0, anyOf(
+                ignoringImplicit(csLambdaNode),
+                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(csLambdaNode))))))
+            ))
+        );
+
+        auto globalStructMatcher = cxxMemberCallExpr(
+            callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder")))),
+            hasArgument(0, anyOf(
+                ignoringImplicit(structLambdaNode),
+                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(structLambdaNode))))))
+            ))
+        );
+
+        
+
         finder.addMatcher(csCallMatcher, &collector);
+        finder.addMatcher(calledFuncMatcher, &collector);
+        finder.addMatcher(globalStructMatcher, &collector);
+
         // 4. 运行 Clang 前端并触发回调
         if (tool.run(clang::tooling::newFrontendActionFactory(&finder).get()) != 0) {
             llvm::errs() << "ClangTool failed on file: " << compileCommandJsonPath << "\n";
             return {};
         }
+
+        if (globalFunctions)
+            *globalFunctions = collector.globalFunctions;
+
         // 5. 返回收集好的所有 ShaderIR
         return std::move(collector.shaderIRs);
     }
@@ -226,6 +292,7 @@ namespace Ccino
 
         return shaderIR;
     }
+
 
     std::string CppParser::ProcessSTMT(clang::Stmt* stmt) {
         if (!stmt) return {};
@@ -711,7 +778,7 @@ namespace Ccino
     }
 
 
-    std::string CppParser::GenerateGlobalFunctionToGLSL(clang::FunctionDecl* functionDecl) {
+    std::string CppParser::GenerateGlobalFunctionToGLSL(const clang::FunctionDecl* functionDecl) {
         if (!functionDecl) return {};
         auto* definition = functionDecl->getDefinition();
         if (!definition) {
@@ -723,6 +790,7 @@ namespace Ccino
             llvm::errs() << "Error: No body found\n";
             return {};
         }
+
         clang::Stmt* body = definition->getBody();
 
         std::string result = ChangeCppTypeToGLSLType(definition->getReturnType()) + " ";
@@ -823,6 +891,30 @@ namespace Ccino
                 glslDefine += "};\n";
                 return glslDefine;
             }
+        }
+        return glslDefine;
+    }
+
+    std::string CppParser::GetGLSLDefine(const clang::CXXRecordDecl* record, bool needStructHeader) {
+        std::string glslDefine = "";
+        if (const auto def = record->getDefinition()) {
+
+            // 直接得到完整类型，防止隐式类型
+            if (needStructHeader) {
+                glslDefine += "struct " + def->getNameAsString() + " {\n";
+            }
+            else {
+                glslDefine += def->getNameAsString() + " {\n";
+            }
+
+            for (const auto* field : def->fields()) {
+                llvm::StringRef fieldName = field->getName();
+                clang::QualType fieldType = field->getType();
+                std::string fieldGLSL = ChangeCppTypeToGLSLType(fieldType);
+                glslDefine += "    " + fieldGLSL + " " + fieldName.str() + ";\n";
+            }
+            glslDefine += "};\n";
+            return glslDefine;
         }
         return glslDefine;
     }

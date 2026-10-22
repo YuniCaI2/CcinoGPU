@@ -90,6 +90,8 @@ namespace Ccino {
     void RGBuilder::Init(RHI::Context* context, const std::vector<ShaderIR>& shaderIRs) {
         m_context = context;
         //方便后续快速检索
+
+        //不对，可能这个RG不拥有所有的ShaderIR
         for (auto& shaderIR : shaderIRs) {
             m_shaderIRMap[shaderIR.passName] = shaderIR;
         }

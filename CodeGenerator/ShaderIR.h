@@ -45,6 +45,9 @@ namespace Ccino {
 
         //代码部分
         std::string glsl;
+
+        //后续标志位
+        uint32_t size = 0; //记录代码字节数，因为后续glsl 可能spv 数据直接放到std::string中
     };
 
     //这里统一丢到HugeHeader中，并且只需要处理下其中的类型
