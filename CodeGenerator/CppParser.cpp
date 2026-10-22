@@ -49,7 +49,7 @@ namespace {
         }
 
         std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
-            std::string result = "Invalid Name";
+            std::string result = "";
             const auto* args = passMethod->getTemplateSpecializationArgs();
             const clang::TemplateArgument& arg0 = args->get(0);
 
@@ -65,7 +65,7 @@ namespace {
             const clang::APValue& charArray = structVal.getStructField(0);
             if (!charArray.isArray()) return {};
 
-            uint32_t len = charArray.getArrayInitializedElts(); //需要确认
+            uint32_t len = charArray.getArrayInitializedElts(); //得到真实传入的数组的长度，而不是整个char array的长度
             for (unsigned i = 0; i < len; ++i) {
                 char c = static_cast<char>(charArray.getArrayInitializedElt(i).getInt().getZExtValue());
                 if (c == '\0') break; // 遇到末尾 '\0' 停止
@@ -74,6 +74,7 @@ namespace {
 
             return result;
         }
+        
         
         Ccino::ThreadGroupSize ExtractGroupSize(const clang::CXXMethodDecl* passMethod) { //成员函数声明
             Ccino::ThreadGroupSize size = {1, 1, 1};
