@@ -4,6 +4,8 @@
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Tooling/Tooling.h>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -1239,6 +1241,291 @@ TEST(ProcessComputeShaderTest, UnsupportedCaptureTypeThrowsInvalidArgument) {
             )"),
         std::invalid_argument);
 }
+
+// ============================================================================
+// CppParser::ParseFilePassShaders 端到端单元测试 (基于真实 compile_commands.json)
+// ============================================================================
+namespace
+{
+    const std::string kRGPassTestPreamble = kShaderTestPreamble + R"(
+        struct RID {
+            uint32_t index = 0;
+        };
+
+        namespace Ccino {
+            struct ThreadGroupSize {
+                uint32_t x = 1;
+                uint32_t y = 1;
+                uint32_t z = 1;
+            };
+
+            template <unsigned long long N>
+            struct FixedString {
+                char data[N]{};
+                constexpr FixedString(const char (&str)[N]) {
+                    for (unsigned long long i = 0; i < N; ++i) {
+                        data[i] = str[i];
+                    }
+                }
+            };
+
+            class RGBuilder {
+            public:
+                template <FixedString passName, typename Func>
+                RGBuilder& AddPass(Func&& func) {
+                    RID passRID{};
+                    func(*this, passRID);
+                    return *this;
+                }
+
+                template <ThreadGroupSize threadGroupSize, typename CS>
+                void AddCS(CS&& cs) {
+                    (void)cs;
+                }
+
+                template <typename BufferResourceType>
+                Accessor<BufferResourceType, BufferAccessFlagBits::Read> Read(RID&, RID&) {
+                    return {};
+                }
+
+                template <typename BufferResourceType>
+                Accessor<BufferResourceType, BufferAccessFlagBits::Write> Write(RID&, RID&) {
+                    return {};
+                }
+
+                template <typename BufferResourceType>
+                Accessor<BufferResourceType, BufferAccessFlagBits::ReadWrite> ReadWrite(RID&, RID&) {
+                    return {};
+                }
+            };
+        }
+    )";
+
+    class TempCompileCommandsWorkspace
+    {
+    public:
+        explicit TempCompileCommandsWorkspace(const std::string& suiteSubDir) {
+            dirPath = std::filesystem::temp_directory_path() / ("CcinoGPU_ParsePassTest_" + suiteSubDir);
+            std::error_code ec;
+            std::filesystem::remove_all(dirPath, ec);
+            std::filesystem::create_directories(dirPath, ec);
+        }
+
+        ~TempCompileCommandsWorkspace() {
+            std::error_code ec;
+            std::filesystem::remove_all(dirPath, ec);
+        }
+
+        std::filesystem::path WriteFile(const std::string& relativeName, const std::string& content) const {
+            std::filesystem::path filePath = dirPath / relativeName;
+            std::filesystem::create_directories(filePath.parent_path());
+            std::ofstream ofs(filePath, std::ios::binary);
+            ofs << content;
+            ofs.close();
+            return filePath;
+        }
+
+        std::string WriteCompileCommands(const std::vector<std::filesystem::path>& sourceFiles) const {
+            nlohmann::json db = nlohmann::json::array();
+            const std::string dirStr = dirPath.generic_string();
+            for (const auto& src : sourceFiles) {
+                const std::string fileStr = src.generic_string();
+                db.push_back({
+                    {"directory", dirStr},
+                    {"arguments", {"clang++", "-std=c++20", "-fsyntax-only", "-I" + dirStr, fileStr}},
+                    {"file", fileStr}
+                });
+            }
+            const std::filesystem::path jsonPath = dirPath / "compile_commands.json";
+            std::ofstream ofs(jsonPath, std::ios::binary);
+            ofs << db.dump(2);
+            ofs.close();
+            return jsonPath.generic_string();
+        }
+
+        std::filesystem::path dirPath;
+    };
+}  // namespace
+
+TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
+    TempCompileCommandsWorkspace ws("SinglePass");
+
+    const auto cppPath = ws.WriteFile(
+        "single_pass.cpp",
+        kRGPassTestPreamble + R"(
+            struct Particle {
+                Ccino::Vec3 pos;
+                float mass;
+            };
+
+            void BuildParticleGraph() {
+                Ccino::RGBuilder builder;
+                RID particleBuf{};
+
+                builder.AddPass<"ParticleSimulatePass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    auto inOutParticles = rg.ReadWrite<Particle>(particleBuf, passRID);
+                    float dt = 0.016f;
+                    Ccino::Vec3 gravity(0, -9, 0);
+
+                    rg.AddCS<Ccino::ThreadGroupSize{64, 4, 1}>([=](Ccino::ComputeGlobalID id) {
+                        uint32_t idx = id.x;
+                        inOutParticles[idx].pos = inOutParticles[idx].pos + gravity * dt;
+                    });
+                });
+            }
+        )");
+
+    const std::string compileCommandsPath = ws.WriteCompileCommands({cppPath});
+    const std::vector<Ccino::ShaderIR> shaders = Ccino::CppParser::ParseFilePassShaders(compileCommandsPath);
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    EXPECT_EQ(ir.passName, "ParticleSimulatePass");
+    EXPECT_EQ(ir.shaderType, Ccino::ShaderType::Compute);
+    EXPECT_EQ(ir.threadGroupSize, (Ccino::ThreadGroupSize{64, 4, 1}));
+
+    const Ccino::DescriptorSlotLayout expectedLayout = {
+        {"inOutParticles", Ccino::UniformDataType::Buffer},
+        {"gravity",        Ccino::UniformDataType::Vec3},
+        {"dt",             Ccino::UniformDataType::Float},
+    };
+    EXPECT_EQ(ir.descriptorSlotLayout, expectedLayout);
+    ASSERT_EQ(ir.uniformDataBindings.size(), 3u);
+
+    EXPECT_NE(ir.glsl.find("layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("layout(buffer_reference, std430) buffer Particle {\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("uint idx = gl_GlobalInvocationID.x;\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("pc.uniformData.inOutParticles[idx].pos = (pc.uniformData.inOutParticles[idx].pos + (pc.uniformData.gravity * pc.uniformData.dt))"), std::string::npos);
+}
+
+TEST(ParseFilePassShadersTest, VariableLambdaAndChainedPasses) {
+    TempCompileCommandsWorkspace ws("ChainedAndVarLambda");
+
+    const auto cppPath = ws.WriteFile(
+        "chained_passes.cpp",
+        kRGPassTestPreamble + R"(
+            struct CounterBuf {
+                uint32_t count;
+            };
+
+            void BuildChainedGraph() {
+                Ccino::RGBuilder builder;
+                RID bufA{}, bufB{};
+
+                builder.AddPass<"CullPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    auto outCounter = rg.Write<CounterBuf>(bufA, passRID);
+                    uint32_t limit = 128;
+
+                    rg.AddCS<Ccino::ThreadGroupSize{32, 1, 1}>([=](Ccino::ComputeGlobalID gid) {
+                        if (gid.x < limit) {
+                            outCounter[gid.x].count = gid.x;
+                        }
+                    });
+                }).AddPass<"LightingPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    auto inCounter = rg.Read<CounterBuf>(bufA, passRID);
+                    auto outColor = rg.Write<CounterBuf>(bufB, passRID);
+                    uint32_t scale = 2;
+
+                    auto cs = [=](Ccino::ComputeGlobalID tid) {
+                        outColor[tid.x].count = inCounter[tid.x].count * scale;
+                    };
+                    rg.AddCS<Ccino::ThreadGroupSize{16, 8, 2}>(cs);
+                });
+            }
+        )");
+
+    const std::string compileCommandsPath = ws.WriteCompileCommands({cppPath});
+    const std::vector<Ccino::ShaderIR> shaders = Ccino::CppParser::ParseFilePassShaders(compileCommandsPath);
+
+    ASSERT_EQ(shaders.size(), 2u);
+
+    EXPECT_EQ(shaders[0].passName, "CullPass");
+    EXPECT_EQ(shaders[0].threadGroupSize, (Ccino::ThreadGroupSize{32, 1, 1}));
+    EXPECT_NE(shaders[0].glsl.find("layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
+    EXPECT_NE(shaders[0].glsl.find("(gl_GlobalInvocationID.x < pc.uniformData.limit)"), std::string::npos);
+
+    EXPECT_EQ(shaders[1].passName, "LightingPass");
+    EXPECT_EQ(shaders[1].threadGroupSize, (Ccino::ThreadGroupSize{16, 8, 2}));
+    EXPECT_NE(shaders[1].glsl.find("layout(local_size_x = 16, local_size_y = 8, local_size_z = 2) in;\n"), std::string::npos);
+    EXPECT_NE(shaders[1].glsl.find("(pc.uniformData.outColor[gl_GlobalInvocationID.x].count = (pc.uniformData.inCounter[gl_GlobalInvocationID.x].count * pc.uniformData.scale));\n"), std::string::npos);
+}
+
+TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
+    TempCompileCommandsWorkspace ws("MultiFilesAndHeader");
+
+    ws.WriteFile(
+        "common_pass_helper.h",
+        kRGPassTestPreamble + R"(
+            struct DataNode {
+                float value;
+            };
+
+            inline void RegisterHeaderOnlyPass(Ccino::RGBuilder& builder, RID& res) {
+                builder.AddPass<"HeaderPassShouldBeIgnored">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    auto out = rg.Write<DataNode>(res, passRID);
+                    rg.AddCS<Ccino::ThreadGroupSize{8, 1, 1}>([=](Ccino::ComputeGlobalID id) {
+                        out[id.x].value = 1.0f;
+                    });
+                });
+            }
+        )");
+
+    const auto fileA = ws.WriteFile(
+        "file_a.cpp",
+        R"(#include "common_pass_helper.h"
+            void EntryA() {
+                Ccino::RGBuilder builder;
+                RID res{};
+                RegisterHeaderOnlyPass(builder, res);
+                builder.AddPass<"FileAPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    auto out = rg.Write<DataNode>(res, passRID);
+                    float factor = 3.5f;
+                    rg.AddCS<Ccino::ThreadGroupSize{64, 1, 1}>([=](Ccino::ComputeGlobalID id) {
+                        out[id.x].value = factor;
+                    });
+                });
+            }
+        )");
+
+    const auto fileB = ws.WriteFile(
+        "file_b.cpp",
+        R"(#include "common_pass_helper.h"
+            void EntryB() {
+                Ccino::RGBuilder builder;
+                RID res{};
+                builder.AddPass<"FileBPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    auto out = rg.Write<DataNode>(res, passRID);
+                    rg.AddCS<Ccino::ThreadGroupSize{128, 2, 1}>([=](Ccino::ComputeGlobalID id) {
+                        out[id.x].value = 2.0f;
+                    });
+                });
+            }
+        )");
+
+    const std::string compileCommandsPath = ws.WriteCompileCommands({fileA, fileB});
+    const std::vector<Ccino::ShaderIR> shaders = Ccino::CppParser::ParseFilePassShaders(compileCommandsPath);
+
+    // 头文件 common_pass_helper.h 中的 HeaderPassShouldBeIgnored 应被 isWrittenInMainFile 过滤掉
+    ASSERT_EQ(shaders.size(), 2u);
+    EXPECT_EQ(shaders[0].passName, "FileAPass");
+    EXPECT_EQ(shaders[0].threadGroupSize, (Ccino::ThreadGroupSize{64, 1, 1}));
+    EXPECT_EQ(shaders[1].passName, "FileBPass");
+    EXPECT_EQ(shaders[1].threadGroupSize, (Ccino::ThreadGroupSize{128, 2, 1}));
+}
+
+TEST(ParseFilePassShadersTest, InvalidOrEmptyCompilationDatabaseReturnsEmpty) {
+    // 1. 不存在的 compile_commands.json 路径
+    const auto missingResult = Ccino::CppParser::ParseFilePassShaders("non_existent_dir/compile_commands.json");
+    EXPECT_TRUE(missingResult.empty());
+
+    // 2. 空的 compile_commands.json
+    TempCompileCommandsWorkspace ws("EmptyDB");
+    const std::string emptyJsonPath = ws.WriteCompileCommands({});
+    const auto emptyResult = Ccino::CppParser::ParseFilePassShaders(emptyJsonPath);
+    EXPECT_TRUE(emptyResult.empty());
+}
+
 
 
 

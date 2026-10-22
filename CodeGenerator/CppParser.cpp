@@ -14,7 +14,11 @@
 #include <clang/AST/TemplateBase.h>
 #include <clang/AST/Type.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
+#include <clang/ASTMatchers/ASTMatchers.h>
 #include <clang/Basic/OperatorKinds.h>
+#include <clang/Tooling/CompilationDatabase.h>
+#include <clang/Tooling/JSONCompilationDatabase.h>
+#include <clang/Tooling/Tooling.h>
 #include <format>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
@@ -48,18 +52,33 @@ namespace {
             
         }
 
+        const clang::APValue* ExtractStructuralAPValue(const clang::TemplateArgument& arg) {
+            if (arg.getKind() == clang::TemplateArgument::Declaration) {
+                if (const auto* paramObj = llvm::dyn_cast_or_null<clang::TemplateParamObjectDecl>(arg.getAsDecl())) {
+                    return &paramObj->getValue();
+                }
+            }
+            if (arg.getKind() == clang::TemplateArgument::StructuralValue) {
+                return &arg.getAsStructuralValue();
+            }
+            return nullptr;
+        }
+
         std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
+            if (!passMethod) return {};
             std::string result = "";
             const auto* args = passMethod->getTemplateSpecializationArgs();
+            if (!args || args->size() == 0) return {};
             const clang::TemplateArgument& arg0 = args->get(0);
 
-            if (arg0.getKind() != clang::TemplateArgument::StructuralValue) {
+            const clang::APValue* structValPtr = ExtractStructuralAPValue(arg0);
+            if (!structValPtr) {
                 llvm::errs() << "Can't Find Lambda In AddPass! \n";
                 return {};
             }
 
             //这里获取FixString
-            const clang::APValue& structVal = arg0.getAsStructuralValue();
+            const clang::APValue& structVal = *structValPtr;
             if (!structVal.isStruct() || structVal.getStructNumFields() == 0) return {};
 
             const clang::APValue& charArray = structVal.getStructField(0);
@@ -78,16 +97,19 @@ namespace {
         
         Ccino::ThreadGroupSize ExtractGroupSize(const clang::CXXMethodDecl* passMethod) { //成员函数声明
             Ccino::ThreadGroupSize size = {1, 1, 1};
+            if (!passMethod) return size;
             const auto* args = passMethod->getTemplateSpecializationArgs();
+            if (!args || args->size() == 0) return size;
             const clang::TemplateArgument& arg0 = args->get(0);
 
-            if (arg0.getKind() != clang::TemplateArgument::StructuralValue) {
+            const clang::APValue* structValPtr = ExtractStructuralAPValue(arg0);
+            if (!structValPtr) {
                 llvm::errs() << "Can't Find Lambda In AddPass! \n";
                 return size;
             }
 
             //这里获取编译器静态变量
-            const clang::APValue& structVal = arg0.getAsStructuralValue();
+            const clang::APValue& structVal = *structValPtr;
             if (!structVal.isStruct() || structVal.getStructNumFields() < 3) return size;
 
             size.x = static_cast<uint32_t>(structVal.getStructField(0).getInt().getExtValue());
@@ -95,7 +117,7 @@ namespace {
             size.z = static_cast<uint32_t>(structVal.getStructField(2).getInt().getExtValue());
             return size;
         }
-    private:
+
         std::vector<Ccino::ShaderIR> shaderIRs;
     };
 }
@@ -104,9 +126,49 @@ namespace Ccino
 {
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
     std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath) {
-                
+        using namespace clang::ast_matchers;
+        std::string errorMsg;
+        auto compilationDB = clang::tooling::JSONCompilationDatabase::loadFromFile(
+            compileCommandJsonPath, errorMsg, clang::tooling::JSONCommandLineSyntax::AutoDetect);
+        if (!compilationDB) {
+            llvm::errs() << "Failed to load CompilationDatabase: " << errorMsg << "\n";
+            return {};
+        }
 
-        return {};
+        std::vector<std::string> sourceFiles;
+        std::unordered_set<std::string> seenFiles;
+        for (const auto& cmd : compilationDB->getAllCompileCommands()) {
+            if (seenFiles.insert(cmd.Filename).second) {
+                sourceFiles.push_back(cmd.Filename);
+            }
+        }
+        if (sourceFiles.empty()) {
+            return {};
+        }
+
+        clang::tooling::ClangTool tool(*compilationDB, sourceFiles);
+
+        PassShaderCollector collector;
+        MatchFinder finder;
+        //这里 设置Matcher的对象，这里设置了它的调用者和参数绑定
+        auto csCallMatcher = cxxMemberCallExpr(
+            callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder"))).bind("addCSMethod")), // 这里的bind相当于把addCSMethod贴上了标签 
+            hasAncestor(cxxMemberCallExpr( //上层调用者 ,并且打上标签
+                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod")) 
+            )),
+            hasArgument(0, anyOf( //检查AddCS的第一个参数
+                ignoringImplicit(lambdaExpr().bind("csLambda")), //直接塞进来一个Lambda
+                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("csLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
+            ))
+        );
+        finder.addMatcher(csCallMatcher, &collector);
+        // 4. 运行 Clang 前端并触发回调
+        if (tool.run(clang::tooling::newFrontendActionFactory(&finder).get()) != 0) {
+            llvm::errs() << "ClangTool failed on file: " << compileCommandJsonPath << "\n";
+            return {};
+        }
+        // 5. 返回收集好的所有 ShaderIR
+        return std::move(collector.shaderIRs);
     }
 
     // 内部 AST 处理函数（在 MatchFinder::MatchCallback::run 内部调用，此时 AST 存活）：
