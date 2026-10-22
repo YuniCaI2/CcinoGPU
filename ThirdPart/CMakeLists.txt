@@ -36,3 +36,15 @@ set(CLANG_INCLUDE_TESTS OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(llvm-project/llvm EXCLUDE_FROM_ALL)
 
+# GLSL
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/glslang/update_glslang_sources.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/glslang
+    RESULT_VARIABLE UPDATE_GLSLANG_RES
+)
+if(NOT UPDATE_GLSLANG_RES EQUAL 0)
+    message(FATAL_ERROR "Failed to run update_glslang_sources.py")
+endif()
+add_subdirectory(glslang)
+

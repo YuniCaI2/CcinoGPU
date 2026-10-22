@@ -16,3 +16,6 @@
 	path = ThirdPart/json
 	url = https://github.com/nlohmann/json.git
 	shallow = true
+[submodule "ThirdPart/glslang"]
+	path = ThirdPart/glslang
+	url = https://github.com/KhronosGroup/glslang.git
