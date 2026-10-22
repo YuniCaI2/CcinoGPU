@@ -1,6 +1,7 @@
 #include "RenderGraph.h"
 #include "Accessor.h"
 #include "AccessorEnums.h"
+#include "RGResource.h"
 #include "ResourceConcept.h"
 #include <type_traits>
 #include <unordered_map>
@@ -192,8 +193,27 @@ namespace Ccino {
     }
 
     RID RGBuilder::CreateExternalBuffer(const Ref<Buffer>& buffer) {
-        auto rid = m_resources.Add(RGResource{ResourceType::Buffer, buffer->GetCreateArgs(), true});
+        auto rid = m_resources.Add(RGResource{ResourceType::Buffer, buffer->GetCreateArgs(), true, buffer});
         return rid;
+    }
+
+    void RGBuilder::CreateGPUResource() {
+        // 创建资源
+        m_resources.ForEach([this](RGResource& resource){
+            if (resource.isExternal) return;
+            if (resource.resourceType == ResourceType::Buffer) {
+                resource.bufferRef = Buffer::Create(*m_context, resource.bufferCreateArgs); 
+            }
+        });
+    }
+
+    void RGBuilder::ReleaseGPUResource() {
+        m_resources.ForEach([](RGResource& resource){
+            if (resource.isExternal) return;
+            if (resource.resourceType == ResourceType::Buffer) {
+                resource.bufferRef.UnRef();
+            }
+        });
     }
 
 

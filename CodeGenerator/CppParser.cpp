@@ -54,7 +54,7 @@ namespace {
 
         const clang::APValue* ExtractStructuralAPValue(const clang::TemplateArgument& arg) {
             if (arg.getKind() == clang::TemplateArgument::Declaration) {
-                if (const auto* paramObj = llvm::dyn_cast_or_null<clang::TemplateParamObjectDecl>(arg.getAsDecl())) {
+                if (const auto* paramObj = llvm::dyn_cast_or_null<clang::TemplateParamObjectDecl>(arg.getAsDecl())) { //临时构造出来的 FixedString 结构体塞进了模板参数 , 在全局只读数据段（.rodata）里隐式生成一个全局唯一的 constexpr 常量对象，所有传了 "P0" 的 AddPass<"P0"> 共享这同一个内存对象
                     return &paramObj->getValue();
                 }
             }

@@ -49,7 +49,7 @@ struct RID {
         return count;
     }
 
-    static RID Invalid() {
+    static consteval RID Invalid() {
         return RID{UINT64_MAX, UINT64_MAX, UINT64_MAX};
     }
 };

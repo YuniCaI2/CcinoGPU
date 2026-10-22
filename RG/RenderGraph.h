@@ -111,6 +111,10 @@ namespace Ccino {
         RID CreateExternalBuffer(const Ref<Buffer>& buffer);
 
     private:
+        //先不考虑资源的别名和并行录制
+        void CreateGPUResource();
+        void ReleaseGPUResource();
+
         //使用擦除类型句柄管理
         TRIDArray<RGPass> m_passes;
         TRIDArray<RGResource> m_resources;
