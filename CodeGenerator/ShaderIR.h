@@ -27,8 +27,8 @@ namespace Ccino {
     };
 
     struct ShaderUniformDataBinding {
-        std::string name; //结构体名
-        uint32_t offset; // 当前的Pass的Lambda的堆偏移,后续Cpp消费这个堆偏移实现绑定
+        std::string name{}; //结构体名
+        uint32_t offset{}; // 当前的Pass的Lambda的堆偏移,后续Cpp消费这个堆偏移实现绑定
         UniformDataType uniformDataType;
     };
 

@@ -2,12 +2,63 @@
 #include "Accessor.h"
 #include "AccessorEnums.h"
 #include "RGResource.h"
+#include "RHI/Context.h"
 #include "ResourceConcept.h"
+#include "ShaderStruct/UniformData.h"
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <iostream>
+namespace {
+    VkAccessFlags2 ToVkBufferAccessFlags2(BufferAccessFlags flags) {
+        VkAccessFlags2 access = VK_ACCESS_2_NONE;
+        if (flags & BufferAccessFlagBits::Read) {
+            access |= VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+        }
+        if (flags & BufferAccessFlagBits::Write) {
+            access |= VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        }
+        return access;
+    }
+
+    VkPipelineStageFlags2 ToVkPipelineStageFlags2(Ccino::RGPassTypeFlags passTypeFlags) {
+        VkPipelineStageFlags2 stage = VK_PIPELINE_STAGE_2_NONE;
+        if (passTypeFlags & Ccino::RGPassTypeFlagBits::Compute) {
+            stage |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        }
+        if (passTypeFlags & Ccino::RGPassTypeFlagBits::Graphics) {
+            stage |= VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
+        }
+        if (stage == VK_PIPELINE_STAGE_2_NONE) {
+            stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        }
+        return stage;
+    }
+
+    //Barrier转换
+    VkBufferMemoryBarrier2 GenerateVkBufferBarrier(
+        BufferAccessFlags srcFlags,
+        BufferAccessFlags dstFlags,
+        Ccino::RHI::Context* context,
+        RID bufferID,
+        Ccino::RGPassTypeFlags srcPassType = Ccino::RGPassTypeFlagBits::Compute,
+        Ccino::RGPassTypeFlags dstPassType = Ccino::RGPassTypeFlagBits::Compute) {
+        VkBufferMemoryBarrier2 bufferBarrier{};
+        bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+        bufferBarrier.pNext = nullptr;
+        bufferBarrier.srcStageMask = ToVkPipelineStageFlags2(srcPassType);
+        bufferBarrier.srcAccessMask = ToVkBufferAccessFlags2(srcFlags);
+        bufferBarrier.dstStageMask = ToVkPipelineStageFlags2(dstPassType);
+        bufferBarrier.dstAccessMask = ToVkBufferAccessFlags2(dstFlags);
+        bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bufferBarrier.buffer = context->GetVkBuffer(bufferID);
+        bufferBarrier.offset = 0;
+        bufferBarrier.size = context->GetBufferSize(bufferID);
+        return bufferBarrier;
+    }
+}
 
 namespace Ccino {
     bool IsWritable(ResourceAccessFlags accessFlags) {
@@ -36,8 +87,12 @@ namespace Ccino {
         return isReadable;
     }
 
-    void RGBuilder::Init(RHI::Context* context) {
+    void RGBuilder::Init(RHI::Context* context, const std::vector<ShaderIR>& shaderIRs) {
         m_context = context;
+        //方便后续快速检索
+        for (auto& shaderIR : shaderIRs) {
+            m_shaderIRMap[shaderIR.passName] = shaderIR;
+        }
     }
 
     void RGBuilder::BuildGraph() {
@@ -185,6 +240,10 @@ namespace Ccino {
         }   
     }
 
+    void Run() {
+
+    }
+
 
 
     RID RGBuilder::CreateTransientBuffer(typename Buffer::CreateArgs createArgs) {
@@ -214,6 +273,45 @@ namespace Ccino {
                 resource.bufferRef.UnRef();
             }
         });
+    }
+
+    void RGBuilder::GenerateCommands(VkCommandBuffer commandBuffer) {
+        //处理时间线，然后生成对应命令
+        for (auto& timeline : m_timeline) {
+            for (auto& passRID : timeline) {
+                //Barrier绑定    
+                VkDependencyInfo dependecyInfo = {};
+                dependecyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+                std::vector<VkBufferMemoryBarrier2> bufferBarriers;
+                for (auto& accessBarrier : m_bufferBarriers[passRID]) {
+                    auto barrier = GenerateVkBufferBarrier(accessBarrier.srcFlags, accessBarrier.dstFlags, m_context, 
+                        m_resources.Get(accessBarrier.resourceRID)->bufferRef->GetRHI(), accessBarrier.srcPassType, accessBarrier.dstPassType);
+                    bufferBarriers.push_back(std::move(barrier));
+                }
+                dependecyInfo.bufferMemoryBarrierCount = bufferBarriers.size();
+                dependecyInfo.pBufferMemoryBarriers = bufferBarriers.data();
+                vkCmdPipelineBarrier2(commandBuffer, &dependecyInfo);
+                auto pass = m_passes.Get(passRID);
+                //资源映射
+                auto& shaderIR = m_shaderIRMap[pass->passName];
+                auto descriptorSlot = m_context->GetDescriptorSlotBinding(pass->m_descriptorSlotRID);
+
+                //偏移映射
+                for (auto& data : shaderIR.uniformDataBindings) {
+                    //TODO: Texture
+                    if (data.uniformDataType == UniformDataType::Buffer) {
+                        //直接得到Accessor第一个元素 rid , lambda实例化后相当于是一个struct
+                        auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
+                        RID rhiBufferRID = m_resources.Get(*rid)->bufferRef->GetRHI();
+                        descriptorSlot->BindBuffer(data.name, rhiBufferRID);
+                    } else {
+                        descriptorSlot->BindParam(data.name, data.uniformDataType, static_cast<char*>(pass->lambda.data()) + data.offset);
+                    }
+                }
+
+                //TODO: 管线绑定
+            }
+        }
     }
 
 

@@ -4,6 +4,8 @@
 #include "RHI/Command.h"
 #include "RHI/TimelineSemaphore.h"
 #include "RHI/ComputePipeline.h"
+#include "RHI/DescriptorSlotBinding.h"
+#include "ShaderStruct/UniformData.h"
 
 #include <concepts>
 #include <memory>
@@ -57,6 +59,7 @@ namespace Ccino::RHI {
         uint64_t GetBufferBDA(RID rid) {return m_buffers.Get(rid)->bda;}
         void* GetBufferMappedPtr(RID rid) {return m_buffers.Get(rid)->mappedPtr;}
         uint32_t GetBufferSize(RID rid) {return m_buffers.Get(rid)->size;}
+        VkBuffer GetVkBuffer(RID rid) {return m_buffers.Get(rid)->buffer;}
 
         Core& GetCore() { return m_core; }
 
@@ -97,6 +100,13 @@ namespace Ccino::RHI {
         void DestroyComputePipeline(RID rid);
         VkPipeline GetComputePipeline(RID rid);
 
+        //Descriptor
+        RID CreateDescriptorSlotBinding(const DescriptorSlotLayout& descriptorSlotLayout);
+        void DestroyDescriptorSlotBinding(RID rid);
+        DescriptorSlotBinding* GetDescriptorSlotBinding(const RID& rid) {
+            return m_descriptorSlots.Get(rid);
+        }
+
 
     private:
         //meta
@@ -134,6 +144,7 @@ namespace Ccino::RHI {
         TRIDArray<VulkanBuffer> m_buffers;
         TRIDArray<VkSemaphore> m_semaphores;
         TRIDArray<ComputePipeline> m_computePipelines;
+        TRIDArray<DescriptorSlotBinding> m_descriptorSlots;
 
         std::mutex m_deletionMutex; //保护m_bufferDeletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
         std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列

@@ -655,4 +655,12 @@ namespace Ccino::RHI {
         ComputePipeline* pipeline = m_computePipelines.Get(rid);
         return pipeline != nullptr ? pipeline->GetVkPipeline() : VK_NULL_HANDLE;
     }
+
+    RID CreateDescriptorSlotBinding(const DescriptorSlotLayout& descriptorSlotLayout) {
+        return RID::Invalid();
+    }
+
+    void DestroyDescriptorSlotBinding(RID rid) {
+
+    }
 }

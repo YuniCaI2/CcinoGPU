@@ -28,6 +28,15 @@ namespace Ccino {
     };
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ThreadGroupSize, x, y, z)
 
+    struct WorkGroupSize {
+        uint32_t x = 1;
+        uint32_t y = 1;
+        uint32_t z = 1;
+
+        constexpr bool operator==(const WorkGroupSize&) const = default;
+    };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WorkGroupSize, x, y, z)
+
     struct ComputeGlobalID {
         uint32_t x;
         uint32_t y;

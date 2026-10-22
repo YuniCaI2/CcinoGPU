@@ -64,59 +64,69 @@ namespace Ccino {
         DMat4x3,
     };
 
+    // X(EnumName, CppType, Std140Info)
+    // 1. 与C++ 类型一一对应的Uniform 类型 (支持 CppType <-> UniformDataType 双向映射)
+    #define CCINO_UNIFORM_BIDIR_TYPES(X) \
+        /* Resource (BDA) */ \
+        X(Buffer,   uint64_t,     Std140::Scalar(8)) \
+        /* Param 标量 */ \
+        X(Bool,     bool,         Std140::Scalar(4)) \
+        X(Int,      int32_t,      Std140::Scalar(4)) \
+        X(UInt,     uint32_t,     Std140::Scalar(4)) \
+        X(Float,    float,        Std140::Scalar(4)) \
+        X(Double,   double,       Std140::Scalar(8)) \
+        /* Param 向量 (对应 Core/CcinoType.h) */ \
+        X(BVec2,    glm::bvec2,   Std140::Vector(2, 4)) \
+        X(BVec3,    glm::bvec3,   Std140::Vector(3, 4)) \
+        X(BVec4,    glm::bvec4,   Std140::Vector(4, 4)) \
+        X(IVec2,    glm::ivec2,   Std140::Vector(2, 4)) \
+        X(IVec3,    glm::ivec3,   Std140::Vector(3, 4)) \
+        X(IVec4,    glm::ivec4,   Std140::Vector(4, 4)) \
+        X(UVec2,    glm::uvec2,   Std140::Vector(2, 4)) \
+        X(UVec3,    glm::uvec3,   Std140::Vector(3, 4)) \
+        X(UVec4,    glm::uvec4,   Std140::Vector(4, 4)) \
+        X(Vec2,     glm::vec2,    Std140::Vector(2, 4)) \
+        X(Vec3,     glm::vec3,    Std140::Vector(3, 4)) \
+        X(Vec4,     glm::vec4,    Std140::Vector(4, 4)) \
+        X(DVec2,    glm::dvec2,   Std140::Vector(2, 8)) \
+        X(DVec3,    glm::dvec3,   Std140::Vector(3, 8)) \
+        X(DVec4,    glm::dvec4,   Std140::Vector(4, 8)) \
+        /* Param float 矩阵 (列主序, MatCxR: C列R行) */ \
+        X(Mat2,     glm::mat2,    Std140::Matrix(2, 2, 4)) \
+        X(Mat3,     glm::mat3,    Std140::Matrix(3, 3, 4)) \
+        X(Mat4,     glm::mat4,    Std140::Matrix(4, 4, 4)) \
+        X(Mat2x3,   glm::mat2x3,  Std140::Matrix(2, 3, 4)) \
+        X(Mat2x4,   glm::mat2x4,  Std140::Matrix(2, 4, 4)) \
+        X(Mat3x2,   glm::mat3x2,  Std140::Matrix(3, 2, 4)) \
+        X(Mat3x4,   glm::mat3x4,  Std140::Matrix(3, 4, 4)) \
+        X(Mat4x2,   glm::mat4x2,  Std140::Matrix(4, 2, 4)) \
+        X(Mat4x3,   glm::mat4x3,  Std140::Matrix(4, 3, 4)) \
+        /* Param double 矩阵 */ \
+        X(DMat2,    glm::dmat2,   Std140::Matrix(2, 2, 8)) \
+        X(DMat3,    glm::dmat3,   Std140::Matrix(3, 3, 8)) \
+        X(DMat4,    glm::dmat4,   Std140::Matrix(4, 4, 8)) \
+        X(DMat2x3,  glm::dmat2x3, Std140::Matrix(2, 3, 8)) \
+        X(DMat2x4,  glm::dmat2x4, Std140::Matrix(2, 4, 8)) \
+        X(DMat3x2,  glm::dmat3x2, Std140::Matrix(3, 2, 8)) \
+        X(DMat3x4,  glm::dmat3x4, Std140::Matrix(3, 4, 8)) \
+        X(DMat4x2,  glm::dmat4x2, Std140::Matrix(4, 2, 8)) \
+        X(DMat4x3,  glm::dmat4x3, Std140::Matrix(4, 3, 8))
+
+    // 2. 全局DescriptorSet 中的uint32_t 数组索引资源 (单向映射: UniformDataType -> uint32_t)
+    #define CCINO_UNIFORM_INDEX_TYPES(X) \
+        X(SampledImage, uint32_t, Std140::Scalar(4)) \
+        X(StorageImage, uint32_t, Std140::Scalar(4)) \
+        X(Sampler,      uint32_t, Std140::Scalar(4))
+
+    #define CCINO_UNIFORM_ALL_TYPES(X) \
+        CCINO_UNIFORM_BIDIR_TYPES(X) \
+        CCINO_UNIFORM_INDEX_TYPES(X)
+
+    #define CCINO_DETAIL_JSON_PAIR(EnumName, CppType, Info) {UniformDataType::EnumName, #EnumName},
     NLOHMANN_JSON_SERIALIZE_ENUM_STRICT(UniformDataType, {
-        //Resource
-        {UniformDataType::Buffer,       "Buffer"},
-        {UniformDataType::SampledImage, "SampledImage"},
-        {UniformDataType::StorageImage, "StorageImage"},
-        {UniformDataType::Sampler,      "Sampler"},
-
-        //Param 标量
-        {UniformDataType::Bool,   "Bool"},
-        {UniformDataType::Int,    "Int"},
-        {UniformDataType::UInt,   "UInt"},
-        {UniformDataType::Float,  "Float"},
-        {UniformDataType::Double, "Double"},
-
-        //Param 向量
-        {UniformDataType::BVec2, "BVec2"},
-        {UniformDataType::BVec3, "BVec3"},
-        {UniformDataType::BVec4, "BVec4"},
-        {UniformDataType::IVec2, "IVec2"},
-        {UniformDataType::IVec3, "IVec3"},
-        {UniformDataType::IVec4, "IVec4"},
-        {UniformDataType::UVec2, "UVec2"},
-        {UniformDataType::UVec3, "UVec3"},
-        {UniformDataType::UVec4, "UVec4"},
-        {UniformDataType::Vec2,  "Vec2"},
-        {UniformDataType::Vec3,  "Vec3"},
-        {UniformDataType::Vec4,  "Vec4"},
-        {UniformDataType::DVec2, "DVec2"},
-        {UniformDataType::DVec3, "DVec3"},
-        {UniformDataType::DVec4, "DVec4"},
-
-        //Param float 矩阵
-        {UniformDataType::Mat2,   "Mat2"},
-        {UniformDataType::Mat3,   "Mat3"},
-        {UniformDataType::Mat4,   "Mat4"},
-        {UniformDataType::Mat2x3, "Mat2x3"},
-        {UniformDataType::Mat2x4, "Mat2x4"},
-        {UniformDataType::Mat3x2, "Mat3x2"},
-        {UniformDataType::Mat3x4, "Mat3x4"},
-        {UniformDataType::Mat4x2, "Mat4x2"},
-        {UniformDataType::Mat4x3, "Mat4x3"},
-
-        //Param double 矩阵
-        {UniformDataType::DMat2,   "DMat2"},
-        {UniformDataType::DMat3,   "DMat3"},
-        {UniformDataType::DMat4,   "DMat4"},
-        {UniformDataType::DMat2x3, "DMat2x3"},
-        {UniformDataType::DMat2x4, "DMat2x4"},
-        {UniformDataType::DMat3x2, "DMat3x2"},
-        {UniformDataType::DMat3x4, "DMat3x4"},
-        {UniformDataType::DMat4x2, "DMat4x2"},
-        {UniformDataType::DMat4x3, "DMat4x3"},
+        CCINO_UNIFORM_ALL_TYPES(CCINO_DETAIL_JSON_PAIR)
     })
+    #undef CCINO_DETAIL_JSON_PAIR
 
     struct UniformData {
         std::string name;
@@ -177,59 +187,11 @@ namespace Ccino {
     }
 
     constexpr UniformTypeInfo GetUniformTypeInfo(UniformDataType type) {
-        using T = UniformDataType;
         switch (type) {
-            //Resource
-            case T::Buffer:       return Std140::Scalar(8); //BDA uint64_t
-            case T::SampledImage: return Std140::Scalar(4); //数组索引 uint32_t
-            case T::StorageImage: return Std140::Scalar(4); //数组索引 uint32_t
-            case T::Sampler:      return Std140::Scalar(4); //数组索引 uint32_t
-
-            //标量
-            case T::Bool:   return Std140::Scalar(4);
-            case T::Int:    return Std140::Scalar(4);
-            case T::UInt:   return Std140::Scalar(4);
-            case T::Float:  return Std140::Scalar(4);
-            case T::Double: return Std140::Scalar(8);
-
-            //向量
-            case T::BVec2: return Std140::Vector(2, 4);
-            case T::BVec3: return Std140::Vector(3, 4);
-            case T::BVec4: return Std140::Vector(4, 4);
-            case T::IVec2: return Std140::Vector(2, 4);
-            case T::IVec3: return Std140::Vector(3, 4);
-            case T::IVec4: return Std140::Vector(4, 4);
-            case T::UVec2: return Std140::Vector(2, 4);
-            case T::UVec3: return Std140::Vector(3, 4);
-            case T::UVec4: return Std140::Vector(4, 4);
-            case T::Vec2:  return Std140::Vector(2, 4);
-            case T::Vec3:  return Std140::Vector(3, 4);
-            case T::Vec4:  return Std140::Vector(4, 4);
-            case T::DVec2: return Std140::Vector(2, 8);
-            case T::DVec3: return Std140::Vector(3, 8);
-            case T::DVec4: return Std140::Vector(4, 8);
-
-            //float 矩阵 Matrix(列C, 行R, 分量字节)
-            case T::Mat2:   return Std140::Matrix(2, 2, 4);
-            case T::Mat3:   return Std140::Matrix(3, 3, 4);
-            case T::Mat4:   return Std140::Matrix(4, 4, 4);
-            case T::Mat2x3: return Std140::Matrix(2, 3, 4);
-            case T::Mat2x4: return Std140::Matrix(2, 4, 4);
-            case T::Mat3x2: return Std140::Matrix(3, 2, 4);
-            case T::Mat3x4: return Std140::Matrix(3, 4, 4);
-            case T::Mat4x2: return Std140::Matrix(4, 2, 4);
-            case T::Mat4x3: return Std140::Matrix(4, 3, 4);
-
-            //double 矩阵
-            case T::DMat2:   return Std140::Matrix(2, 2, 8);
-            case T::DMat3:   return Std140::Matrix(3, 3, 8);
-            case T::DMat4:   return Std140::Matrix(4, 4, 8);
-            case T::DMat2x3: return Std140::Matrix(2, 3, 8);
-            case T::DMat2x4: return Std140::Matrix(2, 4, 8);
-            case T::DMat3x2: return Std140::Matrix(3, 2, 8);
-            case T::DMat3x4: return Std140::Matrix(3, 4, 8);
-            case T::DMat4x2: return Std140::Matrix(4, 2, 8);
-            case T::DMat4x3: return Std140::Matrix(4, 3, 8);
+            #define CCINO_DETAIL_TYPE_INFO_CASE(EnumName, CppType, Info) \
+                case UniformDataType::EnumName: return Info;
+            CCINO_UNIFORM_ALL_TYPES(CCINO_DETAIL_TYPE_INFO_CASE)
+            #undef CCINO_DETAIL_TYPE_INFO_CASE
         }
         throw std::invalid_argument("Unknown UniformDataType");
     }
@@ -244,8 +206,7 @@ namespace Ccino {
     static_assert(GetUniformTypeInfo(UniformDataType::DMat3).size == 96);
     static_assert(GetUniformTypeInfo(UniformDataType::DMat4x2).columnStride == 16);
 
-    //C++ 类型到UniformDataType 的映射, BindParam 用它在运行期检查类型
-    //没有特化的类型会在编译期报错, 例如size_t / int64_t
+    // 1. C++ 类型 -> UniformDataType 映射 (没有特化的类型会在编译期报错, 例如size_t / int64_t)
     template<typename T>
     struct UniformTypeOf {
         static_assert(sizeof(T) == 0, "Type is not a supported uniform param type");
@@ -256,52 +217,40 @@ namespace Ccino {
         static constexpr UniformDataType value = V;
     };
 
-    //标量. bool 单独处理: C++ 1字节, GLSL 4字节
-    template<> struct UniformTypeOf<bool>     : UniformTypeOfBase<UniformDataType::Bool> {};
-    template<> struct UniformTypeOf<int32_t>  : UniformTypeOfBase<UniformDataType::Int> {};
-    template<> struct UniformTypeOf<uint32_t> : UniformTypeOfBase<UniformDataType::UInt> {};
-    template<> struct UniformTypeOf<uint64_t> : UniformTypeOfBase<UniformDataType::Buffer> {}; //BDA, 即VkDeviceAddress
-    template<> struct UniformTypeOf<float>    : UniformTypeOfBase<UniformDataType::Float> {};
-    template<> struct UniformTypeOf<double>   : UniformTypeOfBase<UniformDataType::Double> {};
+    // 2. UniformDataType -> C++ 类型映射
+    template<UniformDataType V>
+    struct UniformCppType;
 
-    //向量 (与Core/CcinoType.h 中的别名一一对应)
-    template<> struct UniformTypeOf<glm::bvec2> : UniformTypeOfBase<UniformDataType::BVec2> {};
-    template<> struct UniformTypeOf<glm::bvec3> : UniformTypeOfBase<UniformDataType::BVec3> {};
-    template<> struct UniformTypeOf<glm::bvec4> : UniformTypeOfBase<UniformDataType::BVec4> {};
-    template<> struct UniformTypeOf<glm::ivec2> : UniformTypeOfBase<UniformDataType::IVec2> {};
-    template<> struct UniformTypeOf<glm::ivec3> : UniformTypeOfBase<UniformDataType::IVec3> {};
-    template<> struct UniformTypeOf<glm::ivec4> : UniformTypeOfBase<UniformDataType::IVec4> {};
-    template<> struct UniformTypeOf<glm::uvec2> : UniformTypeOfBase<UniformDataType::UVec2> {};
-    template<> struct UniformTypeOf<glm::uvec3> : UniformTypeOfBase<UniformDataType::UVec3> {};
-    template<> struct UniformTypeOf<glm::uvec4> : UniformTypeOfBase<UniformDataType::UVec4> {};
-    template<> struct UniformTypeOf<glm::vec2>  : UniformTypeOfBase<UniformDataType::Vec2> {};
-    template<> struct UniformTypeOf<glm::vec3>  : UniformTypeOfBase<UniformDataType::Vec3> {};
-    template<> struct UniformTypeOf<glm::vec4>  : UniformTypeOfBase<UniformDataType::Vec4> {};
-    template<> struct UniformTypeOf<glm::dvec2> : UniformTypeOfBase<UniformDataType::DVec2> {};
-    template<> struct UniformTypeOf<glm::dvec3> : UniformTypeOfBase<UniformDataType::DVec3> {};
-    template<> struct UniformTypeOf<glm::dvec4> : UniformTypeOfBase<UniformDataType::DVec4> {};
+    template<typename T>
+    struct UniformCppTypeBase {
+        using type = T;
+    };
 
-    //float 矩阵 (glm::matCxR: C列R行, 与GLSL 一致)
-    template<> struct UniformTypeOf<glm::mat2>   : UniformTypeOfBase<UniformDataType::Mat2> {};
-    template<> struct UniformTypeOf<glm::mat3>   : UniformTypeOfBase<UniformDataType::Mat3> {};
-    template<> struct UniformTypeOf<glm::mat4>   : UniformTypeOfBase<UniformDataType::Mat4> {};
-    template<> struct UniformTypeOf<glm::mat2x3> : UniformTypeOfBase<UniformDataType::Mat2x3> {};
-    template<> struct UniformTypeOf<glm::mat2x4> : UniformTypeOfBase<UniformDataType::Mat2x4> {};
-    template<> struct UniformTypeOf<glm::mat3x2> : UniformTypeOfBase<UniformDataType::Mat3x2> {};
-    template<> struct UniformTypeOf<glm::mat3x4> : UniformTypeOfBase<UniformDataType::Mat3x4> {};
-    template<> struct UniformTypeOf<glm::mat4x2> : UniformTypeOfBase<UniformDataType::Mat4x2> {};
-    template<> struct UniformTypeOf<glm::mat4x3> : UniformTypeOfBase<UniformDataType::Mat4x3> {};
+    template<UniformDataType V>
+    using UniformCppType_t = typename UniformCppType<V>::type;
 
-    //double 矩阵
-    template<> struct UniformTypeOf<glm::dmat2>   : UniformTypeOfBase<UniformDataType::DMat2> {};
-    template<> struct UniformTypeOf<glm::dmat3>   : UniformTypeOfBase<UniformDataType::DMat3> {};
-    template<> struct UniformTypeOf<glm::dmat4>   : UniformTypeOfBase<UniformDataType::DMat4> {};
-    template<> struct UniformTypeOf<glm::dmat2x3> : UniformTypeOfBase<UniformDataType::DMat2x3> {};
-    template<> struct UniformTypeOf<glm::dmat2x4> : UniformTypeOfBase<UniformDataType::DMat2x4> {};
-    template<> struct UniformTypeOf<glm::dmat3x2> : UniformTypeOfBase<UniformDataType::DMat3x2> {};
-    template<> struct UniformTypeOf<glm::dmat3x4> : UniformTypeOfBase<UniformDataType::DMat3x4> {};
-    template<> struct UniformTypeOf<glm::dmat4x2> : UniformTypeOfBase<UniformDataType::DMat4x2> {};
-    template<> struct UniformTypeOf<glm::dmat4x3> : UniformTypeOfBase<UniformDataType::DMat4x3> {};
+    #define CCINO_DETAIL_CPP_TO_ENUM(EnumName, CppType, Info) \
+        template<> struct UniformTypeOf<CppType> : UniformTypeOfBase<UniformDataType::EnumName> {};
+    #define CCINO_DETAIL_ENUM_TO_CPP(EnumName, CppType, Info) \
+        template<> struct UniformCppType<UniformDataType::EnumName> : UniformCppTypeBase<CppType> {};
+
+    CCINO_UNIFORM_BIDIR_TYPES(CCINO_DETAIL_CPP_TO_ENUM)
+    CCINO_UNIFORM_ALL_TYPES(CCINO_DETAIL_ENUM_TO_CPP)
+
+    #undef CCINO_DETAIL_CPP_TO_ENUM
+    #undef CCINO_DETAIL_ENUM_TO_CPP
+
+    // 3. 运行期UniformDataType 分发到编译期C++ 类型, 回调接收std::type_identity<T>{}
+    template<typename Fn>
+    decltype(auto) VisitUniformDataType(UniformDataType type, Fn&& fn) {
+        switch (type) {
+            #define CCINO_DETAIL_VISIT_CASE(EnumName, CppType, Info) \
+                case UniformDataType::EnumName: return std::forward<Fn>(fn)(std::type_identity<CppType>{}); //把类型记住, 将模板编译器的对应放到了switch的运行期
+            CCINO_UNIFORM_ALL_TYPES(CCINO_DETAIL_VISIT_CASE)
+            #undef CCINO_DETAIL_VISIT_CASE
+        }
+        throw std::invalid_argument("Unknown UniformDataType");
+    }
 
     namespace Std140 {
         //C++ 传入的类型能否写到layout 声明的成员上
@@ -340,6 +289,14 @@ namespace Ccino {
                 static_assert(sizeof(T) == info.size, "C++ type size does not match the std140 size");
                 std::memcpy(dst, &value, sizeof(T));
             }
+        }
+
+        //按运行期UniformDataType 从原始指针src 读取C++ 对象并按std140 写入dst
+        inline void WriteParam(char* dst, UniformDataType type, const void* src) {
+            VisitUniformDataType(type, [&](auto tag) {
+                using CppType = typename decltype(tag)::type;
+                WriteParam<CppType>(dst, *static_cast<const CppType*>(src));
+            });
         }
     }
 }

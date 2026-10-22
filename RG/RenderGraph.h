@@ -1,6 +1,7 @@
 #pragma once
 #include "Accessor.h"
 #include "AccessorEnums.h"
+#include "CodeGenerator/ShaderIR.h"
 #include "ComputePass.h"
 #include "Pass.h"
 #include "RGResource.h"
@@ -8,7 +9,12 @@
 #include "RG/ComputePass.h"
 #include "RG/Pass.h"
 #include "RefCounted.hpp"
+#include "ShaderStruct/ShaderCommon.h"
 #include <concepts>
+#include <cstring>
+#include <string>
+#include <type_traits>
+#include <unordered_map>
 
 
 namespace Ccino {
@@ -47,13 +53,16 @@ namespace Ccino {
 
     class RGBuilder {
     public:
-        void Init(RHI::Context* context);
+        void Init(RHI::Context* context, const std::vector<ShaderIR>& shaderIRs);
 
         template<FixedString passName, typename Func>
         requires std::is_invocable_v<Func, RGBuilder&, RID&>
         RGBuilder& AddPass(Func&& func) {
             //处理Accessor 并且处理Builder 内部Shader的翻译和绑定
-            auto passRID = m_passes.Add(RGPass{});
+            RGPass pass;
+            pass.passName = passName.Str();
+            auto passRID = m_passes.Add(std::move(pass));
+            m_currentPass = passRID;
             func(*this, passRID);
             return *this;
         }
@@ -68,20 +77,19 @@ namespace Ccino {
 
         template<ThreadGroupSize threadGroupSize, typename CS> //ThreadGraphSize一定要作为编译器的,这样可以被ClangAST看到
         requires std::invocable<CS, ComputeGlobalID>
-        void AddCS(CS&& cs) {
+        void AddCS(CS&& cs, const WorkGroupSize& workGroupSize) {
             //这里的CS是一个Dummy，需要在编译时将其翻译成Pipeline 对象和ShaderModule
             //所以这里需要留一个槽位方便后续绑定使用
             //所以这里的CS需要是一个Pipeline 其中有Shader对象并且还有其周边的设置Meta数据
+            //TODO:这里会在每帧调用不确定性能是否可靠！
+            auto pass = m_passes.Get(m_currentPass);
+            pass->workGroupSize = workGroupSize; //记录录制Info
+            using LambdaType = std::remove_cvref_t<CS>;
+            pass->lambda.resize(sizeof(LambdaType));
+            std::memcpy(pass->lambda, &cs, sizeof(LambdaType)); //持久映射这块内存
         }
 
-        //依赖创建(外部资源) 分两步，注册为RG的外部资源然后创建依赖
-        template<typename BufferResourceType>
-        Accessor<BufferResourceType, BufferAccessFlagBits::Read> Read(Ref<Buffer> buffer, RID& passRID);
 
-        template<typename BufferResourceType>
-        Accessor<BufferResourceType, BufferAccessFlagBits::Write> Write(Ref<Buffer> buffer, RID& passRID);
-
-        //依赖创建(内部资源)
         template<typename BufferResourceType>
         Accessor<BufferResourceType, BufferAccessFlagBits::Read> Read(RID& resource, RID& passRID) {
             uint32_t version = m_edgeNums[resource]; //Read不会改变版本，RWR所读的资源都一致
@@ -104,8 +112,8 @@ namespace Ccino {
         }
 
         //处理Texture依赖
-
         void BuildGraph();
+        void Run();
 
         RID CreateTransientBuffer(typename Buffer::CreateArgs createArgs);
         RID CreateExternalBuffer(const Ref<Buffer>& buffer);
@@ -115,11 +123,15 @@ namespace Ccino {
         void CreateGPUResource();
         void ReleaseGPUResource();
 
+        void GenerateCommands(VkCommandBuffer buffer); //现在先单线程处理后续增加多线程
+
         //使用擦除类型句柄管理
         TRIDArray<RGPass> m_passes;
         TRIDArray<RGResource> m_resources;
 
+
         //线程不安全，考虑是否加锁
+        RID m_currentPass = RID::Invalid();
         std::vector<RGEdge> m_edges;  //当前的Edge可能对应多个资源
         std::unordered_map<RID, uint32_t> m_edgeNums; 
 
@@ -129,6 +141,9 @@ namespace Ccino {
         //类型粒度分开
         std::vector<std::vector<RGBufferBarrier>> m_bufferBarriers; //这个和timeline需要对齐 | timeline 0 || barrier 0 || timeline 1 || barrier 1 || timeline2
         std::vector<RGTextureBarrier> m_textureBarriers; 
+
+        //IR 产物
+        std::unordered_map<std::string, ShaderIR> m_shaderIRMap; //passName -> ShaderIR 
 
         RHI::Context* m_context;
     };
