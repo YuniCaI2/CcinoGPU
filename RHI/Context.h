@@ -1,4 +1,5 @@
 #pragma once
+#include "RHI/DescriptorSlot.h"
 #include "RHI/RHIStruct.h"
 #include "RHI/Core.h"
 #include "RHI/Command.h"
@@ -140,6 +141,7 @@ namespace Ccino::RHI {
 
         Core m_core;
         CommandContext m_commandContext;
+        DescriptorSlot m_descriptorSlot;
 
         TRIDArray<VulkanBuffer> m_buffers;
         TRIDArray<VkSemaphore> m_semaphores;

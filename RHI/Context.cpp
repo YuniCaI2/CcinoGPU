@@ -34,6 +34,7 @@ namespace Ccino::RHI {
         m_flightFrameCount = settings.flightFrameCount; //飞行帧数用来处理资源和同步的分配
 
         m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
+        m_descriptorSlot.Init(this);        
     }
 
     void Context::Tick() {
@@ -656,11 +657,16 @@ namespace Ccino::RHI {
         return pipeline != nullptr ? pipeline->GetVkPipeline() : VK_NULL_HANDLE;
     }
 
-    RID CreateDescriptorSlotBinding(const DescriptorSlotLayout& descriptorSlotLayout) {
-        return RID::Invalid();
+    RID Context::CreateDescriptorSlotBinding(const DescriptorSlotLayout& descriptorSlotLayout) {
+        auto descriptorSlotBinding = m_descriptorSlot.CreateSlotBinding(descriptorSlotLayout);
+        return m_descriptorSlots.Add(std::move(descriptorSlotBinding));
     }
 
-    void DestroyDescriptorSlotBinding(RID rid) {
-
+    void Context::DestroyDescriptorSlotBinding(RID rid) {
+        auto* descriptorSlotBinding = m_descriptorSlots.Get(rid);
+        if (descriptorSlotBinding) {
+            descriptorSlotBinding->Release();
+        }
+        m_descriptorSlots.Remove(rid);
     }
 }

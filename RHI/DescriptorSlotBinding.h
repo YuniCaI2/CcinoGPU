@@ -76,14 +76,15 @@ namespace Ccino::RHI {
         //按std140 计算每个字段的偏移, size 返回UniformBuffer 的大小(按16 字节对齐)
         static std::unordered_map<std::string, UniformOffset> GetOffsetsTable(const DescriptorSlotLayout& layout, uint32_t& size);
 
+        void Release();
     private:
         friend class DescriptorSlot;
         DescriptorSlotBinding(DescriptorSlot* slotContext, const DescriptorSlotLayout& layout);
 
-        void Release();
         const UniformOffset& FindField(const std::string& name) const;
         void MarkDirty();
 
+        bool isRelease = false;
         DescriptorSlot* m_slotContext = nullptr; //指向DescriptorSlot的指针 相当于全局的上下文
         Context* m_context = nullptr;
 

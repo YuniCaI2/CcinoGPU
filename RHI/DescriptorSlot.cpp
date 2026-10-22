@@ -134,6 +134,8 @@ namespace Ccino::RHI {
     }
 
     void DescriptorSlotBinding::Release() {
+        if (isRelease) return;
+        isRelease = true;
         if (m_slotContext == nullptr) {
             return;
         }
