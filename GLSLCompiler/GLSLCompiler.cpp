@@ -52,6 +52,6 @@ namespace Ccino {
 
         std::vector<uint32_t> spirv;
         glslang::GlslangToSpv(*program.getIntermediate(language), spirv);
-        return {};
+        return spirv;
     }
 }
