@@ -1,5 +1,5 @@
 #include "CppParser.h"
-#include "CodeGenerator/ShaderIR.h"
+#include "ShaderStruct/ShaderIR.h"
 #include "Core/CcinoType.h"
 #include "RG/AccessorEnums.h"
 #include <algorithm>

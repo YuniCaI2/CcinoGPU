@@ -1,5 +1,5 @@
 #include "Context/CcinoContext.h"
-#include "CodeGenerator/ShaderIR.h"
+#include "ShaderStruct/ShaderIR.h"
 #include "GLSLCompiler/GLSLCompiler.h"
 #include "RHI/RHIStruct.h"
 #include "CodeGenerator/CppParser.h"
@@ -40,7 +40,7 @@ namespace Ccino {
             std::memcpy(shaderIR.glsl.data(), spv.data(), sizeof(uint32_t) * spv.size());
             shaderIR.size = sizeof(uint32_t) * spv.size();
         }
-        m_shaderIRs = std::move(shaderIRs);
+        ShaderIRRegistry::Instance().RegisterAll(std::move(shaderIRs));
         return true;
 
         //初始化完毕

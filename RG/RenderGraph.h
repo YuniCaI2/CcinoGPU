@@ -1,7 +1,7 @@
 #pragma once
 #include "Accessor.h"
 #include "AccessorEnums.h"
-#include "CodeGenerator/ShaderIR.h"
+#include "ShaderStruct/ShaderIR.h"
 #include "ComputePass.h"
 #include "Pass.h"
 #include "RGResource.h"
@@ -53,7 +53,7 @@ namespace Ccino {
 
     class RGBuilder {
     public:
-        void Init(RHI::Context* context, const std::vector<ShaderIR>& shaderIRs);
+        void Init(RHI::Context* context);
 
         template<FixedString passName, typename Func>
         requires std::is_invocable_v<Func, RGBuilder&, RID&>

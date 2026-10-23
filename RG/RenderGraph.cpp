@@ -87,14 +87,8 @@ namespace Ccino {
         return isReadable;
     }
 
-    void RGBuilder::Init(RHI::Context* context, const std::vector<ShaderIR>& shaderIRs) {
+    void RGBuilder::Init(RHI::Context* context) {
         m_context = context;
-        //方便后续快速检索
-
-        //不对，可能这个RG不拥有所有的ShaderIR
-        for (auto& shaderIR : shaderIRs) {
-            m_shaderIRMap[shaderIR.passName] = shaderIR;
-        }
     }
 
     void RGBuilder::BuildGraph() {
@@ -295,7 +289,7 @@ namespace Ccino {
                 vkCmdPipelineBarrier2(commandBuffer, &dependecyInfo);
                 auto pass = m_passes.Get(passRID);
                 //资源映射
-                auto& shaderIR = m_shaderIRMap[pass->passName];
+                auto& shaderIR = ShaderIRRegistry::Instance()[pass->passName];
                 auto descriptorSlot = m_context->GetDescriptorSlotBinding(pass->m_descriptorSlotRID);
 
                 //偏移映射

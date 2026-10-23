@@ -4,7 +4,7 @@
 #include <string>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ExprCXX.h>
-#include "CodeGenerator/ShaderIR.h"
+#include "ShaderStruct/ShaderIR.h"
 
 namespace Ccino
 {

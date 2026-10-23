@@ -4,7 +4,8 @@
 
 #include <cstdint>
 #include <string>
-#include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace Ccino {
@@ -38,7 +39,7 @@ namespace Ccino {
         ThreadGroupSize threadGroupSize; //只有计算着色器需要
 
         //资源部分,声明布局
-        DescriptorSlotLayout descriptorSlotLayout; 
+        DescriptorSlotLayout descriptorSlotLayout;
 
         //实际绑定，被Cpp消费. SSBO和Texture在声明Accessor时会被显式绑定
         std::vector<ShaderUniformDataBinding> uniformDataBindings; //这里负责的是常量
@@ -54,5 +55,50 @@ namespace Ccino {
     struct ShaderFunction {
         std::string name;
         std::string glsl;
+    };
+
+    // 全局 ShaderIR 单例表 (passName -> ShaderIR)
+    class ShaderIRRegistry {
+    public:
+        static ShaderIRRegistry& Instance() {
+            static ShaderIRRegistry instance;
+            return instance;
+        }
+
+        void Register(ShaderIR ir) {
+            std::string name = ir.passName;
+            m_shaderIRMap[std::move(name)] = std::move(ir);
+        }
+
+        void RegisterAll(std::vector<ShaderIR>&& irs) {
+            for (auto& ir : irs) {
+                Register(std::move(ir));
+            }
+        }
+
+        const ShaderIR* Find(const std::string& passName) const {
+            auto it = m_shaderIRMap.find(passName);
+            return it != m_shaderIRMap.end() ? &it->second : nullptr;
+        }
+
+        ShaderIR& operator[](const std::string& passName) {
+            return m_shaderIRMap[passName];
+        }
+
+        bool Contains(const std::string& passName) const {
+            return m_shaderIRMap.contains(passName);
+        }
+
+        void Clear() {
+            m_shaderIRMap.clear();
+        }
+
+        const std::unordered_map<std::string, ShaderIR>& GetAll() const {
+            return m_shaderIRMap;
+        }
+
+    private:
+        ShaderIRRegistry() = default;
+        std::unordered_map<std::string, ShaderIR> m_shaderIRMap;
     };
 }
