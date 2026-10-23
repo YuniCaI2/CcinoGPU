@@ -416,8 +416,10 @@ namespace Ccino::RHI {
     }
 
     void Core::SetDebugging(VkInstance instance) {
+#ifndef NDEBUG
         vkCreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
         vkDestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+
 
         if (vkCreateDebugUtilsMessengerEXT != nullptr) {
             throw std::runtime_error("Failed to create debug utils messenger");
@@ -428,6 +430,7 @@ namespace Ccino::RHI {
         if (vkCreateDebugUtilsMessengerEXT(instance, &debugInfo, nullptr, &m_debugMessenger) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create debug utils messenger");
         }
+#endif
 
     }
 

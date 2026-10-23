@@ -30,8 +30,7 @@ namespace Ccino {
                 return false;
             } else {
                 if (!globalFunctions.empty()) {
-                    shaderIR.glsl += " \n";
-                    shaderIR.glsl.insert(it + 3, globalFunctions);
+                    shaderIR.glsl.insert(it + 3, "\n" + globalFunctions);
                 }
             }
             std::vector<uint32_t> spv = GLSLCompiler::CompileToSpv(shaderIR.passName ,shaderIR.glsl, ShaderType::Compute);

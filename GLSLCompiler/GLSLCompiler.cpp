@@ -8,7 +8,7 @@
 #include <glslang/Public/ShaderLang.h>
 
 namespace Ccino {
-    std::vector<uint32_t> CompileToSpv(const std::string& passName, const std::string& glsl, ShaderType shaderType) {
+    std::vector<uint32_t> GLSLCompiler::CompileToSpv(const std::string& passName, const std::string& glsl, ShaderType shaderType) {
 
         static bool isGlslangInit = false;
         if (!isGlslangInit) {

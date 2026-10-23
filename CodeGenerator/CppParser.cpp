@@ -17,18 +17,34 @@
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/ASTMatchers/ASTMatchers.h>
 #include <clang/Basic/OperatorKinds.h>
+#include <clang/Tooling/ArgumentsAdjusters.h>
 #include <clang/Tooling/CompilationDatabase.h>
 #include <clang/Tooling/JSONCompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
 #include <regex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace {
+    std::string ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op) {
+        // 仅仅支持简单的操作
+        return clang::BinaryOperator::getOpcodeStr(op).str();  // 这里把OP_Plus -> + 这种形式
+    }
+
+    std::string ChangeCppOperatorToGLSLOperator(clang::OverloadedOperatorKind op) {
+        if (auto spelling = clang::getOperatorSpelling(op)) {
+            return std::string(spelling);
+        }
+        return {};  // 空则不支持此操作
+    }
+
     class PassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
     public:
         void run(const clang::ast_matchers::MatchFinder::MatchResult& result) override {
@@ -37,7 +53,16 @@ namespace {
 
             // 1. 处理 calledFuncMatcher 命中的全局函数
             if (const auto* globalFunction = result.Nodes.getNodeAs<clang::FunctionDecl>("calledFunc")) {
-                if (!Ccino::GLSLBuiltinFuncSet.contains(globalFunction->getNameAsString())) {
+                if (const auto* lambda = result.Nodes.getNodeAs<clang::LambdaExpr>("csLambda")) {
+                    if (!result.SourceManager->isWrittenInMainFile(lambda->getBeginLoc())) return;
+                }
+                std::string funcName = globalFunction->getNameAsString();
+                std::string lowerName = funcName;
+                std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                if (!Ccino::GLSLBuiltinFuncSet.contains(lowerName) &&
+                    visitedFunctions.insert(globalFunction->getCanonicalDecl()).second) {
                     globalFunctions += Ccino::CppParser::GenerateGlobalFunctionToGLSL(globalFunction);
                     globalFunctions += "\n";
                 }
@@ -46,8 +71,13 @@ namespace {
 
             // 2. 处理 globalStructMatcher 命中的结构体
             if (const auto* usedStruct = result.Nodes.getNodeAs<clang::CXXRecordDecl>("usedStruct")) {
-                globalFunctions += Ccino::CppParser::GetGLSLDefine(usedStruct, true);
-                globalFunctions += "n";
+                if (const auto* lambda = result.Nodes.getNodeAs<clang::LambdaExpr>("csLambda")) {
+                    if (!result.SourceManager->isWrittenInMainFile(lambda->getBeginLoc())) return;
+                }
+                if (visitedStructs.insert(usedStruct->getCanonicalDecl()).second) {
+                    globalStructs += Ccino::CppParser::GetGLSLDefine(usedStruct, true);
+                    globalStructs += "\n";
+                }
                 return;
             }
 
@@ -136,7 +166,10 @@ namespace {
         }
 
         std::vector<Ccino::ShaderIR> shaderIRs;
+        std::string globalStructs;
         std::string globalFunctions;
+        std::unordered_set<const clang::FunctionDecl*> visitedFunctions;
+        std::unordered_set<const clang::CXXRecordDecl*> visitedStructs;
     };
 }
 
@@ -146,6 +179,7 @@ namespace Ccino
     std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath, std::string* globalFunctions) {
         using namespace clang::ast_matchers;
         std::string errorMsg;
+
         auto compilationDB = clang::tooling::JSONCompilationDatabase::loadFromFile(
             compileCommandJsonPath, errorMsg, clang::tooling::JSONCommandLineSyntax::AutoDetect);
         if (!compilationDB) {
@@ -153,18 +187,67 @@ namespace Ccino
             return {};
         }
 
+        auto shouldSkipFile = [](std::string filePath) {
+            std::replace(filePath.begin(), filePath.end(), '\\', '/');
+            constexpr std::string_view kIgnoredDirs[] = {
+                "/ThirdPart/",
+                "/CodeGenerator/",
+                "/GLSLCompiler/",
+                "/RHI/",
+                "/Core/",
+                "/RG/",
+                "/Context/",
+            };
+            for (std::string_view dir : kIgnoredDirs) {
+                if (filePath.find(dir) != std::string::npos) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        auto fileContainsKeyword = [](const std::string& filePath, std::string_view keyword) {
+            std::ifstream ifs(filePath, std::ios::binary);
+            if (!ifs.is_open()) {
+                return false;
+            }
+            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+            return content.find(keyword) != std::string::npos;
+        };
+
         std::vector<std::string> sourceFiles;
         std::unordered_set<std::string> seenFiles;
         for (const auto& cmd : compilationDB->getAllCompileCommands()) {
-            if (seenFiles.insert(cmd.Filename).second) {
-                sourceFiles.push_back(cmd.Filename);
+            if (shouldSkipFile(cmd.Filename)) {
+                continue;
             }
+            if (!seenFiles.insert(cmd.Filename).second) {
+                continue;
+            }
+            if (!fileContainsKeyword(cmd.Filename, "AddCS")) {
+                continue;
+            }
+            sourceFiles.push_back(cmd.Filename);
         }
         if (sourceFiles.empty()) {
             return {};
         }
 
         clang::tooling::ClangTool tool(*compilationDB, sourceFiles);
+        tool.appendArgumentsAdjuster(
+            [](const clang::tooling::CommandLineArguments& args, llvm::StringRef /*filename*/) {
+                clang::tooling::CommandLineArguments adjusted;
+                adjusted.reserve(args.size() + 1);
+                for (const auto& arg : args) {
+                    if (arg == "-std:c++latest" || arg == "/std:c++latest") {
+                        adjusted.push_back("-std:c++20");
+                        adjusted.push_back("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH");
+                    } else {
+                        adjusted.push_back(arg);
+                    }
+                }
+                return adjusted;
+            });
 
         PassShaderCollector collector;
         MatchFinder finder;
@@ -188,19 +271,20 @@ namespace Ccino
                     callee(functionDecl().bind("calledFunc")) //从函数调用点到声明的位置
                 )
             )
-        );
+        ).bind("csLambda");
 
         // 匹配 Lambda 内部声明的自定义结构体变量类型
         auto structLambdaNode = lambdaExpr(
             forEachDescendant(
                 varDecl(
+                    unless(parmVarDecl()), // 排除 Lambda 参数（如 ComputeGlobalID） 为啥可以使用parmVarDecl直接过滤
                     hasType(cxxRecordDecl(
                         unless(classTemplateSpecializationDecl()), // 排除 Vec3 / Mat4 / Array / Accessor 等模板类
                         unless(isImplicit())                       // 排除编译器隐式生成的类
                     ).bind("usedStruct"))
                 )
             )
-        );
+        ).bind("csLambda");
 
         auto calledFuncMatcher = cxxMemberCallExpr(
             callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder")))),
@@ -231,7 +315,7 @@ namespace Ccino
         }
 
         if (globalFunctions)
-            *globalFunctions = collector.globalFunctions;
+            *globalFunctions = collector.globalStructs + collector.globalFunctions;
 
         // 5. 返回收集好的所有 ShaderIR
         return std::move(collector.shaderIRs);
@@ -520,6 +604,12 @@ namespace Ccino
             return BL->getValue() ? "true" : "false";
         }
 
+        // 显式类型转换 (如 float(x), (float)x, static_cast<float>(x))
+        if (auto* Cast = llvm::dyn_cast<clang::ExplicitCastExpr>(expr)) {
+            return ChangeCppTypeToGLSLType(Cast->getTypeAsWritten()) + "(" +
+                   ChangeCppExprToGLSLExpr(Cast->getSubExpr()) + ")";
+        }
+
         // 构造函数
         if (auto* Cstr = llvm::dyn_cast<clang::CXXConstructExpr>(expr)) {
             // 调用构造函数
@@ -685,6 +775,7 @@ namespace Ccino
         if (const auto* construct = llvm::dyn_cast<clang::CXXConstructExpr>(init)) {
             const std::string type = ChangeCppTypeToGLSLType(var->getType());
             if (type.empty()) return {};
+            if (construct->getNumArgs() == 0 && type.find('[') == std::string::npos) return {}; //TODO: 确认含义
             std::vector<const clang::Expr*> args;
             args.reserve(construct->getNumArgs());
             for (const clang::Expr* arg : construct->arguments()) {
@@ -855,18 +946,6 @@ namespace Ccino
         return "layout(push_constant) uniform PC {\n"
                "    UniformData uniformData;\n"
                "} pc;\n";
-    }
-
-    std::string CppParser::ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op) {
-        // 仅仅支持简单的操作
-        return clang::BinaryOperator::getOpcodeStr(op).str();  // 这里把OP_Plus -> + 这种形式
-    }
-
-    std::string CppParser::ChangeCppOperatorToGLSLOperator(clang::OverloadedOperatorKind op) {
-        if (auto spelling = clang::getOperatorSpelling(op)) {
-            return std::string(spelling);
-        }
-        return {};  // 空则不支持此操作
     }
 
     std::string CppParser::GetGLSLDefine(clang::QualType type, bool needStructHeader) {

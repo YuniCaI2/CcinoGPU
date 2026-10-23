@@ -86,7 +86,7 @@ namespace Ccino {
             pass->workGroupSize = workGroupSize; //记录录制Info
             using LambdaType = std::remove_cvref_t<CS>;
             pass->lambda.resize(sizeof(LambdaType));
-            std::memcpy(pass->lambda, &cs, sizeof(LambdaType)); //持久映射这块内存
+            std::memcpy(pass->lambda.data(), &cs, sizeof(LambdaType)); //持久映射这块内存
         }
 
 

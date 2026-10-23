@@ -17,6 +17,7 @@ add_subdirectory(ThirdPart)
 add_compile_definitions(
     CCINO_PROJECT_DIR="${CMAKE_SOURCE_DIR}"
     CCINO_COMPILE_COMMAND_JSON_PATH="${CMAKE_BINARY_DIR}/compile_commands.json"
+    CCINO_BINARY_DIR="${CMAKE_BINARY_DIR}/"
     CCINO_SHADER_DIR="${CMAKE_SOURCE_DIR}/.CcinoGPU/Shaders"
     CCINO_SHADER_HUGE_HEADER_PATH="${CMAKE_SOURCE_DIR}/.CcinoGPU/Shaders/HugeHeader.glsl"
 )
