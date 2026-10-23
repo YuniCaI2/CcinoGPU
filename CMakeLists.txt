@@ -19,6 +19,7 @@ add_compile_definitions(
     CCINO_COMPILE_COMMAND_JSON_PATH="${CMAKE_BINARY_DIR}/compile_commands.json"
     CCINO_BINARY_DIR="${CMAKE_BINARY_DIR}/"
     CCINO_SHADER_DIR="${CMAKE_SOURCE_DIR}/.CcinoGPU/Shaders"
+    CCINO_GLOBAL_HEADER_FILE="${CMAKE_SOURCE_DIR}/.CcinoGPU/GlobalHeader.glsl"
     CCINO_SHADER_HUGE_HEADER_PATH="${CMAKE_SOURCE_DIR}/.CcinoGPU/Shaders/HugeHeader.glsl"
 )
 add_subdirectory(RHI)
@@ -29,3 +30,10 @@ add_subdirectory(Context)
 add_subdirectory(GLSLCompiler)
 target_include_directories(RHI PUBLIC ${CMAKE_SOURCE_DIR})
 add_subdirectory(Tests)
+
+
+# 需要理解
+add_dependencies(CcinoGPU GenerateShaderIR)
+if(TARGET Tests)
+    add_dependencies(Tests GenerateShaderIR)
+endif()

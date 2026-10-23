@@ -2,6 +2,8 @@
 #include "ShaderStruct/ShaderCommon.h"
 #include "ShaderStruct/UniformData.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -21,17 +23,25 @@ namespace Ccino {
         */
     };
 
+    NLOHMANN_JSON_SERIALIZE_ENUM_STRICT(ShaderPropertyType, {
+        {ShaderPropertyType::ReadOnlyStorageBuffer,  "ReadOnlyStorageBuffer"},
+        {ShaderPropertyType::WriteOnlyStorageBuffer, "WriteOnlyStorageBuffer"},
+        {ShaderPropertyType::ReadWriteStorageBuffer, "ReadWriteStorageBuffer"},
+    })
+
     //这个也是资源绑定，并且加上资源声明
     struct ShaderPropertyBinding {
         std::string name;
         ShaderPropertyType propertyType;
     };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderPropertyBinding, name, propertyType)
 
     struct ShaderUniformDataBinding {
         std::string name{}; //结构体名
         uint32_t offset{}; // 当前的Pass的Lambda的堆偏移,后续Cpp消费这个堆偏移实现绑定
         UniformDataType uniformDataType;
     };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderUniformDataBinding, name, offset, uniformDataType)
 
     struct ShaderIR {
         std::string passName;
@@ -50,12 +60,15 @@ namespace Ccino {
         //后续标志位
         uint32_t size = 0; //记录代码字节数，因为后续glsl 可能spv 数据直接放到std::string中
     };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderIR,
+        passName, shaderType, threadGroupSize, descriptorSlotLayout, uniformDataBindings, glsl, size)
 
     //这里统一丢到HugeHeader中，并且只需要处理下其中的类型
     struct ShaderFunction {
         std::string name;
         std::string glsl;
     };
+    NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderFunction, name, glsl)
 
     // 全局 ShaderIR 单例表 (passName -> ShaderIR)
     class ShaderIRRegistry {
