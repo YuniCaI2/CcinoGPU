@@ -1325,14 +1325,18 @@ namespace
             return filePath;
         }
 
-        std::string WriteCompileCommands(const std::vector<std::filesystem::path>& sourceFiles) const {
+        std::string WriteCompileCommands(const std::vector<std::filesystem::path>& sourceFiles,
+                                         const std::vector<std::string>& extraArguments = {}) const {
             nlohmann::json db = nlohmann::json::array();
             const std::string dirStr = dirPath.generic_string();
             for (const auto& src : sourceFiles) {
                 const std::string fileStr = src.generic_string();
+                std::vector<std::string> arguments = {"clang++", "-std=c++20", "-fsyntax-only", "-I" + dirStr};
+                arguments.insert(arguments.end(), extraArguments.begin(), extraArguments.end());
+                arguments.push_back(fileStr);
                 db.push_back({
                     {"directory", dirStr},
-                    {"arguments", {"clang++", "-std=c++20", "-fsyntax-only", "-I" + dirStr, fileStr}},
+                    {"arguments", arguments},
                     {"file", fileStr}
                 });
             }
@@ -1397,6 +1401,64 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
     EXPECT_NE(ir.glsl.find("layout(buffer_reference, std430) buffer Particle {\n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("uint idx = gl_GlobalInvocationID.x;\n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("pc.uniformData.inOutParticles[idx].pos = (pc.uniformData.inOutParticles[idx].pos + (pc.uniformData.gravity * pc.uniformData.dt))"), std::string::npos);
+}
+
+TEST(ParseFilePassShadersTest, BuiltinHeadersAndEndOfOptionsSeparator) {
+    TempCompileCommandsWorkspace ws("BuiltinHeadersAndSeparator");
+    const auto cppPath = ws.WriteFile(
+        "builtin_headers_pass.cpp",
+        std::string(R"(
+            #include <stddef.h>
+            #ifndef __STDDEF_H
+            #error Expected Clang's builtin stddef.h
+            #endif
+            static_assert(sizeof(size_t) == sizeof(void*));
+        )") + kRGPassTestPreamble + R"(
+            void BuildBuiltinHeadersPass() {
+                Ccino::RGBuilder builder;
+                builder.AddPass<"BuiltinHeadersPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    rg.AddCS<Ccino::ThreadGroupSize{1, 1, 1}>([](Ccino::ComputeGlobalID id) {
+                        uint32_t idx = id.x;
+                    });
+                });
+            }
+        )");
+
+    // The default resource directory must be inserted before the end-of-options separator.
+    const std::string compileCommandsPath = ws.WriteCompileCommands({cppPath}, {"--"});
+    const auto shaders = Ccino::CppParser::ParseFilePassShaders(compileCommandsPath);
+    ASSERT_EQ(shaders.size(), 1u);
+    EXPECT_EQ(shaders[0].passName, "BuiltinHeadersPass");
+    EXPECT_NE(shaders[0].glsl.find("uint idx = gl_GlobalInvocationID.x;"), std::string::npos);
+}
+
+TEST(ParseFilePassShadersTest, ExplicitResourceDirectoryIsPreserved) {
+    TempCompileCommandsWorkspace ws("ExplicitResourceDir");
+    ws.WriteFile("resource/include/ccino_resource_marker.h", "#define CCINO_RESOURCE_MARKER 23\n");
+    const auto cppPath = ws.WriteFile(
+        "explicit_resource_pass.cpp",
+        std::string(R"(
+            #include <ccino_resource_marker.h>
+            static_assert(CCINO_RESOURCE_MARKER == 23);
+        )") + kRGPassTestPreamble + R"(
+            void BuildExplicitResourcePass() {
+                Ccino::RGBuilder builder;
+                builder.AddPass<"ExplicitResourcePass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    rg.AddCS<Ccino::ThreadGroupSize{1, 1, 1}>([](Ccino::ComputeGlobalID id) {
+                        uint32_t idx = id.x;
+                    });
+                });
+            }
+        )");
+
+    const std::string resourceDir = (ws.dirPath / "resource").generic_string();
+    for (const auto& extraArguments : std::vector<std::vector<std::string>>{
+             {"-resource-dir=" + resourceDir}, {"-resource-dir", resourceDir}}) {
+        const std::string compileCommandsPath = ws.WriteCompileCommands({cppPath}, extraArguments);
+        const auto shaders = Ccino::CppParser::ParseFilePassShaders(compileCommandsPath);
+        ASSERT_EQ(shaders.size(), 1u);
+        EXPECT_EQ(shaders[0].passName, "ExplicitResourcePass");
+    }
 }
 
 TEST(ParseFilePassShadersTest, VariableLambdaAndChainedPasses) {

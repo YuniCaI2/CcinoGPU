@@ -13,6 +13,18 @@ endif()
 
 add_library(CodeGenerator STATIC ${CODE_GENERATOR_SOURCES})
 
+# LibTooling does not build or locate builtin headers for our executables automatically.
+# Use headers from the same pinned Clang rather than guessing relative to GeneratorMain/Tests.
+add_dependencies(CodeGenerator clang-resource-headers)# 后者来自llvm的target
+get_target_property(CCINO_CLANG_RESOURCE_INCLUDE_DIR clang-resource-headers RUNTIME_OUTPUT_DIRECTORY) #此处直接得到这个target的属性也就是它的文件目录
+get_filename_component(CCINO_CLANG_RESOURCE_DIR "${CCINO_CLANG_RESOURCE_INCLUDE_DIR}" DIRECTORY) # 这里的Directory相当是得到父项
+if(CMAKE_CONFIGURATION_TYPES)
+    string(REPLACE "${CMAKE_CFG_INTDIR}" "$<CONFIG>" CCINO_CLANG_RESOURCE_DIR "${CCINO_CLANG_RESOURCE_DIR}")
+endif()
+target_compile_definitions(CodeGenerator PRIVATE
+    CCINO_CLANG_RESOURCE_DIR="${CCINO_CLANG_RESOURCE_DIR}"
+)
+
 target_include_directories(CodeGenerator SYSTEM PUBLIC
     ${CMAKE_SOURCE_DIR}/ThirdPart/llvm-project/llvm/include
     ${CMAKE_BINARY_DIR}/ThirdPart/llvm-project/llvm/include

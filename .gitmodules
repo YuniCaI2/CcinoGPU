@@ -10,7 +10,8 @@
 [submodule "ThirdPart/llvm-project"]
 	path = ThirdPart/llvm-project
 	url = https://github.com/llvm/llvm-project.git
-	branch = release/19.x
+	# Use the parent repository's pinned llvmorg-23.1.4 commit for reproducible builds.
+	branch = release/23.x
 	shallow = true
 [submodule "ThirdPart/json"]
 	path = ThirdPart/json

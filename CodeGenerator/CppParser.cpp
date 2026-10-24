@@ -237,14 +237,32 @@ namespace Ccino
         tool.appendArgumentsAdjuster(
             [](const clang::tooling::CommandLineArguments& args, llvm::StringRef /*filename*/) {
                 clang::tooling::CommandLineArguments adjusted;
-                adjusted.reserve(args.size() + 1);
+                adjusted.reserve(args.size() + 2);
+                bool hasResourceDir = false;
+                bool afterSeparator = false;
                 for (const auto& arg : args) {
+                    if (arg == "--") {
+                        afterSeparator = true;
+                    }
+                    if (afterSeparator) {
+                        adjusted.push_back(arg);
+                        continue;
+                    }
+                    if (arg == "-resource-dir" || arg.starts_with("-resource-dir=")) {
+                        hasResourceDir = true;
+                    }
                     if (arg == "-std:c++latest" || arg == "/std:c++latest") {
                         adjusted.push_back("-std:c++20");
                         adjusted.push_back("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH");
                     } else {
                         adjusted.push_back(arg);
                     }
+                }
+                if (!hasResourceDir) {
+                    // Insert before a possible "--" separator so this remains a driver option.
+                    adjusted = clang::tooling::getInsertArgumentAdjuster(
+                        "-resource-dir=" CCINO_CLANG_RESOURCE_DIR,
+                        clang::tooling::ArgumentInsertPosition::END)(adjusted, "");
                 }
                 return adjusted;
             });

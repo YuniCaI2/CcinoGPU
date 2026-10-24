@@ -19,7 +19,8 @@ if(BUILD_TESTS)
 endif()
 
 # LLVM / Clang (LibTooling) 配置
-# LLVM 19 基于 C++17 编写（若继承主工程的 C++23，P2266 隐式 move 规则会导致 DiagnosticInfo.h 报错 C2440）
+# LLVM/Clang 固定为 llvmorg-23.1.4，与当前 llvm-mingw 工具链匹配。
+# LLVM 子项目使用其要求的 C++17，避免继承主工程的 C++23。
 set(CMAKE_CXX_STANDARD 17)
 set(LLVM_ENABLE_PROJECTS "clang" CACHE STRING "" FORCE)
 # 使用 "host" 自动匹配当前平台架构（x86_64 Windows/Linux/Mac 为 X86，Apple Silicon/ARM64 Linux 为 AArch64）
