@@ -4,6 +4,7 @@
 #include "RGResource.h"
 #include "RHI/Context.h"
 #include "ResourceConcept.h"
+#include "ShaderStruct/ShaderCommon.h"
 #include "ShaderStruct/UniformData.h"
 #include <type_traits>
 #include <unordered_map>
@@ -89,6 +90,11 @@ namespace Ccino {
 
     void RGBuilder::Init(RHI::Context* context) {
         m_context = context;
+    }
+
+    void RGBuilder::Destroy() {
+        ReleaseGPUResource();
+        ReleasePass();
     }
 
     void RGBuilder::BuildGraph() {
@@ -178,6 +184,7 @@ namespace Ccino {
 
 
         m_timeline.clear();
+        m_bufferBarriers.clear();
         std::vector<RID> currentLayer;
 
         for (const auto& passRID : m_passes.GetAllRIDs()) {
@@ -198,28 +205,30 @@ namespace Ccino {
 
             for (const auto& passRID : currentLayer) {
                 for (const auto& dstPassRID : dependecyGraph[passRID]) {
-                    for (auto& bufferBarrier : bufferBarrierMap[dstPassRID]) {
-                        if (bufferBarrierLayer.contains(bufferBarrier.resourceRID)) {
-                            bufferBarrierLayer[bufferBarrier.resourceRID].srcFlags |= bufferBarrier.srcFlags;
-                            bufferBarrierLayer[bufferBarrier.resourceRID].dstFlags |= bufferBarrier.dstFlags;
-                            bufferBarrierLayer[bufferBarrier.resourceRID].srcPassType |= bufferBarrier.srcPassType;
-                            bufferBarrierLayer[bufferBarrier.resourceRID].dstPassType |= bufferBarrier.dstPassType;
-                        } else {
-                            bufferBarrierLayer[bufferBarrier.resourceRID] = bufferBarrier;
-                        }
-                    }
                     passInDegrees[dstPassRID]--;
-                    std::vector<RGBufferBarrier> currentBufferBarriers;
-                    for (auto& [_, barrier] : bufferBarrierLayer) {
-                        currentBufferBarriers.push_back(std::move(barrier));
-                    }
-
-                    //Buffer
-                    m_bufferBarriers.push_back(std::move(currentBufferBarriers));
                     if (passInDegrees[dstPassRID] == 0) {
+                        for (auto& bufferBarrier : bufferBarrierMap[dstPassRID]) {
+                            if (bufferBarrierLayer.contains(bufferBarrier.resourceRID)) {
+                                bufferBarrierLayer[bufferBarrier.resourceRID].srcFlags |= bufferBarrier.srcFlags;
+                                bufferBarrierLayer[bufferBarrier.resourceRID].dstFlags |= bufferBarrier.dstFlags;
+                                bufferBarrierLayer[bufferBarrier.resourceRID].srcPassType |= bufferBarrier.srcPassType;
+                                bufferBarrierLayer[bufferBarrier.resourceRID].dstPassType |= bufferBarrier.dstPassType;
+                            } else {
+                                bufferBarrierLayer[bufferBarrier.resourceRID] = bufferBarrier;
+                            }
+                        }
                         nextLayer.push_back(dstPassRID);
                     }
                 }
+            }
+
+            if (!nextLayer.empty()) {
+                std::vector<RGBufferBarrier> currentBufferBarriers;
+                for (auto& [_, barrier] : bufferBarrierLayer) {
+                    currentBufferBarriers.push_back(std::move(barrier));
+                }
+                //Buffer
+                m_bufferBarriers.push_back(std::move(currentBufferBarriers));
             }
             currentLayer = std::move(nextLayer);
 
@@ -236,8 +245,14 @@ namespace Ccino {
         }   
     }
 
-    void Run() {
-
+    void RGBuilder::Run() {
+        BuildGraph();
+        CreateGPUResource();
+        if (m_context != nullptr && !m_timeline.empty()) {
+            m_context->ExecuteCommand([this](RHI::CommandContext::CommandBuffer& commandBuffer) {
+                GenerateCommands(commandBuffer.commandBuffer);
+            }, CommandQueueType::COMPUTE);
+        }
     }
 
 
@@ -257,7 +272,9 @@ namespace Ccino {
         m_resources.ForEach([this](RGResource& resource){
             if (resource.isExternal) return;
             if (resource.resourceType == ResourceType::Buffer) {
-                resource.bufferRef = Buffer::Create(*m_context, resource.bufferCreateArgs); 
+                if (!resource.bufferRef.IsValid()) {
+                    resource.bufferRef = Buffer::Create(*m_context, resource.bufferCreateArgs);
+                }
             }
         });
     }
@@ -272,21 +289,29 @@ namespace Ccino {
     }
 
     void RGBuilder::GenerateCommands(VkCommandBuffer commandBuffer) {
+        if (m_timeline.empty()) {
+            return;
+        }
+        m_context->BindDescriptorSet(commandBuffer);
+
         //处理时间线，然后生成对应命令
-        for (auto& timeline : m_timeline) {
-            for (auto& passRID : timeline) {
+        for (size_t i = 0; i < m_timeline.size(); ++i) {
+            if (i > 0 && (i - 1) < m_bufferBarriers.size() && !m_bufferBarriers[i - 1].empty()) {
                 //Barrier绑定    
                 VkDependencyInfo dependecyInfo = {};
                 dependecyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
                 std::vector<VkBufferMemoryBarrier2> bufferBarriers;
-                for (auto& accessBarrier : m_bufferBarriers[passRID]) {
+                for (auto& accessBarrier : m_bufferBarriers[i - 1]) {
                     auto barrier = GenerateVkBufferBarrier(accessBarrier.srcFlags, accessBarrier.dstFlags, m_context, 
                         m_resources.Get(accessBarrier.resourceRID)->bufferRef->GetRHI(), accessBarrier.srcPassType, accessBarrier.dstPassType);
                     bufferBarriers.push_back(std::move(barrier));
                 }
-                dependecyInfo.bufferMemoryBarrierCount = bufferBarriers.size();
+                dependecyInfo.bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size());
                 dependecyInfo.pBufferMemoryBarriers = bufferBarriers.data();
                 vkCmdPipelineBarrier2(commandBuffer, &dependecyInfo);
+            }
+
+            for (auto& passRID : m_timeline[i]) {
                 auto pass = m_passes.Get(passRID);
                 //资源映射
                 auto& shaderIR = ShaderIRRegistry::Instance()[pass->passName];
@@ -305,11 +330,29 @@ namespace Ccino {
                     }
                 }
 
-                //TODO: 管线绑定
+                //管线绑定与派发
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_context->GetComputePipeline(pass->m_pipleineRID));
+                descriptorSlot->Push(commandBuffer);
+                vkCmdDispatch(commandBuffer, pass->workGroupSize.x, pass->workGroupSize.y, pass->workGroupSize.z);
             }
         }
     }
 
+    void RGBuilder::ReleasePass() {
+        m_passes.ForEach([this](RGPass& pass){
+            pass.lambda.clear();
+            if (m_context != nullptr) {
+                if (pass.m_pipleineRID != RID::Invalid()) {
+                    m_context->DeleteResource(pass.m_pipleineRID);
+                    pass.m_pipleineRID = RID::Invalid();
+                }
+                if (pass.m_descriptorSlotRID != RID::Invalid()) {
+                    m_context->DeleteResource(pass.m_descriptorSlotRID);
+                    pass.m_descriptorSlotRID = RID::Invalid();
+                }
+            }
+        });
+    }
 
 
 }

@@ -54,6 +54,7 @@ namespace Ccino {
     class RGBuilder {
     public:
         void Init(RHI::Context* context);
+        void Destroy();
 
         template<FixedString passName, typename Func>
         requires std::is_invocable_v<Func, RGBuilder&, RID&>
@@ -83,10 +84,25 @@ namespace Ccino {
             //所以这里的CS需要是一个Pipeline 其中有Shader对象并且还有其周边的设置Meta数据
             //TODO:这里会在每帧调用不确定性能是否可靠！
             auto pass = m_passes.Get(m_currentPass);
+            pass->passType = RGPassTypeFlagBits::Compute;
             pass->workGroupSize = workGroupSize; //记录录制Info
+            //这里动态的生产管线和shaderIR的绑定
+
+            //不太对，因为每帧都会调用这个代码，所以这里有两个选择： 1. 统一注册 2. 短路
+            //此处直接短路即可
+            if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
+                auto& shaderIR = ShaderIRRegistry::Instance()[pass->passName];
+                if (pass->m_pipleineRID == RID::Invalid()) {
+                    pass->m_pipleineRID = m_context->CreateComputePipeline(pass->passName, reinterpret_cast<char*>(shaderIR.glsl.data()), shaderIR.glsl.size());
+                }
+                if (pass->m_descriptorSlotRID == RID::Invalid()) {
+                    pass->m_descriptorSlotRID = m_context->CreateDescriptorSlotBinding(shaderIR.descriptorSlotLayout);
+                }
+            }
+
             using LambdaType = std::remove_cvref_t<CS>;
             pass->lambda.resize(sizeof(LambdaType));
-            std::memcpy(pass->lambda.data(), &cs, sizeof(LambdaType)); //持久映射这块内存
+            std::memcpy(pass->lambda.data(), &cs, sizeof(LambdaType)); //持久映射这块内存,并且这里默认Lambda存储的对象都不需要严格调用析构
         }
 
 
@@ -123,9 +139,9 @@ namespace Ccino {
         void CreateGPUResource();
         void ReleaseGPUResource();
 
-        void GenerateCommands(VkCommandBuffer buffer); //现在先单线程处理后续增加多线程
+        void ReleasePass();
 
-        void GeneratePipeline();
+        void GenerateCommands(VkCommandBuffer buffer); //现在先单线程处理后续增加多线程
 
         //使用擦除类型句柄管理
         TRIDArray<RGPass> m_passes;
@@ -144,9 +160,7 @@ namespace Ccino {
         std::vector<std::vector<RGBufferBarrier>> m_bufferBarriers; //这个和timeline需要对齐 | timeline 0 || barrier 0 || timeline 1 || barrier 1 || timeline2
         std::vector<RGTextureBarrier> m_textureBarriers; 
 
-        //IR 产物
-        std::unordered_map<std::string, ShaderIR> m_shaderIRMap; //passName -> ShaderIR 
 
-        RHI::Context* m_context;
+        RHI::Context* m_context = nullptr;
     };
 }

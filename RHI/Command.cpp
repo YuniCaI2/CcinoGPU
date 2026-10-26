@@ -18,7 +18,7 @@ namespace Ccino::RHI {
     }
 
     void CommandContext::Destroy() {
-        for (auto& threadSlot : m_threadSlots) {
+        for (auto& [_, threadSlot] : m_threadSlots) {
             for (VkCommandPool pool : threadSlot->commandPools) {
                 if (pool != VK_NULL_HANDLE) {
                     vkDestroyCommandPool(m_device, pool, nullptr);
@@ -42,11 +42,12 @@ namespace Ccino::RHI {
     }
 
     CommandContext::CommandPoolSlot& CommandContext::GetThreadSlot() {
-        static thread_local CommandPoolSlot* slot = nullptr;
-        if (!slot) {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_threadSlots.push_back(std::make_unique<CommandPoolSlot>());
-            slot = m_threadSlots.back().get();
+        const std::thread::id threadId = std::this_thread::get_id();
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_threadSlots.find(threadId);
+        if (it == m_threadSlots.end()) {
+            auto newSlot = std::make_unique<CommandPoolSlot>();
+            CommandPoolSlot* slot = newSlot.get();
             slot->commandPools.resize(queueFamilyCount);
             slot->commandBuffers.resize(queueFamilyCount);
             //创建CommandPool，允许单独 reset 其中的 CommandBuffer
@@ -73,7 +74,8 @@ namespace Ccino::RHI {
                     commandBuffer.frameIndex = frameIndex;
                 }
             }
+            it = m_threadSlots.emplace(threadId, std::move(newSlot)).first;
         }
-        return *slot;
+        return *it->second;
     }
 }

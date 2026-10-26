@@ -15,7 +15,7 @@ namespace Ccino {
     struct RGPass {
         //具体执行，这里和普通的RGPass不同的是这里直接消费IR从固定地址.Ccino/RG/{PassName}_IR.json
         std::string passName;
-        RGPassTypeFlagBits passType;
+        RGPassTypeFlagBits passType = RGPassTypeFlagBits::Compute;
         RID m_pipleineRID = RID::Invalid();
         RID m_descriptorSlotRID = RID::Invalid();
         // void* lambdaPtr = nullptr; //不使用这个是因为临时的lambda可能会出现悬空

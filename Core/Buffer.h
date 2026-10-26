@@ -43,6 +43,7 @@ namespace Ccino {
         void Flush();
 
         void Copy(const void* data);
+        void Readback(void* data);
 
         RID GetRHI() const { return m_rhiBuffer; }
 

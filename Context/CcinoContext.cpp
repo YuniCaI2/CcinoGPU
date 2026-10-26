@@ -1,17 +1,25 @@
 #include "Context/CcinoContext.h"
+#include "RenderGraph.h"
 #include "ShaderStruct/ShaderIR.h"
 #include "GLSLCompiler/GLSLCompiler.h"
 #include "RHI/RHIStruct.h"
 #include "ShaderStruct/ShaderCommon.h"
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <istream>
+#include <memory>
 #include <utility>
 #include <iostream>
 
 namespace Ccino {
-    void Context::Run(const std::string& rgBuilderName) {
+    bool Context::Run(const std::string& rgBuilderName) {
+        if (m_rgBuilders.contains(rgBuilderName) && m_rgBuilders[rgBuilderName] != nullptr) {
+            m_rgBuilders[rgBuilderName]->Run();
+            return true;
+        }
+        return false;
     }
 
     bool Context::Init(const RHISettings& settings) {
@@ -63,5 +71,46 @@ namespace Ccino {
         return true;
 
         //初始化完毕
+    }
+    void Context::Destroy() {
+        for (auto& [name, builder] : m_rgBuilders) {
+            if (builder != nullptr) {
+                builder->Destroy();
+            }
+        }
+        m_rgBuilders.clear();
+        m_rhiContext.Destroy();
+    }
+
+    RGBuilder* Context::CreateRGBuilder(const std::string& name) {
+        //创建RGBuilder
+        if (m_rgBuilders.contains(name)) {
+            //覆盖资源
+            m_rgBuilders[name]->Destroy();
+        }
+
+        auto builder = std::make_unique<RGBuilder>();
+        builder->Init(&m_rhiContext);
+        m_rgBuilders[name] = std::move(builder);
+
+        return m_rgBuilders[name].get();
+    }
+
+    bool Context::DestroyRGBuilder(const std::string& name) {
+        if (m_rgBuilders.contains(name)) {
+            if (m_rgBuilders[name] == nullptr) return true;
+            m_rgBuilders[name]->Destroy();
+            m_rgBuilders[name] = nullptr;
+            return true;
+        } 
+        return false;
+    }
+
+    RGBuilder* Context::GetRGBuilder(const std::string& name) {
+        if (m_rgBuilders.contains(name)) {
+            return m_rgBuilders[name].get();
+        } else {
+            return nullptr;
+        }
     }
 }

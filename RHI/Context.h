@@ -98,6 +98,7 @@ namespace Ccino::RHI {
         //这里的VkShahderModule需要使用复杂的方法得到这里作为RHI层不需要管理Shader IR 到spv的过程，只作为消费端
         //Create Compute Pipline
         RID CreateComputePipeline(const std::string& name, VkShaderModule shaderModule);
+        RID CreateComputePipeline(const std::string& name, void* shaderCode, uint32_t size);
         void DestroyComputePipeline(RID rid);
         VkPipeline GetComputePipeline(RID rid);
 
@@ -106,6 +107,9 @@ namespace Ccino::RHI {
         void DestroyDescriptorSlotBinding(RID rid);
         DescriptorSlotBinding* GetDescriptorSlotBinding(const RID& rid) {
             return m_descriptorSlots.Get(rid);
+        }
+        void BindDescriptorSet(VkCommandBuffer commandBuffer) const {
+            m_descriptorSlot.BindDescriptorSet(commandBuffer);
         }
 
 

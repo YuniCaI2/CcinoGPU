@@ -1,5 +1,6 @@
 #include "RHI/Context.h"
 #include "RHI/ComputePipeline.h"
+#include "RHI/Core.h"
 #include "RHI/DescriptorSlot.h"
 #include <algorithm>
 #include <cstdint>
@@ -53,6 +54,13 @@ namespace Ccino::RHI {
         VkDevice device = m_core.GetVkDevice();
         if (device != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device);
+            m_computePipelines.ForEach([&](ComputePipeline& pipeline) {
+                pipeline.Destroy();
+            });
+            m_descriptorSlots.ForEach([&](DescriptorSlotBinding& slot) {
+                slot.Release();
+            });
+            m_descriptorSlot.Destroy();
         }
 
         m_buffers.ForEach([&](VulkanBuffer& buffer) {
@@ -76,6 +84,7 @@ namespace Ccino::RHI {
             });
         }
 
+        m_bufferDeletionQueue.clear();
         DescriptorSlot::DestroyGlobal();
         DestroyGlobalTimelineSemaphore();
         m_commandContext.Destroy();
@@ -83,9 +92,21 @@ namespace Ccino::RHI {
     }
 
     void Context::DeleteResource(RID rid) {
+        if (!rid) {
+            return;
+        }
         //类型匹配 
-        std::lock_guard lock(m_deletionMutex);
-        m_bufferDeletionQueue[m_currentFrameIndex].push_back(rid);
+        if (m_flightFrameCount <= 1)  {
+            for (const auto& timeline : m_timelines) {
+                if (timeline != nullptr) {
+                    timeline->Wait(timeline->ReadValue()); //这里的ReadValue是timeline的目标值，可以理解是最后一次提交时Command记录的值
+                }
+            }
+            DestroyResource(rid); 
+        } else {
+            std::lock_guard lock(m_deletionMutex);
+            m_bufferDeletionQueue[m_currentFrameIndex].push_back(rid);
+        }
     }
 
     RID Context::CreateBuffer(const BufferCreateInfo& createInfo) {
@@ -237,6 +258,16 @@ namespace Ccino::RHI {
         const VkBuffer srcBuffer = source->buffer;
         const VkBuffer dstBuffer = destination->buffer;
         const uint32_t size = source->size;
+
+        //TODO: 增加更细粒度的timeline semaphore的设置，当前是等待整个管线的任务，后续增加Buffer粒度的可用性的标注
+        if (TimelineSemaphore* computeTimeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::COMPUTE));
+            computeTimeline != nullptr) {
+            computeTimeline->Wait(computeTimeline->ReadValue());
+        }
+        if (TimelineSemaphore* graphicsTimeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::GRAPHICS));
+            graphicsTimeline != nullptr) {
+            graphicsTimeline->Wait(graphicsTimeline->ReadValue());
+        }
 
         CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::TRANSFER);
         StartRecording(commandBuffer);
@@ -516,12 +547,17 @@ namespace Ccino::RHI {
     }
 
     void Context::DestroyResource(RID rid) {
+        if (!rid) {
+            return;
+        }
         if (rid.type == RID::GetIndex<VulkanBuffer>()) {
             DestroyBuffer(rid);
         } else if (rid.type == RID::GetIndex<VkSemaphore>()) {
             DestroySemaphore(rid);
         } else if (rid.type == RID::GetIndex<ComputePipeline>()) {
             DestroyComputePipeline(rid);
+        } else if (rid.type == RID::GetIndex<DescriptorSlotBinding>()) {
+            DestroyDescriptorSlotBinding(rid);
         } else {
             throw std::runtime_error("Invalid resource type");
         }
@@ -642,6 +678,21 @@ namespace Ccino::RHI {
         ComputePipeline pipeline;
         pipeline.Init(m_core.GetVkDevice(), name, shaderModule, DescriptorSlot::GetGlobalPipelineLayout());
         return m_computePipelines.Add(std::move(pipeline));
+    }
+
+    RID Context::CreateComputePipeline(const std::string& name, void* shaderCode, uint32_t size) {
+        ComputePipeline pipeline;
+        VkShaderModule shaderModule{};
+        VkShaderModuleCreateInfo createInfo = {};
+        createInfo.sType =  VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = size;
+        createInfo.pCode = reinterpret_cast<uint32_t*>(shaderCode);
+
+        VULKAN_CHECK(vkCreateShaderModule(m_core.GetVkDevice(), &createInfo, nullptr, &shaderModule));
+        pipeline.Init(m_core.GetVkDevice(), name, shaderModule, DescriptorSlot::GetGlobalPipelineLayout());
+        auto rid = m_computePipelines.Add(std::move(pipeline));
+        vkDestroyShaderModule(m_core.GetVkDevice(), shaderModule, nullptr);
+        return rid;
     }
 
     void Context::DestroyComputePipeline(RID rid) {

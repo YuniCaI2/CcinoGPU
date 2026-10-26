@@ -2,21 +2,35 @@
 #include "RHI/Context.h"
 #include <gtest/gtest.h>
 
-//整个测试进程共用一个Context, 只在所有测试开始前Init、结束后Destroy 一次
+inline bool& IsTestContextInitialized() {
+    static bool initialized = false;
+    return initialized;
+}
+
+//整个测试进程共用一个Context, 按需在首次调用GetTestContext 时Init、结束后Destroy
 inline Ccino::RHI::Context& GetTestContext() {
     static Ccino::RHI::Context context;
+    if (!IsTestContextInitialized()) {
+        RHISettings settings;
+        context.Init(settings);
+        IsTestContextInitialized() = true;
+    }
     return context;
+}
+
+inline void DestroyTestContextIfInitialized() {
+    if (IsTestContextInitialized()) {
+        GetTestContext().Destroy();
+        IsTestContextInitialized() = false;
+    }
 }
 
 class TestContextEnvironment : public ::testing::Environment {
 public:
-    void SetUp() override {
-        RHISettings settings;
-        GetTestContext().Init(settings);
-    }
+    void SetUp() override {}
 
     void TearDown() override {
-        GetTestContext().Destroy();
+        DestroyTestContextIfInitialized();
     }
 };
 

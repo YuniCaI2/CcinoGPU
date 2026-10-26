@@ -4,6 +4,7 @@
 #include <vulkan/vulkan_core.h>
 #include <unordered_map>
 #include <memory>
+#include <thread>
 
 //TODO这里实现录制任务
 
@@ -38,7 +39,7 @@ namespace Ccino::RHI {
         VkCommandPool GetCommandPool(uint32_t queueFamilyIndex);
         CommandPoolSlot& GetThreadSlot();
 
-        std::vector<std::unique_ptr<CommandPoolSlot>> m_threadSlots;
+        std::unordered_map<std::thread::id, std::unique_ptr<CommandPoolSlot>> m_threadSlots;
 
         std::mutex m_mutex;
         VkDevice m_device = VK_NULL_HANDLE;

@@ -51,4 +51,27 @@ namespace Ccino {
             return;
         }
     }
+
+    void Buffer::Readback(void* data) {
+        if (m_rhiBuffer == RID::Invalid() || data == nullptr) {
+            std::cerr << "The Buffer RID or destination data pointer is invalid" << std::endl;
+            return;
+        }
+        if (m_bufferType == BufferType::Device) {
+            RID readbackRID = m_context->CreateReadbackBuffer(m_size);
+            m_context->ReadbackBuffer(m_rhiBuffer, readbackRID);
+            while (!m_context->IsBufferAvailable(readbackRID)) {
+            }
+            void* mapped = m_context->MapBuffer(readbackRID);
+            if (mapped != nullptr) {
+                std::memcpy(data, mapped, m_size);
+                m_context->UnmapBuffer(readbackRID);
+            }
+            m_context->DestroyBuffer(readbackRID);
+        } else if (m_bufferType == BufferType::Host) {
+            std::memcpy(data, m_context->GetBufferMappedPtr(m_rhiBuffer), m_size);
+        } else {
+            std::cerr << "Invalid buffer type" << std::endl;
+        }
+    }
 }
