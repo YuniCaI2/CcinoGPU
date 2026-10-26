@@ -1,7 +1,6 @@
 #include "Context/CcinoContext.h"
 #include "RenderGraph.h"
 #include "ShaderStruct/ShaderIR.h"
-#include "GLSLCompiler/GLSLCompiler.h"
 #include "RHI/RHIStruct.h"
 #include "ShaderStruct/ShaderCommon.h"
 #include <cstddef>
@@ -26,14 +25,8 @@ namespace Ccino {
         hasInit = true;
         m_rhiContext.Init(settings);
 
-        //反射当前的代码
+        //加载编译期生成的 ShaderIR JSON 与预编译 SPV
         std::filesystem::path shaderDir(CCINO_SHADER_DIR);
-        std::filesystem::path globalFunctionsPath(CCINO_GLOBAL_HEADER_FILE);
-
-        //获得全局函数
-        std::ifstream globalHeaderFile(globalFunctionsPath, std::ios::binary);
-        globalFunctions = std::string(std::istreambuf_iterator<char>(globalHeaderFile),
-                       std::istreambuf_iterator<char>());
 
         std::vector<ShaderIR> shaderIRs;
         for (const auto& entry : std::filesystem::directory_iterator(shaderDir)) {
@@ -47,26 +40,33 @@ namespace Ccino {
                 continue;
             }
             auto shaderIR = shaderJson.get<ShaderIR>();
-            auto it = shaderIR.glsl.find("in;");
-            if (it == std::string::npos) {
-                std::cerr << "Error: the compute shader doesn't have thread group size !" << std::endl;
-                hasInit = true;
+
+            const std::filesystem::path spvFilePath = shaderIR.spvPath.empty()
+                ? (shaderDir / (shaderIR.passName + ".spv"))
+                : std::filesystem::path(shaderIR.spvPath);
+            std::ifstream spvFile(spvFilePath, std::ios::binary | std::ios::ate);
+            if (!spvFile.is_open()) {
+                std::cerr << "Error: failed to open precompiled SPV file: " << spvFilePath << std::endl;
                 return false;
-            } else {
-                if (!globalFunctions.empty()) {
-                    shaderIR.glsl.insert(it + 3, "\n" + globalFunctions);
-                }
             }
-            std::vector<uint32_t> spv = GLSLCompiler::CompileToSpv(shaderIR.passName ,shaderIR.glsl, ShaderType::Compute);
+            const std::streamsize spvByteSize = spvFile.tellg();
+            if (spvByteSize <= 0 || (spvByteSize % sizeof(uint32_t)) != 0) {
+                std::cerr << "Error: invalid precompiled SPV file size: " << spvFilePath << std::endl;
+                return false;
+            }
+            spvFile.seekg(0, std::ios::beg);
             shaderIR.glsl.clear();
-            shaderIR.glsl.resize(sizeof(uint32_t) * spv.size());
-            std::memcpy(shaderIR.glsl.data(), spv.data(), sizeof(uint32_t) * spv.size());
-            shaderIR.size = sizeof(uint32_t) * spv.size();
+            shaderIR.glsl.resize(static_cast<size_t>(spvByteSize));
+            if (!spvFile.read(shaderIR.glsl.data(), spvByteSize)) {
+                std::cerr << "Error: failed to read precompiled SPV file: " << spvFilePath << std::endl;
+                return false;
+            }
+            shaderIR.size = static_cast<uint32_t>(spvByteSize);
 
             shaderIRs.push_back(std::move(shaderIR));
         }
 
-        //处理ShaderIR生成SPV
+        //注册预编译好的 ShaderIR
         ShaderIRRegistry::Instance().RegisterAll(std::move(shaderIRs));
         return true;
 

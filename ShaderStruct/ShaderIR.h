@@ -56,12 +56,13 @@ namespace Ccino {
 
         //代码部分
         std::string glsl;
+        std::string spvPath;//直接编译成SPV后续不用再运行期编译
 
         //后续标志位
         uint32_t size = 0; //记录代码字节数，因为后续glsl 可能spv 数据直接放到std::string中
     };
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderIR,
-        passName, shaderType, threadGroupSize, descriptorSlotLayout, uniformDataBindings, glsl, size)
+        passName, shaderType, threadGroupSize, descriptorSlotLayout, uniformDataBindings, glsl, spvPath, size)
 
     //这里统一丢到HugeHeader中，并且只需要处理下其中的类型
     struct ShaderFunction {

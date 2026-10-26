@@ -1,11 +1,15 @@
 #include "CodeGenerator/CppParser.h"
+#include "GLSLCompiler/GLSLCompiler.h"
 #include "ShaderStruct/ShaderIR.h"
 
+#include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 int main() {
     const std::filesystem::path compileCommands(CCINO_COMPILE_COMMAND_JSON_PATH);
@@ -25,14 +29,55 @@ int main() {
     std::string globalFunctions = {};
 
     std::vector<Ccino::ShaderIR> shaderIRs = Ccino::CppParser::ParseFilePassShaders(compileCommands.string(), &globalFunctions);
+    if (!globalFunctions.empty()) {
+        std::filesystem::path globalHeaderPath = CCINO_GLOBAL_HEADER_FILE;
+        std::ofstream outFile(globalHeaderPath, std::ios::binary | std::ios::trunc);
+        outFile << globalFunctions;
+    }
+
     std::unordered_set<std::string> generatedFiles;
-    for (const auto& shaderIR : shaderIRs) {
+    for (auto& shaderIR : shaderIRs) {
         if (shaderIR.passName.empty()) {
             std::cerr << "ShaderIR pass name is empty\n";
             return 1;
         }
 
+        if (shaderIR.shaderType == Ccino::ShaderType::Compute) {
+            const auto it = shaderIR.glsl.find("in;");
+            if (it == std::string::npos) {
+                std::cerr << "Error: the compute shader doesn't have thread group size: " << shaderIR.passName << "\n";
+                return 1;
+            }
+            if (!globalFunctions.empty()) {
+                shaderIR.glsl.insert(it + 3, "\n" + globalFunctions);
+            }
+        }
+
         const std::filesystem::path outputPath = shaderDir / (shaderIR.passName + ".json");
+        const std::filesystem::path spvPath = shaderDir / (shaderIR.passName + ".spv");
+        shaderIR.spvPath = spvPath.generic_string();
+
+        try {
+            const std::vector<uint32_t> spv = Ccino::GLSLCompiler::CompileToSpv(
+                shaderIR.passName, shaderIR.glsl, shaderIR.shaderType);
+            shaderIR.size = static_cast<uint32_t>(spv.size() * sizeof(uint32_t));
+
+            std::ofstream spvStream(spvPath, std::ios::binary | std::ios::trunc);
+            if (!spvStream) {
+                std::cerr << "Failed to open SPV file for writing: " << spvPath << "\n";
+                return 1;
+            }
+            spvStream.write(reinterpret_cast<const char*>(spv.data()),
+                            static_cast<std::streamsize>(shaderIR.size));
+            if (!spvStream) {
+                std::cerr << "Failed to write SPV file: " << spvPath << "\n";
+                return 1;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to compile GLSL to SPV for pass '" << shaderIR.passName << "':\n" << e.what() << "\n";
+            return 1;
+        }
+
         std::ofstream os(outputPath, std::ios::binary | std::ios::trunc);
         if (!os) {
             std::cerr << "Failed to write " << outputPath << "\n";
@@ -43,15 +88,24 @@ int main() {
             std::cerr << "Failed to write " << outputPath << "\n";
             return 1;
         }
+
         generatedFiles.insert(outputPath.filename().string());
+        generatedFiles.insert(spvPath.filename().string());
     }
 
     for (const auto& entry : std::filesystem::directory_iterator(shaderDir)) {
         const std::filesystem::path& path = entry.path();
-        if (!entry.is_regular_file() || path.extension() != ".json") {
+        if (!entry.is_regular_file()) {
             continue;
         }
         if (generatedFiles.contains(path.filename().string())) {
+            continue;
+        }
+        if (path.extension() == ".spv") {
+            std::filesystem::remove(path, ec);
+            continue;
+        }
+        if (path.extension() != ".json") {
             continue;
         }
 
@@ -65,11 +119,6 @@ int main() {
         if (existing.is_object() && existing.contains("passName") && existing.contains("glsl")) {
             std::filesystem::remove(path, ec);
         }
-    }
-    if (!globalFunctions.empty()) {
-        std::filesystem::path globalHeaderPath = CCINO_GLOBAL_HEADER_FILE;
-        std::ofstream outFile(globalHeaderPath, std::ios::binary | std::ios::trunc);
-        outFile << globalFunctions;
     }
 
     return 0;

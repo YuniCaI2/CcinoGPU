@@ -714,12 +714,12 @@ namespace Ccino
     }
 
     std::string CppParser::ChangeCppForToGLSLFor(clang::ForStmt* forStmt) {
-        if (auto* range = llvm::dyn_cast<clang::CXXForRangeStmt>(forStmt)) {
+        if (llvm::dyn_cast<clang::CXXForRangeStmt>(forStmt)) {
             llvm::errs() << "GLSL does not support range-for declaration\n";
             return {};
         }
 
-        if (auto* declStmt = forStmt->getConditionVariableDeclStmt()) {
+        if (forStmt->getConditionVariableDeclStmt()) {
             llvm::errs() << "GLSL does not support condition-variable declaration\n";
             return {};
         }

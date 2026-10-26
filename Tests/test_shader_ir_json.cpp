@@ -38,7 +38,8 @@ namespace {
         if (lhs.passName != rhs.passName || lhs.shaderType != rhs.shaderType || lhs.threadGroupSize != rhs.threadGroupSize) {
             return false;
         }
-        if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.glsl != rhs.glsl || lhs.size != rhs.size) {
+        if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.glsl != rhs.glsl ||
+            lhs.spvPath != rhs.spvPath || lhs.size != rhs.size) {
             return false;
         }
         if (lhs.uniformDataBindings.size() != rhs.uniformDataBindings.size()) {
@@ -69,6 +70,7 @@ namespace {
                   "void main() {\n"
                   "    // \"ClearBuffer\"\n"
                   "}\n";
+        ir.spvPath = ".CcinoGPU/Shaders/ClearBuffer.spv";
         ir.size = static_cast<uint32_t>(ir.glsl.size());
         return ir;
     }

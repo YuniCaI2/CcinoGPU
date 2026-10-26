@@ -64,7 +64,7 @@ target_include_directories(RHI PUBLIC ${CMAKE_SOURCE_DIR})
 
 ##需要理解
 add_executable(GeneratorMain GeneratorMain.cpp)
-target_link_libraries(GeneratorMain PRIVATE CodeGenerator)
+target_link_libraries(GeneratorMain PRIVATE CodeGenerator GLSLCompiler)
 
 set(CCINO_SHADER_GEN_STAMP "${CMAKE_CURRENT_BINARY_DIR}/shader_ir.stamp")
 set(CCINO_SHADER_GEN_INPUTS "")
