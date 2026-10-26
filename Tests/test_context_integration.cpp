@@ -54,21 +54,21 @@ TEST(CcinoIntegrationTest, MinimalComputeClosedLoop) {
         auto out0 = rg.Write<IntegrationBufferElem>(transientBuf, passRID);
         int factor = 2;
 
-        rg.AddCS<Ccino::ThreadGroupSize{16, 1, 1}>([=](Ccino::ComputeGlobalID id) {
+        rg.AddCS<Ccino::ThreadGroupSize{16, 1, 1}>([=]() {
             IntegrationWorkItem w1{1, 2};
             IntegrationWorkItem w2{3, 4};
-            // (1 + 2) * 2 + (3 + 4) * 2 + int(id.x) = 20 + int(id.x)
-            out0[id.x].value = EvaluateIntegrationItem(w1, factor) + EvaluateIntegrationItem(w2, factor) + int(id.x);
+            // (1 + 2) * 2 + (3 + 4) * 2 + int(Ccino::ComputeGlobalID.x) = 20 + int(Ccino::ComputeGlobalID.x)
+            out0[Ccino::ComputeGlobalID.x].value = EvaluateIntegrationItem(w1, factor) + EvaluateIntegrationItem(w2, factor) + int(Ccino::ComputeGlobalID.x);
         }, Ccino::WorkGroupSize{1, 1, 1});
     }).AddPass<"IntegrationConsumerPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
         auto in0  = rg.Read<IntegrationBufferElem>(transientBuf, passRID);
         auto out1 = rg.Write<IntegrationBufferElem>(externalBuf, passRID);
         int bias = 10;
 
-        auto cs = [=](Ccino::ComputeGlobalID id) {
-            IntegrationWorkItem w{in0[id.x].value, bias};
-            // (20 + int(id.x) + 10) * 3 = (30 + int(id.x)) * 3
-            out1[id.x].value = EvaluateIntegrationItem(w, 3);
+        auto cs = [=]() {
+            IntegrationWorkItem w{in0[Ccino::ComputeGlobalID.x].value, bias};
+            // (20 + int(Ccino::ComputeGlobalID.x) + 10) * 3 = (30 + int(Ccino::ComputeGlobalID.x)) * 3
+            out1[Ccino::ComputeGlobalID.x].value = EvaluateIntegrationItem(w, 3);
         };
         rg.AddCS<Ccino::ThreadGroupSize{16, 1, 1}>(cs, Ccino::WorkGroupSize{1, 1, 1});
     });

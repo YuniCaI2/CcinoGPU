@@ -1,10 +1,12 @@
 #pragma once
 
+#include "ShaderStruct/ShaderCommon.h"
 #include <glm/glm.hpp>
 
 #include <utility>
 #include <array>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace Ccino {
@@ -62,6 +64,38 @@ namespace Ccino {
     using DMat4x2 = glm::dmat4x2;
     using DMat4x3 = glm::dmat4x3;
     using DMat4x4 = glm::dmat4x4;
+
+
+    // 内建全局变量 (与下方 GLSLBuiltinVarMap 一一对应)
+    // 1. Compute Shader 内建变量 (in)
+    inline constexpr UVec3    ComputeNumWorkGroups{};        // gl_NumWorkGroups
+    inline constexpr UVec3    ComputeWorkGroupSize{};        // gl_WorkGroupSize
+    inline constexpr UVec3    ComputeWorkGroupID{};          // gl_WorkGroupID
+    inline constexpr UVec3    ComputeLocalID{};              // gl_LocalInvocationID
+    inline constexpr UVec3    ComputeLocalInvocationID{};    // gl_LocalInvocationID
+    inline constexpr UVec3    ComputeGlobalID{};             // gl_GlobalInvocationID
+    inline constexpr UVec3    ComputeGlobalInvocationID{};   // gl_GlobalInvocationID
+    inline constexpr uint32_t ComputeLocalIndex{};           // gl_LocalInvocationIndex
+    inline constexpr uint32_t ComputeLocalInvocationIndex{}; // gl_LocalInvocationIndex
+
+    // 2. Subgroup (Warp / Wave) 内建变量 (in)
+    inline constexpr uint32_t NumSubgroups{};                // gl_NumSubgroups
+    inline constexpr uint32_t SubgroupID{};                  // gl_SubgroupID
+    inline constexpr uint32_t SubgroupSize{};                // gl_SubgroupSize
+    inline constexpr uint32_t SubgroupInvocationID{};        // gl_SubgroupInvocationID
+
+    // 3. Vertex Shader 内建变量 (in / out)
+    inline constexpr int32_t  VertexIndex{};                 // in  gl_VertexIndex
+    inline constexpr int32_t  InstanceIndex{};               // in  gl_InstanceIndex
+    inline Vec4               Position{};                    // out gl_Position (可写，不加 constexpr)
+    inline float              PointSize{};                   // out gl_PointSize (可写，不加 constexpr)
+
+    // 4. Fragment Shader 内建变量 (in / out)
+    inline constexpr Vec4     FragCoord{};                   // in  gl_FragCoord
+    inline constexpr bool     FrontFacing{};                 // in  gl_FrontFacing
+    inline constexpr Vec2     PointCoord{};                  // in  gl_PointCoord
+    inline float              FragDepth{};                   // out gl_FragDepth (可写，不加 constexpr)
+    inline constexpr bool     HelperInvocation{};            // in  gl_HelperInvocation
 
     // 1. 角度与三角函数 (Angle and Trigonometry Functions)
     template <typename... Args>
@@ -629,5 +663,38 @@ namespace Ccino {
         "bitCount",
         "findLSB",
         "findMSB",
+    };
+
+    // Cpp -> GLSL 内建变量映射表
+    inline const std::unordered_map<std::string, std::string> GLSLBuiltinVarMap = {
+        // 1. Compute Shader 内建变量
+        {"ComputeNumWorkGroups",        "gl_NumWorkGroups"},
+        {"ComputeWorkGroupSize",        "gl_WorkGroupSize"},
+        {"ComputeWorkGroupID",          "gl_WorkGroupID"},
+        {"ComputeLocalID",              "gl_LocalInvocationID"},
+        {"ComputeLocalInvocationID",    "gl_LocalInvocationID"},
+        {"ComputeGlobalID",             "gl_GlobalInvocationID"},
+        {"ComputeGlobalInvocationID",   "gl_GlobalInvocationID"},
+        {"ComputeLocalIndex",           "gl_LocalInvocationIndex"},
+        {"ComputeLocalInvocationIndex", "gl_LocalInvocationIndex"},
+
+        // 2. Subgroup (Warp / Wave) 内建变量
+        {"NumSubgroups",                "gl_NumSubgroups"},
+        {"SubgroupID",                  "gl_SubgroupID"},
+        {"SubgroupSize",                "gl_SubgroupSize"},
+        {"SubgroupInvocationID",        "gl_SubgroupInvocationID"},
+
+        // 3. Vertex Shader 内建变量 (Vulkan GLSL)
+        {"VertexIndex",                 "gl_VertexIndex"},
+        {"InstanceIndex",               "gl_InstanceIndex"},
+        {"Position",                    "gl_Position"},
+        {"PointSize",                   "gl_PointSize"},
+
+        // 4. Fragment Shader 内建变量
+        {"FragCoord",                   "gl_FragCoord"},
+        {"FrontFacing",                 "gl_FrontFacing"},
+        {"PointCoord",                  "gl_PointCoord"},
+        {"FragDepth",                   "gl_FragDepth"},
+        {"HelperInvocation",            "gl_HelperInvocation"},
     };
 }

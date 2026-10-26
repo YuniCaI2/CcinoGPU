@@ -346,7 +346,6 @@ namespace Ccino
 
     ShaderIR CppParser::ProcessComputeShader(const clang::LambdaExpr* lambda, clang::ASTContext& context, const std::string& passName, ThreadGroupSize threadGroupSize) {
         ShaderIR shaderIR;
-        shaderIR.threadGroupSize = threadGroupSize;
         shaderIR.shaderType = ShaderType::Compute;
         shaderIR.descriptorSlotLayout = GetDescriptorSlotLayout(lambda, context);
         shaderIR.passName = passName;
@@ -371,15 +370,10 @@ namespace Ccino
         //处理lambda函数体
         std::string bodyGlsl = ProcessSTMT(lambda->getBody());
 
-        //处理名字：将第一个参数名替换为 gl_GlobalInvocationID，并将捕获变量替换为 pc.uniformData.<name>
+        //处理名字：将内建变量替换为对应的 GLSL 内建变量，并将捕获变量替换为 pc.uniformData.<name>
         std::unordered_map<std::string, std::string> mp;
-        if (auto* callOp = lambda->getCallOperator()) {
-            if (callOp->getNumParams() > 0) {
-                std::string paramName = callOp->getParamDecl(0)->getNameAsString();
-                if (!paramName.empty()) {
-                    mp[paramName] = "gl_GlobalInvocationID";
-                }
-            }
+        for (const auto& [cppName, glslName] : GLSLBuiltinVarMap) {
+            mp[cppName] = glslName;
         }
         for (const auto& binding : shaderIR.uniformDataBindings) {
             if (!binding.name.empty()) {
@@ -543,12 +537,15 @@ namespace Ccino
         }
 
         if (auto* ME = llvm::dyn_cast<clang::MemberExpr>(expr)) {
+            std::string member = ME->getMemberDecl()->getNameAsString();
+            if (member.empty()) { //如果这里的member名字为空，则为union 匿名变量，就是glm数学库中的情况,这里直接向左透传 vec3 . <匿名Union> . x 这里就是跳过匿名Union 最先访问的是x
+                return ChangeCppExprToGLSLExpr(ME->getBase());
+            }
             if (ME->isImplicitAccess()) {
-                return ME->getMemberDecl()->getNameAsString();
+                return member;
             }
             std::string base = ChangeCppExprToGLSLExpr(ME->getBase());
-            std::string member = ME->getMemberDecl()->getNameAsString();
-            if (base.empty() || member.empty()) return {};
+            if (base.empty()) return {};
             return base + "." + member;
         }
 
@@ -683,7 +680,7 @@ namespace Ccino
 
     std::string CppParser::ChangeCppIfToGLSLIf(clang::IfStmt* ifStmt) {
         std::string rtStr = "if (";
-        if (auto* initStmt = ifStmt->getInit()) {
+        if (ifStmt->getInit()) {
             llvm::errs() << "GLSL does not support if init-statement\n";
             return {};
         }

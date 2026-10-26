@@ -68,8 +68,8 @@ namespace
             Ccino::Vec3 sunRadiance(1.0f, 0.9f, 0.8f);
             float exposure = 1.5f;
 
-            rg.AddCS<Ccino::ThreadGroupSize{64, 1, 1}>([=](Ccino::ComputeGlobalID id) {
-                uint32_t idx = id.x;
+            rg.AddCS<Ccino::ThreadGroupSize{64, 1, 1}>([=]() {
+                uint32_t idx = Ccino::ComputeGlobalID.x;
 
                 LightSample s{sunRadiance, exposure};
                 MaterialParam m;
@@ -88,19 +88,19 @@ namespace
             auto out0 = rg.Write<BufferData>(buf0, passRID);
             int factor = 2;
 
-            rg.AddCS<Ccino::ThreadGroupSize{32, 1, 1}>([=](Ccino::ComputeGlobalID id) {
+            rg.AddCS<Ccino::ThreadGroupSize{32, 1, 1}>([=]() {
                 WorkItem w1{1, 2};
                 WorkItem w2{3, 4};
-                out0[id.x].value = CombineWorkItem(w1, factor) + CombineWorkItem(w2, factor);
+                out0[Ccino::ComputeGlobalID.x].value = CombineWorkItem(w1, factor) + CombineWorkItem(w2, factor);
             }, Ccino::WorkGroupSize{1, 1, 1});
         }).AddPass<"CombinePassTwo">([&](Ccino::RGBuilder& rg, RID& passRID) {
             auto in0  = rg.Read<BufferData>(buf0, passRID);
             auto out1 = rg.Write<BufferData>(buf1, passRID);
             int bias = 10;
 
-            auto cs = [=](Ccino::ComputeGlobalID id) {
-                WorkItem w{in0[id.x].value, bias};
-                out1[id.x].value = CombineWorkItem(w, 3);
+            auto cs = [=]() {
+                WorkItem w{in0[Ccino::ComputeGlobalID.x].value, bias};
+                out1[Ccino::ComputeGlobalID.x].value = CombineWorkItem(w, 3);
             };
             rg.AddCS<Ccino::ThreadGroupSize{16, 1, 1}>(cs, Ccino::WorkGroupSize{1, 1, 1});
         });

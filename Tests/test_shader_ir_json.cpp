@@ -35,7 +35,7 @@ namespace {
     }
 
     bool SameShaderIR(const ShaderIR& lhs, const ShaderIR& rhs) {
-        if (lhs.passName != rhs.passName || lhs.shaderType != rhs.shaderType || lhs.threadGroupSize != rhs.threadGroupSize) {
+        if (lhs.passName != rhs.passName || lhs.shaderType != rhs.shaderType) {
             return false;
         }
         if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.glsl != rhs.glsl ||
@@ -57,7 +57,6 @@ namespace {
         ShaderIR ir;
         ir.passName = "ClearBuffer";
         ir.shaderType = ShaderType::Compute;
-        ir.threadGroupSize = ThreadGroupSize{64, 1, 1};
         ir.descriptorSlotLayout = DescriptorSlotLayout{
             {"result", UniformDataType::Buffer},
             {"exposure", UniformDataType::Float},
@@ -176,9 +175,6 @@ TEST(ShaderIRJson, ShaderIRRoundTrip) {
 
     EXPECT_EQ(value.at("passName"), "ClearBuffer");
     EXPECT_EQ(value.at("shaderType"), "Compute");
-    EXPECT_EQ(value.at("threadGroupSize").at("x"), 64);
-    EXPECT_EQ(value.at("threadGroupSize").at("y"), 1);
-    EXPECT_EQ(value.at("threadGroupSize").at("z"), 1);
     ASSERT_EQ(value.at("descriptorSlotLayout").size(), 2u);
     EXPECT_EQ(value.at("descriptorSlotLayout").at(0).at("name"), "result");
     EXPECT_EQ(value.at("descriptorSlotLayout").at(0).at("dataType"), "Buffer");
@@ -196,7 +192,6 @@ TEST(ShaderIRJson, ShaderIRRejectsIncompleteJson) {
     const json missingGlsl = {
         {"passName", "ClearBuffer"},
         {"shaderType", "Compute"},
-        {"threadGroupSize", {{"x", 8}, {"y", 1}, {"z", 1}}},
         {"descriptorSlotLayout", json::array()},
         {"uniformDataBindings", json::array()},
         {"size", 0},
@@ -214,7 +209,6 @@ TEST(ShaderIRJson, GeneratedDirectorySkipsNonShaderJson) {
     ShaderIR vertex = compute;
     vertex.passName = "Blit";
     vertex.shaderType = ShaderType::Vertex;
-    vertex.threadGroupSize = {};
     vertex.glsl = "void main() {}\n";
     vertex.size = static_cast<uint32_t>(vertex.glsl.size());
 

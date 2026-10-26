@@ -37,12 +37,6 @@ namespace Ccino {
     };
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WorkGroupSize, x, y, z)
 
-    struct ComputeGlobalID {
-        uint32_t x;
-        uint32_t y;
-        uint32_t z;
-    };
-
     // C++20 结构化字符串包装，支持作为非类型模板参数 (NTTP)，如 AddPass<"MyPass">
     template <std::size_t N>
     struct FixedString {

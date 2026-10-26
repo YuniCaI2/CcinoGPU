@@ -77,7 +77,7 @@ namespace Ccino {
         }
 
         template<ThreadGroupSize threadGroupSize, typename CS> //ThreadGraphSize一定要作为编译器的,这样可以被ClangAST看到
-        requires std::invocable<CS, ComputeGlobalID>
+        requires std::invocable<CS>
         void AddCS(CS&& cs, const WorkGroupSize& workGroupSize) {
             //这里的CS是一个Dummy，需要在编译时将其翻译成Pipeline 对象和ShaderModule
             //所以这里需要留一个槽位方便后续绑定使用

@@ -143,11 +143,15 @@ namespace
             using BVec3 = glm::vec<3, bool>;
             using Mat4 = glm::mat<4, 4, float>;
 
-            struct ComputeGlobalID {
-                uint32_t x;
-                uint32_t y;
-                uint32_t z;
-            };
+            inline constexpr UVec3 ComputeNumWorkGroups{};
+            inline constexpr UVec3 ComputeWorkGroupSize{};
+            inline constexpr UVec3 ComputeWorkGroupID{};
+            inline constexpr UVec3 ComputeLocalID{};
+            inline constexpr UVec3 ComputeLocalInvocationID{};
+            inline constexpr UVec3 ComputeGlobalID{};
+            inline constexpr UVec3 ComputeGlobalInvocationID{};
+            inline constexpr uint32_t ComputeLocalIndex{};
+            inline constexpr uint32_t ComputeLocalInvocationIndex{};
 
             template<typename T, unsigned long long N>
             using Array = std::array<T, N>;
@@ -871,8 +875,8 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
                 int maxSteps = 4;
                 Ccino::Mat4 worldMat;
 
-                auto cs = [inParticles, outParticles, debugOut, dt, gravity, maxSteps, worldMat](Ccino::UVec3 threadID) {
-                    Ccino::UVec3 globalID = threadID;
+                auto cs = [inParticles, outParticles, debugOut, dt, gravity, maxSteps, worldMat]() {
+                    Ccino::UVec3 globalID = Ccino::ComputeGlobalID;
                     uint32_t idx = globalID.x;
                     Ccino::Vec3 vel = inParticles[idx].pos + gravity;
                     int step = 0;
@@ -905,9 +909,6 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
     // 1. 验证基础元数据
     EXPECT_EQ(ir.passName, "ParticleSimulatePass");
     EXPECT_EQ(ir.shaderType, Ccino::ShaderType::Compute);
-    EXPECT_EQ(ir.threadGroupSize.x, 64u);
-    EXPECT_EQ(ir.threadGroupSize.y, 4u);
-    EXPECT_EQ(ir.threadGroupSize.z, 1u);
 
     // 2. 验证 DescriptorSlotLayout
     const Ccino::DescriptorSlotLayout expectedLayout = {
@@ -1010,7 +1011,7 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
                 Ccino::Accessor<Particle, BufferAccessFlagBits::Read> inB;
                 Ccino::Accessor<Particle, BufferAccessFlagBits::Write> outC;
 
-                auto cs = [inA, inB, outC](Ccino::UVec3 id) {
+                auto cs = [inA, inB, outC]() {
                     int x = 1;
                 };
             }
@@ -1091,7 +1092,7 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
                 Ccino::DMat2 dm2;
                 Ccino::DMat4x3 dm4x3;
 
-                auto cs = [bda, d, f, i, u, b, v2, v3, v4, iv2, iv4, uv2, uv4, bv2, bv4, dv2, dv3, dv4, m2, m3, m4, m2x3, m3x4, dm2, dm4x3](Ccino::UVec3 tid) {
+                auto cs = [bda, d, f, i, u, b, v2, v3, v4, iv2, iv4, uv2, uv4, bv2, bv4, dv2, dv3, dv4, m2, m3, m4, m2x3, m3x4, dm2, dm4x3]() {
                     int dummy = i;
                 };
             }
@@ -1151,14 +1152,16 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
 }
 
 TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
-    // 1. 验证第一个参数名被替换为 gl_GlobalInvocationID，且不误伤包含该子串的其他标识符
+    // 1. 验证内建全局变量名被替换为对应的 GLSL 内建变量，且不误伤包含该子串的其他标识符
     const auto withParamShaders = RunProcessComputeShaderOnCode(
         kShaderTestPreamble + R"(
             void TestEntry() {
-                auto cs = [](Ccino::UVec3 tid, int secondParam) {
-                    Ccino::UVec3 tid_copy = tid;
-                    int tid_local = secondParam + 1;
-                    int my_tid = tid_local * 2;
+                auto cs = [](int secondParam) {
+                    Ccino::UVec3 tid_copy = Ccino::ComputeGlobalID;
+                    Ccino::UVec3 lid_copy = Ccino::ComputeLocalID;
+                    uint32_t lidx = Ccino::ComputeLocalIndex;
+                    int ComputeGlobalID_local = secondParam + 1;
+                    int my_ComputeGlobalID = ComputeGlobalID_local * 2;
                 };
             }
         )",
@@ -1168,8 +1171,10 @@ TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
     ASSERT_EQ(withParamShaders.size(), 1u);
     const std::string& glsl = withParamShaders[0].glsl;
     EXPECT_NE(glsl.find("uvec3 tid_copy = uvec3(gl_GlobalInvocationID);\n"), std::string::npos);
-    EXPECT_NE(glsl.find("int tid_local = (secondParam + 1);\n"), std::string::npos);
-    EXPECT_NE(glsl.find("int my_tid = (tid_local * 2);\n"), std::string::npos);
+    EXPECT_NE(glsl.find("uvec3 lid_copy = uvec3(gl_LocalInvocationID);\n"), std::string::npos);
+    EXPECT_NE(glsl.find("uint lidx = gl_LocalInvocationIndex;\n"), std::string::npos);
+    EXPECT_NE(glsl.find("int ComputeGlobalID_local = (secondParam + 1);\n"), std::string::npos);
+    EXPECT_NE(glsl.find("int my_ComputeGlobalID = (ComputeGlobalID_local * 2);\n"), std::string::npos);
 
     // 2. 验证无参数 Lambda 与匿名参数 Lambda 均能正常生成且不崩溃
     const auto noParamShaders = RunProcessComputeShaderOnCode(
@@ -1201,7 +1206,7 @@ TEST(ProcessComputeShaderTest, ImplicitCaptureAndInitCapture) {
                 Ccino::Vec3 unusedDir(0, 1, 0);
                 int baseCount = 8;
 
-                auto cs = [=, scale = 2.5f](Ccino::UVec3 threadID) {
+                auto cs = [=, scale = 2.5f]() {
                     Ccino::Vec3 d = usedDir;
                     int total = baseCount + 1;
                     float s = scale;
@@ -1236,7 +1241,7 @@ TEST(ProcessComputeShaderTest, UnsupportedCaptureTypeThrowsInvalidArgument) {
 
                 void TestEntry() {
                     RawStruct raw{1.0f};
-                    auto cs = [raw](Ccino::UVec3 id) {};
+                    auto cs = [raw]() {};
                 }
             )"),
         std::invalid_argument);
@@ -1371,8 +1376,8 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
                     float dt = 0.016f;
                     Ccino::Vec3 gravity(0, -9, 0);
 
-                    rg.AddCS<Ccino::ThreadGroupSize{64, 4, 1}>([=](Ccino::ComputeGlobalID id) {
-                        uint32_t idx = id.x;
+                    rg.AddCS<Ccino::ThreadGroupSize{64, 4, 1}>([=]() {
+                        uint32_t idx = Ccino::ComputeGlobalID.x;
                         inOutParticles[idx].pos = inOutParticles[idx].pos + gravity * dt;
                     });
                 });
@@ -1387,7 +1392,6 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
 
     EXPECT_EQ(ir.passName, "ParticleSimulatePass");
     EXPECT_EQ(ir.shaderType, Ccino::ShaderType::Compute);
-    EXPECT_EQ(ir.threadGroupSize, (Ccino::ThreadGroupSize{64, 4, 1}));
 
     const Ccino::DescriptorSlotLayout expectedLayout = {
         {"inOutParticles", Ccino::UniformDataType::Buffer},
@@ -1417,8 +1421,8 @@ TEST(ParseFilePassShadersTest, BuiltinHeadersAndEndOfOptionsSeparator) {
             void BuildBuiltinHeadersPass() {
                 Ccino::RGBuilder builder;
                 builder.AddPass<"BuiltinHeadersPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
-                    rg.AddCS<Ccino::ThreadGroupSize{1, 1, 1}>([](Ccino::ComputeGlobalID id) {
-                        uint32_t idx = id.x;
+                    rg.AddCS<Ccino::ThreadGroupSize{1, 1, 1}>([]() {
+                        uint32_t idx = Ccino::ComputeGlobalID.x;
                     });
                 });
             }
@@ -1444,8 +1448,8 @@ TEST(ParseFilePassShadersTest, ExplicitResourceDirectoryIsPreserved) {
             void BuildExplicitResourcePass() {
                 Ccino::RGBuilder builder;
                 builder.AddPass<"ExplicitResourcePass">([&](Ccino::RGBuilder& rg, RID& passRID) {
-                    rg.AddCS<Ccino::ThreadGroupSize{1, 1, 1}>([](Ccino::ComputeGlobalID id) {
-                        uint32_t idx = id.x;
+                    rg.AddCS<Ccino::ThreadGroupSize{1, 1, 1}>([]() {
+                        uint32_t idx = Ccino::ComputeGlobalID.x;
                     });
                 });
             }
@@ -1479,9 +1483,9 @@ TEST(ParseFilePassShadersTest, VariableLambdaAndChainedPasses) {
                     auto outCounter = rg.Write<CounterBuf>(bufA, passRID);
                     uint32_t limit = 128;
 
-                    rg.AddCS<Ccino::ThreadGroupSize{32, 1, 1}>([=](Ccino::ComputeGlobalID gid) {
-                        if (gid.x < limit) {
-                            outCounter[gid.x].count = gid.x;
+                    rg.AddCS<Ccino::ThreadGroupSize{32, 1, 1}>([=]() {
+                        if (Ccino::ComputeGlobalID.x < limit) {
+                            outCounter[Ccino::ComputeGlobalID.x].count = Ccino::ComputeGlobalID.x;
                         }
                     });
                 }).AddPass<"LightingPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
@@ -1489,8 +1493,8 @@ TEST(ParseFilePassShadersTest, VariableLambdaAndChainedPasses) {
                     auto outColor = rg.Write<CounterBuf>(bufB, passRID);
                     uint32_t scale = 2;
 
-                    auto cs = [=](Ccino::ComputeGlobalID tid) {
-                        outColor[tid.x].count = inCounter[tid.x].count * scale;
+                    auto cs = [=]() {
+                        outColor[Ccino::ComputeGlobalID.x].count = inCounter[Ccino::ComputeGlobalID.x].count * scale;
                     };
                     rg.AddCS<Ccino::ThreadGroupSize{16, 8, 2}>(cs);
                 });
@@ -1503,12 +1507,10 @@ TEST(ParseFilePassShadersTest, VariableLambdaAndChainedPasses) {
     ASSERT_EQ(shaders.size(), 2u);
 
     EXPECT_EQ(shaders[0].passName, "CullPass");
-    EXPECT_EQ(shaders[0].threadGroupSize, (Ccino::ThreadGroupSize{32, 1, 1}));
     EXPECT_NE(shaders[0].glsl.find("layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
     EXPECT_NE(shaders[0].glsl.find("(gl_GlobalInvocationID.x < pc.uniformData.limit)"), std::string::npos);
 
     EXPECT_EQ(shaders[1].passName, "LightingPass");
-    EXPECT_EQ(shaders[1].threadGroupSize, (Ccino::ThreadGroupSize{16, 8, 2}));
     EXPECT_NE(shaders[1].glsl.find("layout(local_size_x = 16, local_size_y = 8, local_size_z = 2) in;\n"), std::string::npos);
     EXPECT_NE(shaders[1].glsl.find("(pc.uniformData.outColor[gl_GlobalInvocationID.x].count = (pc.uniformData.inCounter[gl_GlobalInvocationID.x].count * pc.uniformData.scale));\n"), std::string::npos);
 }
@@ -1526,8 +1528,8 @@ TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
             inline void RegisterHeaderOnlyPass(Ccino::RGBuilder& builder, RID& res) {
                 builder.AddPass<"HeaderPassShouldBeIgnored">([&](Ccino::RGBuilder& rg, RID& passRID) {
                     auto out = rg.Write<DataNode>(res, passRID);
-                    rg.AddCS<Ccino::ThreadGroupSize{8, 1, 1}>([=](Ccino::ComputeGlobalID id) {
-                        out[id.x].value = 1.0f;
+                    rg.AddCS<Ccino::ThreadGroupSize{8, 1, 1}>([=]() {
+                        out[Ccino::ComputeGlobalID.x].value = 1.0f;
                     });
                 });
             }
@@ -1543,8 +1545,8 @@ TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
                 builder.AddPass<"FileAPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
                     auto out = rg.Write<DataNode>(res, passRID);
                     float factor = 3.5f;
-                    rg.AddCS<Ccino::ThreadGroupSize{64, 1, 1}>([=](Ccino::ComputeGlobalID id) {
-                        out[id.x].value = factor;
+                    rg.AddCS<Ccino::ThreadGroupSize{64, 1, 1}>([=]() {
+                        out[Ccino::ComputeGlobalID.x].value = factor;
                     });
                 });
             }
@@ -1558,8 +1560,8 @@ TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
                 RID res{};
                 builder.AddPass<"FileBPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
                     auto out = rg.Write<DataNode>(res, passRID);
-                    rg.AddCS<Ccino::ThreadGroupSize{128, 2, 1}>([=](Ccino::ComputeGlobalID id) {
-                        out[id.x].value = 2.0f;
+                    rg.AddCS<Ccino::ThreadGroupSize{128, 2, 1}>([=]() {
+                        out[Ccino::ComputeGlobalID.x].value = 2.0f;
                     });
                 });
             }
@@ -1571,9 +1573,9 @@ TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
     // 头文件 common_pass_helper.h 中的 HeaderPassShouldBeIgnored 应被 isWrittenInMainFile 过滤掉
     ASSERT_EQ(shaders.size(), 2u);
     EXPECT_EQ(shaders[0].passName, "FileAPass");
-    EXPECT_EQ(shaders[0].threadGroupSize, (Ccino::ThreadGroupSize{64, 1, 1}));
+    EXPECT_NE(shaders[0].glsl.find("layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
     EXPECT_EQ(shaders[1].passName, "FileBPass");
-    EXPECT_EQ(shaders[1].threadGroupSize, (Ccino::ThreadGroupSize{128, 2, 1}));
+    EXPECT_NE(shaders[1].glsl.find("layout(local_size_x = 128, local_size_y = 2, local_size_z = 1) in;\n"), std::string::npos);
 }
 
 TEST(ParseFilePassShadersTest, InvalidOrEmptyCompilationDatabaseReturnsEmpty) {
