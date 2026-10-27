@@ -21,6 +21,69 @@ namespace Ccino::RHI {
             return (usage & VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT) != 0 ||
                 (usage & VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT) != 0;
         }
+
+        VkImageAspectFlags ImageAspect(VkFormat format) {
+            switch (format) {
+            case VK_FORMAT_D16_UNORM:
+            case VK_FORMAT_X8_D24_UNORM_PACK32:
+            case VK_FORMAT_D32_SFLOAT:
+                return VK_IMAGE_ASPECT_DEPTH_BIT;
+            case VK_FORMAT_S8_UINT:
+                return VK_IMAGE_ASPECT_STENCIL_BIT;
+            case VK_FORMAT_D16_UNORM_S8_UINT:
+            case VK_FORMAT_D24_UNORM_S8_UINT:
+            case VK_FORMAT_D32_SFLOAT_S8_UINT:
+                return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+            default:
+                return VK_IMAGE_ASPECT_COLOR_BIT;
+            }
+        }
+
+        void LayoutSync(VkImageLayout layout, VkPipelineStageFlags2& stage, VkAccessFlags2& access) {
+            switch (layout) {
+            case VK_IMAGE_LAYOUT_UNDEFINED:
+            case VK_IMAGE_LAYOUT_PREINITIALIZED:
+                stage = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+                access = VK_ACCESS_2_NONE;
+                break;
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                stage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+                access = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+            case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
+            case VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL:
+                stage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+                access = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+            case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL:
+            case VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL:
+                stage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+                access = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+                access = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                stage = VK_PIPELINE_STAGE_2_COPY_BIT;
+                access = VK_ACCESS_2_TRANSFER_READ_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                stage = VK_PIPELINE_STAGE_2_COPY_BIT;
+                access = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                break;
+            case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+                stage = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+                access = VK_ACCESS_2_NONE;
+                break;
+            default:
+                stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+                access = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+                break;
+            }
+        }
     }
 
     Context::Context()
@@ -315,7 +378,8 @@ namespace Ccino::RHI {
         if (destination == nullptr) {
             throw std::runtime_error("Readback buffer was destroyed");
         }
-        destination->isAvailable = value;
+        destination->lastQueue = CommandQueueType::TRANSFER;
+        destination->lastTimelineValue = value;
     }
 
     void Context::UploadBuffer(RID rid, const void* data, uint32_t size) {
@@ -359,7 +423,8 @@ namespace Ccino::RHI {
             if (destination == nullptr) {
                 throw std::runtime_error("Upload destination was destroyed");
             }
-            destination->isAvailable = value;
+            destination->lastQueue = CommandQueueType::TRANSFER;
+            destination->lastTimelineValue = value;
             destination->uploadStaging = stagingRid;
         } catch (...) {
             if (!submitted) {
@@ -374,11 +439,11 @@ namespace Ccino::RHI {
         if (buffer == nullptr) {
             return false;
         }
-        if (buffer->isAvailable == 0) {
+        if (buffer->lastTimelineValue == 0) {
             return true;
         }
 
-        const bool available = IsGlobalTimelineSemaphoreAvailable(CommandQueueType::TRANSFER, buffer->isAvailable);
+        const bool available = IsGlobalTimelineSemaphoreAvailable(buffer->lastQueue, buffer->lastTimelineValue);
         if (available) {
             ReleaseUploadStaging(*buffer);
         }
@@ -426,11 +491,11 @@ namespace Ccino::RHI {
 
         if (TimelineSemaphore* transferTimeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER));
             transferTimeline != nullptr) {
-            if (buffer->isAvailable < transferTimeline->ReadValue()) {
+            if (buffer->lastQueue != CommandQueueType::TRANSFER || buffer->lastTimelineValue == 0 ||
+                buffer->lastTimelineValue < transferTimeline->ReadValue()) {
                 return;
-            } else {
-                transferTimeline->Wait(buffer->isAvailable);
             }
+            transferTimeline->Wait(buffer->lastTimelineValue);
         } else {
             throw std::runtime_error("Transfer timeline is not available");
         }
@@ -450,9 +515,9 @@ namespace Ccino::RHI {
             return;
         }
 
-        if (buffer->isAvailable != 0) {
-            if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER))) {
-                timeline->Wait(buffer->isAvailable);
+        if (buffer->lastTimelineValue != 0) {
+            if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(buffer->lastQueue))) {
+                timeline->Wait(buffer->lastTimelineValue);
             }
         }
         ReleaseUploadStaging(*buffer);
@@ -625,12 +690,84 @@ namespace Ccino::RHI {
         if (texture == nullptr) {
             return;
         }
+        //这个地方真要等待吗？
+        if (texture->lastTimelineValue != 0) {
+            if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(texture->lastQueue))) {
+                timeline->Wait(texture->lastTimelineValue);
+            }
+        }
         if (!texture->isSwapchain && texture->image != VK_NULL_HANDLE) {
             vmaDestroyImage(m_core->GetVmaAllocator(), texture->image, texture->allocation);
             texture->image = VK_NULL_HANDLE;
             texture->allocation = VK_NULL_HANDLE;
         }
         m_textures.Remove(rid);
+    }
+
+    void Context::TransitionTextureLayout(RID rid, VkImageLayout newLayout) {
+        VulkanTexture* texture = m_textures.Get(rid);
+        if (texture == nullptr || texture->image == VK_NULL_HANDLE) {
+            throw std::runtime_error("Texture is invalid");
+        }
+        const VkImageLayout oldLayout = texture->layout;
+        if (oldLayout == newLayout) {
+            return;
+        }
+
+        const uint32_t lastFamily = m_core->GetQueueFamilyIndex(texture->lastQueue);
+        const uint32_t graphicsFamily = m_core->GetQueueFamilyIndex(CommandQueueType::GRAPHICS);
+        if (texture->lastTimelineValue != 0 && lastFamily != graphicsFamily) {
+            if (TimelineSemaphore* timeline = GetTimeline(lastFamily)) {
+                timeline->Wait(texture->lastTimelineValue);
+            }
+        }
+
+        texture = m_textures.Get(rid);
+        if (texture == nullptr || texture->image == VK_NULL_HANDLE) {
+            throw std::runtime_error("Texture was destroyed");
+        }
+
+        VkPipelineStageFlags2 srcStage = VK_PIPELINE_STAGE_2_NONE;
+        VkAccessFlags2 srcAccess = VK_ACCESS_2_NONE;
+        VkPipelineStageFlags2 dstStage = VK_PIPELINE_STAGE_2_NONE;
+        VkAccessFlags2 dstAccess = VK_ACCESS_2_NONE;
+        LayoutSync(oldLayout, srcStage, srcAccess);
+        LayoutSync(newLayout, dstStage, dstAccess);
+
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        barrier.srcStageMask = srcStage;
+        barrier.srcAccessMask = srcAccess;
+        barrier.dstStageMask = dstStage;
+        barrier.dstAccessMask = dstAccess;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = texture->image;
+        barrier.subresourceRange.aspectMask = ImageAspect(texture->format);
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = texture->mipLevels == 0 ? VK_REMAINING_MIP_LEVELS : texture->mipLevels;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = texture->arrayLayers == 0 ? VK_REMAINING_ARRAY_LAYERS : texture->arrayLayers;
+
+        CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::GRAPHICS);
+        StartRecording(commandBuffer);
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = 1;
+        dependency.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(commandBuffer.commandBuffer, &dependency);
+        EndRecording(commandBuffer);
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::GRAPHICS, {commandBuffer}, 0, {}, {}, {});
+
+        texture = m_textures.Get(rid);
+        if (texture == nullptr) {
+            throw std::runtime_error("Texture was destroyed");
+        }
+        texture->layout = newLayout;
+        texture->lastQueue = CommandQueueType::GRAPHICS;
+        texture->lastTimelineValue = signalValue;
     }
 
     std::vector<RID> Context::RegisterSwapchainImages(const std::vector<VkImage>& images) {
@@ -640,7 +777,6 @@ namespace Ccino::RHI {
             VulkanTexture texture = {};
             texture.image = image;
             //Width 和 Height 不用管理，直接取swapchain中获取
-            texture.isAvailable = true;
             texture.isSwapchain = true;
             
             results.push_back(m_textures.Add(std::move(texture)));

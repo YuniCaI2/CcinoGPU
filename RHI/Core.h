@@ -89,7 +89,8 @@ namespace Ccino::RHI {
         VkPhysicalDeviceProperties m_properties{};
 
         //Window 作为Core的一部分
-        SDL_Window* window = nullptr; 
+        SDL_Window* window = nullptr;
+        bool m_sdlInitialized = false; 
 
 #ifndef NDEBUG
         PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT = nullptr;

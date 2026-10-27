@@ -96,6 +96,7 @@ namespace Ccino::RHI {
         //Texture
         RID CreateTexture(const TextureCreateInfo& createInfo);
         void DestroyTexture(RID rid);
+        void TransitionTextureLayout(RID rid, VkImageLayout newLayout);
         VkImage GetVkImage(RID rid) { return m_textures.Get(rid)->image; }
 
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
@@ -142,9 +143,9 @@ namespace Ccino::RHI {
         uint32_t m_currentFrameIndex = 0;
 
         struct VulkanResource {
-
-            // Transfer 队列 timeline 的目标值。0 表示没有未完成的 DMA 上传。
-            uint64_t isAvailable = 0;
+            // 最近一次 GPU 使用所在的队列，以及那次提交的 timeline 目标值。0 表示还没有 GPU 使用。
+            CommandQueueType lastQueue = CommandQueueType::GRAPHICS;
+            uint64_t lastTimelineValue = 0;
             RID uploadStaging{};
         };
 
@@ -177,6 +178,7 @@ namespace Ccino::RHI {
             VkFormat format = VK_FORMAT_UNDEFINED;
             VkImageType type = VK_IMAGE_TYPE_2D;
             VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
+            VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
             VkImageUsageFlags usage = 0;
         };
 

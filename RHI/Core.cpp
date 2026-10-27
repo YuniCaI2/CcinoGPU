@@ -2,21 +2,35 @@
 #include "SDL3/SDL_stdinc.h"
 #include "SDL3/SDL_video.h"
 #include <algorithm>
+#include <cstddef>
 #include <vector>
 #include <iostream>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vulkan/vulkan_core.h>
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_init.h>
 #include <SDL3/SDL_vulkan.h>
 
 namespace Ccino::RHI {
     void Core::Init(const RHISettings& settings) {
+        if ((SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0) {
+            if (!SDL_Init(SDL_INIT_VIDEO)) {
+                throw std::runtime_error(std::string("Failed to initialize SDL video: ") + SDL_GetError());
+            }
+            m_sdlInitialized = true;
+        }
+
         std::vector<const char*> instanceExtensions = {};
-        Uint32 sdlExtensionCounts = 0;
-        auto rawSDLextensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCounts);
-        for (Uint32 i = 0; i < sdlExtensionCounts; i++) {
-            instanceExtensions.push_back(rawSDLextensions[i]);
+        if (settings.bUseSwapChain) {
+            Uint32 sdlExtensionCounts = 0;
+            const char* const* rawSDLextensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCounts);
+            if (rawSDLextensions != nullptr) {
+                for (Uint32 i = 0; i < sdlExtensionCounts; i++) {
+                    instanceExtensions.push_back(rawSDLextensions[i]);
+                }
+            }
         }
 
         //配置Vulkan Device Features
@@ -57,14 +71,15 @@ namespace Ccino::RHI {
 
         //Bindless 只依赖Vulkan 1.2 核心的bufferDeviceAddress 和descriptor_indexing, 不需要额外的设备扩展
         std::vector<const char*> deviceExtensions = {};
+        if (settings.bUseSwapChain) {
+            deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        }
 
         CreateInstance(instanceExtensions);
         CreateDevice(m_instance, deviceFeatures, deviceExtensions, &features11);
 
-        window = SDL_CreateWindow("CcinoGPU", settings.windowWidth, settings.windowHeight, SDL_WINDOW_VULKAN);
-
-
         if (settings.bUseSwapChain) {
+            window = SDL_CreateWindow("CcinoGPU", settings.windowWidth, settings.windowHeight, SDL_WINDOW_VULKAN);
             auto result = SDL_Vulkan_CreateSurface(window, m_instance, nullptr, &m_surface);
             if(!result) {
                 throw std::runtime_error("Can't Create Window Surface!"); 
@@ -73,12 +88,19 @@ namespace Ccino::RHI {
     }
 
     void Core::Destroy() {
-        SDL_DestroyWindow(window);
+        if (window != nullptr) {
+            SDL_DestroyWindow(window);
+            window = nullptr;
+        }
         DestroyVmaAllocator();
         DestroyDevice();
         DestroySurface();
         DestroyDebugCallback(m_instance);
         DestroyInstance();
+        if (m_sdlInitialized) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            m_sdlInitialized = false;
+        }
     }
 
     //Debug
@@ -107,16 +129,18 @@ namespace Ccino::RHI {
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion = VK_API_VERSION_1_4;
 
-        std::vector<const char*> supportedExtensions = {};
         uint32_t extensionCount = 0;
-
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-        supportedExtensions.resize(extensionCount);
         std::vector<VkExtensionProperties> supportedExtensionsProperties(extensionCount);
         vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, supportedExtensionsProperties.data());
-        for (uint32_t i = 0; i < extensionCount; i++) {
-            supportedExtensions.emplace_back(supportedExtensionsProperties[i].extensionName);
-        }
+        auto extensionSupported = [&](const char* extensionName) {
+            for (const VkExtensionProperties& properties : supportedExtensionsProperties) {
+                if (strcmp(properties.extensionName, extensionName) == 0) {
+                    return true;
+                }
+            }
+            return false;
+        };
 
 
         auto instanceExtensions = requiredExtensions;
@@ -138,8 +162,8 @@ namespace Ccino::RHI {
         } 
 
         //检测外部的扩展是否可用
-        for (const auto& extension : requiredExtensions) {
-            if (std::find(supportedExtensions.begin(), supportedExtensions.end(), extension) == supportedExtensions.end()) {
+        for (const char* extension : requiredExtensions) {
+            if (!extensionSupported(extension)) {
                 throw std::runtime_error("Extension " + std::string(extension) + " is not supported");
             }
         }
@@ -303,7 +327,6 @@ namespace Ccino::RHI {
         }
 
         std::vector<const char*> deviceExtensions(extensions);
-        // deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME); // SwapChain 手动增加
 
         VkPhysicalDeviceFeatures supportedFeatures{};
         vkGetPhysicalDeviceFeatures(m_physicalDevice, &supportedFeatures);
@@ -396,7 +419,8 @@ namespace Ccino::RHI {
     }
 
     void Core::DestroySurface() {
-        SDL_Vulkan_CreateSurface(window, m_instance, nullptr, &m_surface);
+        if (m_surface != VK_NULL_HANDLE)
+            SDL_Vulkan_CreateSurface(window, m_instance, nullptr, &m_surface);
     }
 
     void Core::CreateVmaAllocator() {
