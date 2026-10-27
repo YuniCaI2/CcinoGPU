@@ -10,7 +10,7 @@
 [submodule "ThirdPart/llvm-project"]
 	path = ThirdPart/llvm-project
 	url = https://github.com/llvm/llvm-project.git
-	# Use the parent repository's pinned llvmorg-23.1.4 commit for reproducible builds.
+	# --remote follows release/23.x; normal updates use the parent repository's pinned commit.
 	branch = release/23.x
 	shallow = true
 [submodule "ThirdPart/json"]

@@ -30,7 +30,7 @@ set(SDL_EXAMPLES      OFF)
 add_subdirectory(SDL)
 
 # LLVM / Clang (LibTooling) 配置
-# LLVM/Clang 固定为 llvmorg-23.1.4，与当前 llvm-mingw 工具链匹配。
+# LLVM/Clang 子模块跟踪 release/23.x；实际版本由父仓库记录的子模块提交决定。
 # LLVM 子项目使用其要求的 C++17，避免继承主工程的 C++23。
 set(CMAKE_CXX_STANDARD 17)
 set(LLVM_ENABLE_PROJECTS "clang" CACHE STRING "" FORCE)
