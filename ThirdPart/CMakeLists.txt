@@ -18,6 +18,17 @@ if(BUILD_TESTS)
     add_subdirectory(googletest)
 endif()
 
+# SDL3 —— 平台 / 窗口层
+# 这两个是「构建哪个产物」的开关，不是编译宏；消费方不需要定义 SDL_STATIC 之类的宏。
+# 用 CACHE 写入（不 FORCE），这样以后在 CMakeCache 里还能手动切回 shared。
+set(SDL_SHARED        OFF CACHE BOOL "Build SDL3 shared library")
+set(SDL_STATIC        ON  CACHE BOOL "Build SDL3 static library")
+# 不需要 SDL 自带的测试库 / 测试程序 / 示例，省编译时间
+set(SDL_TEST_LIBRARY  OFF)
+set(SDL_TESTS         OFF)
+set(SDL_EXAMPLES      OFF)
+add_subdirectory(SDL)
+
 # LLVM / Clang (LibTooling) 配置
 # LLVM/Clang 固定为 llvmorg-23.1.4，与当前 llvm-mingw 工具链匹配。
 # LLVM 子项目使用其要求的 C++17，避免继承主工程的 C++23。

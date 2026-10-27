@@ -6,6 +6,7 @@
 #include "ResourceConcept.h"
 #include "ShaderStruct/ShaderCommon.h"
 #include "ShaderStruct/UniformData.h"
+#include "ThreadPoo.h"
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -251,7 +252,7 @@ namespace Ccino {
         if (m_context != nullptr && !m_timeline.empty()) {
             m_context->ExecuteCommand([this](RHI::CommandContext::CommandBuffer& commandBuffer) {
                 GenerateCommands(commandBuffer.commandBuffer);
-            }, CommandQueueType::COMPUTE);
+            }, CommandQueueType::GRAPHICS);
         }
     }
 

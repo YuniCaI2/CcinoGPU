@@ -20,6 +20,8 @@
     } \
 } while (0)
 
+struct SDL_Window;
+
 namespace Ccino::RHI {
     class Core {
     public:
@@ -32,7 +34,9 @@ namespace Ccino::RHI {
         VkDevice GetVkDevice() const { return m_device; }
         VkPhysicalDevice GetVkPhysicalDevice() const { return m_physicalDevice; }
         VkInstance GetVkInstance() const { return m_instance; }
+        VkSurfaceKHR GetSurface() const {return m_surface;};
         VmaAllocator GetVmaAllocator() const { return m_vmaAllocator; }
+        //Present的队列和Graphics的队列是一致的，现在在Vulkan Spec中记录的
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_queueFamilyIndices.graphics; }
         uint32_t GetComputeQueueFamilyIndex() const { return m_queueFamilyIndices.compute; }
         uint32_t GetTransferQueueFamilyIndex() const { return m_queueFamilyIndices.transfer; }
@@ -84,6 +88,9 @@ namespace Ccino::RHI {
         VkPhysicalDeviceProperties2 m_properties2{};
         VkPhysicalDeviceProperties m_properties{};
 
+        //Window 作为Core的一部分
+        SDL_Window* window = nullptr; 
+
 #ifndef NDEBUG
         PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT = nullptr;
         PFN_vkDestroyDebugUtilsMessengerEXT vkDestroyDebugUtilsMessengerEXT = nullptr;
@@ -97,7 +104,6 @@ namespace Ccino::RHI {
         void CreateDevice(VkInstance instance, VkPhysicalDeviceFeatures features, const std::vector<const char*>& extensions, void* pNext);
         void DestroyDevice();
 
-        void CreateSurface();
         void DestroySurface();
 
         //Dynamic Function Pointers
@@ -109,5 +115,6 @@ namespace Ccino::RHI {
         //Debug
         void SetDebugging(VkInstance instance);
         void DestroyDebugCallback(VkInstance instance);
+
     };
 }

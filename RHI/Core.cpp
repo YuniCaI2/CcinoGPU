@@ -1,4 +1,6 @@
 #include "RHI/Core.h"
+#include "SDL3/SDL_stdinc.h"
+#include "SDL3/SDL_video.h"
 #include <algorithm>
 #include <vector>
 #include <iostream>
@@ -6,10 +8,16 @@
 #include <stdexcept>
 #include <string>
 #include <vulkan/vulkan_core.h>
+#include <SDL3/SDL_vulkan.h>
 
 namespace Ccino::RHI {
     void Core::Init(const RHISettings& settings) {
         std::vector<const char*> instanceExtensions = {};
+        Uint32 sdlExtensionCounts = 0;
+        auto rawSDLextensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCounts);
+        for (Uint32 i = 0; i < sdlExtensionCounts; i++) {
+            instanceExtensions.push_back(rawSDLextensions[i]);
+        }
 
         //配置Vulkan Device Features
         VkPhysicalDeviceFeatures deviceFeatures{};
@@ -52,12 +60,20 @@ namespace Ccino::RHI {
 
         CreateInstance(instanceExtensions);
         CreateDevice(m_instance, deviceFeatures, deviceExtensions, &features11);
+
+        window = SDL_CreateWindow("CcinoGPU", settings.windowWidth, settings.windowHeight, SDL_WINDOW_VULKAN);
+
+
         if (settings.bUseSwapChain) {
-            CreateSurface();
+            auto result = SDL_Vulkan_CreateSurface(window, m_instance, nullptr, &m_surface);
+            if(!result) {
+                throw std::runtime_error("Can't Create Window Surface!"); 
+            }
         }   
     }
 
     void Core::Destroy() {
+        SDL_DestroyWindow(window);
         DestroyVmaAllocator();
         DestroyDevice();
         DestroySurface();
@@ -379,15 +395,8 @@ namespace Ccino::RHI {
         }
     }
 
-    void Core::CreateSurface() {
-        // Surface 依赖窗口系统，随 SwapChain 一起补
-    }
-
     void Core::DestroySurface() {
-        if (m_surface != VK_NULL_HANDLE) {
-            vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-            m_surface = VK_NULL_HANDLE;
-        }
+        SDL_Vulkan_CreateSurface(window, m_instance, nullptr, &m_surface);
     }
 
     void Core::CreateVmaAllocator() {

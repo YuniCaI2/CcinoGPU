@@ -1,7 +1,5 @@
 #pragma once
-#include "RHI/DescriptorSlot.h"
 #include "RHI/RHIStruct.h"
-#include "RHI/Core.h"
 #include "RHI/Command.h"
 #include "RHI/TimelineSemaphore.h"
 #include "RHI/ComputePipeline.h"
@@ -12,10 +10,16 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
 
 
 namespace Ccino::RHI {
+
+    class Core;
+    class CommandContext;
+    class DescriptorSlot;
+    class Swapchain;
 
     struct BufferCreateInfo {
         uint32_t size = 0;
@@ -26,7 +30,7 @@ namespace Ccino::RHI {
     class Context {
     public:
         Context();
-        ~Context() = default;
+        ~Context();
 
         void Init(const RHISettings& settings);
         void Tick(); //每次更新，这必须要调用，这是推动Delete释放队列的根本,这个在 !!!!帧首调用 ,不过需要SwapChain Acquire 后调用
@@ -62,7 +66,7 @@ namespace Ccino::RHI {
         uint32_t GetBufferSize(RID rid) {return m_buffers.Get(rid)->size;}
         VkBuffer GetVkBuffer(RID rid) {return m_buffers.Get(rid)->buffer;}
 
-        Core& GetCore() { return m_core; }
+        Core& GetCore() { return *m_core; }
 
 
         //Semphore
@@ -75,6 +79,8 @@ namespace Ccino::RHI {
         bool IsGlobalTimelineSemaphoreAvailable(CommandQueueType queueType, uint64_t value); //使用value来判断是否可用
 
         //Texture
+        std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
+        void UnRegisterSwapchainImages(const std::vector<RID>& imageRIDs);
 
         //Command
         CommandContext::CommandBuffer& GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex = 0);
@@ -108,9 +114,7 @@ namespace Ccino::RHI {
         DescriptorSlotBinding* GetDescriptorSlotBinding(const RID& rid) {
             return m_descriptorSlots.Get(rid);
         }
-        void BindDescriptorSet(VkCommandBuffer commandBuffer) const {
-            m_descriptorSlot.BindDescriptorSet(commandBuffer);
-        }
+        void BindDescriptorSet(VkCommandBuffer commandBuffer) const;
 
 
     private:
@@ -118,7 +122,14 @@ namespace Ccino::RHI {
         uint32_t m_flightFrameCount = 0;
         uint32_t m_currentFrameIndex = 0;
 
-        struct VulkanBuffer {
+        struct VulkanResource {
+
+            // Transfer 队列 timeline 的目标值。0 表示没有未完成的 DMA 上传。
+            uint64_t isAvailable = 0;
+            RID uploadStaging{};
+        };
+
+        struct VulkanBuffer : VulkanResource {
             VkBuffer buffer = VK_NULL_HANDLE;
             VmaAllocation allocation = VK_NULL_HANDLE;
 
@@ -131,9 +142,16 @@ namespace Ccino::RHI {
             bool persistentlyMapped = false;
             uint64_t bda = 0; //GPU的地址
 
-            // Transfer 队列 timeline 的目标值。0 表示没有未完成的 DMA 上传。
-            uint64_t isAvailable = 0;
-            RID uploadStaging{};
+        };
+
+        struct VulkanTexture : VulkanResource {
+            VkImage image = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+
+            //MetaInfo
+            bool isSwapchain = false;
+            uint32_t width = 0;
+            uint32_t height = 0;
         };
 
         void DestroyResource(RID rid); 
@@ -143,14 +161,18 @@ namespace Ccino::RHI {
         TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
 
 
-        Core m_core;
-        CommandContext m_commandContext;
-        DescriptorSlot m_descriptorSlot;
+        //其实这里需要使用unique比较合适，然后前向声明
+        std::unique_ptr<Core> m_core;
+        std::unique_ptr<CommandContext> m_commandContext;
+        std::unique_ptr<DescriptorSlot> m_descriptorSlot;
+        std::unique_ptr<Swapchain> m_swapchain;
+
 
         TRIDArray<VulkanBuffer> m_buffers;
         TRIDArray<VkSemaphore> m_semaphores;
         TRIDArray<ComputePipeline> m_computePipelines;
         TRIDArray<DescriptorSlotBinding> m_descriptorSlots;
+        TRIDArray<VulkanTexture> m_textures;
 
         std::mutex m_deletionMutex; //保护m_bufferDeletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
         std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列

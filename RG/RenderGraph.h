@@ -2,12 +2,11 @@
 #include "Accessor.h"
 #include "AccessorEnums.h"
 #include "ShaderStruct/ShaderIR.h"
-#include "ComputePass.h"
 #include "Pass.h"
 #include "RGResource.h"
 #include "RHI/RHIStruct.h"
-#include "RG/ComputePass.h"
 #include "RG/Pass.h"
+#include "Core/ThreadPoo.h"
 #include "RefCounted.hpp"
 #include "ShaderStruct/ShaderCommon.h"
 #include <concepts>
@@ -129,7 +128,23 @@ namespace Ccino {
 
         //处理Texture依赖
         void BuildGraph();
-        void Run();
+        void Run(); //这里传入一个分配的池
+
+        //需要实现循环运行，这个和游戏渲染循环一致,并且注入一个lambda用来处理当前是否需要退出
+        template<typename Exit>
+        requires std::is_same_v<bool, std::invoke_result<std::remove_cvref_t<Exit>>>
+        void LoopRun(Exit&& exitFunc) {
+            if (exitFunc()) {
+                //退出循环
+                return;
+            }
+
+            //这里的LoopRun就是为了图像服务的，不是纯计算
+            auto commandBuffer = m_context->GetCommandBuffer(CommandQueueType::GRAPHICS, m_context->GetCurrentFrameIndex());
+            m_context->StartRecording(commandBuffer);
+            m_context->EndRecording(commandBuffer);
+            
+        } 
 
         RID CreateTransientBuffer(typename Buffer::CreateArgs createArgs);
         RID CreateExternalBuffer(const Ref<Buffer>& buffer);

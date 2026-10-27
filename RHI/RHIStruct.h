@@ -16,6 +16,9 @@ struct RHISettings {
     bool bUseSwapChain = false;
     //TODO:增加别的特性
     uint32_t flightFrameCount = 1;
+
+    uint32_t windowHeight = 0;
+    uint32_t windowWidth = 0;
 };
 
 struct RID {

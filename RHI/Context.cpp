@@ -2,11 +2,13 @@
 #include "RHI/ComputePipeline.h"
 #include "RHI/Core.h"
 #include "RHI/DescriptorSlot.h"
+#include "RHI/Swapchain.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
@@ -21,21 +23,26 @@ namespace Ccino::RHI {
         }
     }
 
-    Context::Context() = default;
+    Context::Context()
+        : m_core(std::make_unique<Core>())
+        , m_commandContext(std::make_unique<CommandContext>())
+        , m_descriptorSlot(std::make_unique<DescriptorSlot>()) {}
+
+    Context::~Context() = default;
 
     void Context::Init(const RHISettings& settings) {
-        m_core.Init(settings);
-        m_commandContext.Init(m_core.GetVkDevice(), {
-            m_core.GetGraphicsQueueFamilyIndex(),
-            m_core.GetComputeQueueFamilyIndex(),
-            m_core.GetTransferQueueFamilyIndex()
+        m_core->Init(settings);
+        m_commandContext->Init(m_core->GetVkDevice(), {
+            m_core->GetGraphicsQueueFamilyIndex(),
+            m_core->GetComputeQueueFamilyIndex(),
+            m_core->GetTransferQueueFamilyIndex()
         });
         CreateGlobalTimelineSemaphore();
-        DescriptorSlot::InitGlobal(m_core); //全局唯一的DescriptorSetLayout / PipelineLayout / DescriptorPool
+        DescriptorSlot::InitGlobal(*m_core); //全局唯一的DescriptorSetLayout / PipelineLayout / DescriptorPool
         m_flightFrameCount = settings.flightFrameCount; //飞行帧数用来处理资源和同步的分配
 
         m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
-        m_descriptorSlot.Init(this);        
+        m_descriptorSlot->Init(this);        
     }
 
     void Context::Tick() {
@@ -51,7 +58,7 @@ namespace Ccino::RHI {
     }
 
     void Context::Destroy() {
-        VkDevice device = m_core.GetVkDevice();
+        VkDevice device = m_core->GetVkDevice();
         if (device != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device);
             m_computePipelines.ForEach([&](ComputePipeline& pipeline) {
@@ -60,16 +67,16 @@ namespace Ccino::RHI {
             m_descriptorSlots.ForEach([&](DescriptorSlotBinding& slot) {
                 slot.Release();
             });
-            m_descriptorSlot.Destroy();
+            m_descriptorSlot->Destroy();
         }
 
         m_buffers.ForEach([&](VulkanBuffer& buffer) {
             if (buffer.mappedPtr != nullptr && !buffer.persistentlyMapped) {
-                vmaUnmapMemory(m_core.GetVmaAllocator(), buffer.allocation);
+                vmaUnmapMemory(m_core->GetVmaAllocator(), buffer.allocation);
                 buffer.mappedPtr = nullptr;
             }
             if (buffer.buffer != VK_NULL_HANDLE) {
-                vmaDestroyBuffer(m_core.GetVmaAllocator(), buffer.buffer, buffer.allocation);
+                vmaDestroyBuffer(m_core->GetVmaAllocator(), buffer.buffer, buffer.allocation);
                 buffer.buffer = VK_NULL_HANDLE;
                 buffer.allocation = VK_NULL_HANDLE;
             }
@@ -87,8 +94,8 @@ namespace Ccino::RHI {
         m_bufferDeletionQueue.clear();
         DescriptorSlot::DestroyGlobal();
         DestroyGlobalTimelineSemaphore();
-        m_commandContext.Destroy();
-        m_core.Destroy();
+        m_commandContext->Destroy();
+        m_core->Destroy();
     }
 
     void Context::DeleteResource(RID rid) {
@@ -126,9 +133,9 @@ namespace Ccino::RHI {
         bufferCreateInfo.pNext = &bufferUsageCreateInfo;
 
         uint32_t queueFamilies[] = {
-            m_core.GetGraphicsQueueFamilyIndex(),
-            m_core.GetComputeQueueFamilyIndex(),
-            m_core.GetTransferQueueFamilyIndex()
+            m_core->GetGraphicsQueueFamilyIndex(),
+            m_core->GetComputeQueueFamilyIndex(),
+            m_core->GetTransferQueueFamilyIndex()
         };
         std::vector<uint32_t> uniqueQueueFamilies;
         for (uint32_t family : queueFamilies) {
@@ -158,7 +165,7 @@ namespace Ccino::RHI {
         VulkanBuffer buffer{};
         VmaAllocationInfo allocInfo{};
         VULKAN_CHECK(vmaCreateBuffer(
-            m_core.GetVmaAllocator(),
+            m_core->GetVmaAllocator(),
             &bufferCreateInfo,
             &allocCreateInfo,
             &buffer.buffer,
@@ -176,7 +183,7 @@ namespace Ccino::RHI {
         VkBufferDeviceAddressInfo addressInfo{};
         addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
         addressInfo.buffer = buffer.buffer;
-        buffer.bda = vkGetBufferDeviceAddress(m_core.GetVkDevice(), &addressInfo);
+        buffer.bda = vkGetBufferDeviceAddress(m_core->GetVkDevice(), &addressInfo);
 
         return m_buffers.Add(std::move(buffer));
     }
@@ -260,11 +267,11 @@ namespace Ccino::RHI {
         const uint32_t size = source->size;
 
         //TODO: 增加更细粒度的timeline semaphore的设置，当前是等待整个管线的任务，后续增加Buffer粒度的可用性的标注
-        if (TimelineSemaphore* computeTimeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::COMPUTE));
+        if (TimelineSemaphore* computeTimeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::COMPUTE));
             computeTimeline != nullptr) {
             computeTimeline->Wait(computeTimeline->ReadValue());
         }
-        if (TimelineSemaphore* graphicsTimeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::GRAPHICS));
+        if (TimelineSemaphore* graphicsTimeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::GRAPHICS));
             graphicsTimeline != nullptr) {
             graphicsTimeline->Wait(graphicsTimeline->ReadValue());
         }
@@ -377,11 +384,11 @@ namespace Ccino::RHI {
         }
         if (buffer->mappedPtr == nullptr) {
             void* mapped = nullptr;
-            VULKAN_CHECK(vmaMapMemory(m_core.GetVmaAllocator(), buffer->allocation, &mapped));
+            VULKAN_CHECK(vmaMapMemory(m_core->GetVmaAllocator(), buffer->allocation, &mapped));
             buffer->mappedPtr = mapped;
         }
         if (!IsHostWriteBuffer(buffer->usage)) {
-            VULKAN_CHECK(vmaInvalidateAllocation(m_core.GetVmaAllocator(), buffer->allocation, 0, buffer->size));
+            VULKAN_CHECK(vmaInvalidateAllocation(m_core->GetVmaAllocator(), buffer->allocation, 0, buffer->size));
         }
         return buffer->mappedPtr;
     }
@@ -394,10 +401,10 @@ namespace Ccino::RHI {
         }
 
         if (IsHostWriteBuffer(buffer->usage)) {
-            VULKAN_CHECK(vmaFlushAllocation(m_core.GetVmaAllocator(), buffer->allocation, 0, buffer->size));
+            VULKAN_CHECK(vmaFlushAllocation(m_core->GetVmaAllocator(), buffer->allocation, 0, buffer->size));
         }
         if (!buffer->persistentlyMapped && buffer->mappedPtr != nullptr) {
-            vmaUnmapMemory(m_core.GetVmaAllocator(), buffer->allocation);
+            vmaUnmapMemory(m_core->GetVmaAllocator(), buffer->allocation);
             buffer->mappedPtr = nullptr;
         }
     }
@@ -408,7 +415,7 @@ namespace Ccino::RHI {
             return;
         }
 
-        if (TimelineSemaphore* transferTimeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::TRANSFER));
+        if (TimelineSemaphore* transferTimeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER));
             transferTimeline != nullptr) {
             if (buffer->isAvailable < transferTimeline->ReadValue()) {
                 return;
@@ -435,18 +442,18 @@ namespace Ccino::RHI {
         }
 
         if (buffer->isAvailable != 0) {
-            if (TimelineSemaphore* timeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::TRANSFER))) {
+            if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER))) {
                 timeline->Wait(buffer->isAvailable);
             }
         }
         ReleaseUploadStaging(*buffer);
 
         if (buffer->mappedPtr != nullptr && !buffer->persistentlyMapped) {
-            vmaUnmapMemory(m_core.GetVmaAllocator(), buffer->allocation);
+            vmaUnmapMemory(m_core->GetVmaAllocator(), buffer->allocation);
             buffer->mappedPtr = nullptr;
         }
         if (buffer->buffer != VK_NULL_HANDLE) {
-            vmaDestroyBuffer(m_core.GetVmaAllocator(), buffer->buffer, buffer->allocation);
+            vmaDestroyBuffer(m_core->GetVmaAllocator(), buffer->buffer, buffer->allocation);
             buffer->buffer = VK_NULL_HANDLE;
             buffer->allocation = VK_NULL_HANDLE;
         }
@@ -457,7 +464,7 @@ namespace Ccino::RHI {
         VkSemaphoreCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         VkSemaphore semaphore = VK_NULL_HANDLE;
-        VULKAN_CHECK(vkCreateSemaphore(m_core.GetVkDevice(), &createInfo, nullptr, &semaphore));
+        VULKAN_CHECK(vkCreateSemaphore(m_core->GetVkDevice(), &createInfo, nullptr, &semaphore));
         return m_semaphores.Add(std::move(semaphore));
     }
 
@@ -466,7 +473,7 @@ namespace Ccino::RHI {
         if (semaphore == nullptr || *semaphore == VK_NULL_HANDLE) {
             return;
         }
-        vkDestroySemaphore(m_core.GetVkDevice(), *semaphore, nullptr);
+        vkDestroySemaphore(m_core->GetVkDevice(), *semaphore, nullptr);
         *semaphore = VK_NULL_HANDLE;
         m_semaphores.Remove(rid);
     }
@@ -474,7 +481,7 @@ namespace Ccino::RHI {
     void Context::CreateGlobalTimelineSemaphore() {
         DestroyGlobalTimelineSemaphore();
 
-        const uint32_t familyCount = m_core.GetQueueFamilyCount();
+        const uint32_t familyCount = m_core->GetQueueFamilyCount();
         m_timelines.resize(familyCount);
 
         auto createForFamily = [&](uint32_t family) {
@@ -487,12 +494,12 @@ namespace Ccino::RHI {
             if (m_timelines[family]->GetSemaphore() != VK_NULL_HANDLE) {
                 return;
             }
-            m_timelines[family]->Create(m_core.GetVkDevice());
+            m_timelines[family]->Create(m_core->GetVkDevice());
         };
 
-        createForFamily(m_core.GetGraphicsQueueFamilyIndex());
-        createForFamily(m_core.GetComputeQueueFamilyIndex());
-        createForFamily(m_core.GetTransferQueueFamilyIndex());
+        createForFamily(m_core->GetGraphicsQueueFamilyIndex());
+        createForFamily(m_core->GetComputeQueueFamilyIndex());
+        createForFamily(m_core->GetTransferQueueFamilyIndex());
     }
 
     void Context::DestroyGlobalTimelineSemaphore() {
@@ -505,7 +512,7 @@ namespace Ccino::RHI {
     }
 
     bool Context::IsGlobalTimelineSemaphoreAvailable(CommandQueueType queueType, uint64_t value) {
-        TimelineSemaphore* timeline = GetTimeline(m_core.GetQueueFamilyIndex(queueType));
+        TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(queueType));
         if (timeline == nullptr) {
             return value == 0;
         }
@@ -519,9 +526,29 @@ namespace Ccino::RHI {
         }
         return m_timelines[queueFamilyIndex].get();
     }
+    
+    std::vector<RID> Context::RegisterSwapchainImages(const std::vector<VkImage>& images) {
+        //创建Textures
+        std::vector<RID> results;
+        for (const auto& image : images) {
+            VulkanTexture texture = {};
+            texture.image = image;
+            //Width 和 Height 不用管理，直接取swapchain中获取
+            texture.isAvailable = true;
+            texture.isSwapchain = true;
+            
+            results.push_back(m_textures.Add(std::move(texture)));
+        }
+        return results;
+    }
+
+    void Context::UnRegisterSwapchainImages(const std::vector<RID>& imageRIDs) {
+        for (const auto& rid : imageRIDs)
+            m_textures.Remove(rid);
+    }
 
     CommandContext::CommandBuffer& Context::GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex) {
-        return m_commandContext.GetCommandBuffer(m_core.GetQueueFamilyIndex(queueType), frameIndex);
+        return m_commandContext->GetCommandBuffer(m_core->GetQueueFamilyIndex(queueType), frameIndex);
     }
 
     void Context::StartRecording(CommandContext::CommandBuffer& commandBuffer) {
@@ -568,7 +595,7 @@ namespace Ccino::RHI {
             return 0;
         }
 
-        const uint32_t queueFamilyIndex = m_core.GetQueueFamilyIndex(queueType);
+        const uint32_t queueFamilyIndex = m_core->GetQueueFamilyIndex(queueType);
         std::vector<VkCommandBufferSubmitInfo> commandBufferInfos;
         commandBufferInfos.reserve(commandBuffers.size());
         for (const CommandContext::CommandBuffer& commandBuffer : commandBuffers) {
@@ -634,7 +661,7 @@ namespace Ccino::RHI {
 
         VkSemaphore transferSemaphore = VK_NULL_HANDLE;
         uint64_t transferValue = 0;
-        if (TimelineSemaphore* transferTimeline = GetTimeline(m_core.GetQueueFamilyIndex(CommandQueueType::TRANSFER));
+        if (TimelineSemaphore* transferTimeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER));
             transferTimeline != nullptr && transferTimeline != timeline) {
             transferSemaphore = transferTimeline->GetSemaphore();
             transferValue = transferTimeline->ReadValue();
@@ -669,14 +696,14 @@ namespace Ccino::RHI {
         submitInfo.pCommandBufferInfos = commandBufferInfos.data();
         submitInfo.signalSemaphoreInfoCount = static_cast<uint32_t>(signals.size());
         submitInfo.pSignalSemaphoreInfos = signals.data();
-        VULKAN_CHECK(vkQueueSubmit2(m_core.GetVkQueue(queueType), 1, &submitInfo, VK_NULL_HANDLE));
+        VULKAN_CHECK(vkQueueSubmit2(m_core->GetVkQueue(queueType), 1, &submitInfo, VK_NULL_HANDLE));
         return signal.current;
     }
 
 
     RID Context::CreateComputePipeline(const std::string& name, VkShaderModule shaderModule) {
         ComputePipeline pipeline;
-        pipeline.Init(m_core.GetVkDevice(), name, shaderModule, DescriptorSlot::GetGlobalPipelineLayout());
+        pipeline.Init(m_core->GetVkDevice(), name, shaderModule, DescriptorSlot::GetGlobalPipelineLayout());
         return m_computePipelines.Add(std::move(pipeline));
     }
 
@@ -688,10 +715,10 @@ namespace Ccino::RHI {
         createInfo.codeSize = size;
         createInfo.pCode = reinterpret_cast<uint32_t*>(shaderCode);
 
-        VULKAN_CHECK(vkCreateShaderModule(m_core.GetVkDevice(), &createInfo, nullptr, &shaderModule));
-        pipeline.Init(m_core.GetVkDevice(), name, shaderModule, DescriptorSlot::GetGlobalPipelineLayout());
+        VULKAN_CHECK(vkCreateShaderModule(m_core->GetVkDevice(), &createInfo, nullptr, &shaderModule));
+        pipeline.Init(m_core->GetVkDevice(), name, shaderModule, DescriptorSlot::GetGlobalPipelineLayout());
         auto rid = m_computePipelines.Add(std::move(pipeline));
-        vkDestroyShaderModule(m_core.GetVkDevice(), shaderModule, nullptr);
+        vkDestroyShaderModule(m_core->GetVkDevice(), shaderModule, nullptr);
         return rid;
     }
 
@@ -708,8 +735,12 @@ namespace Ccino::RHI {
         return pipeline != nullptr ? pipeline->GetVkPipeline() : VK_NULL_HANDLE;
     }
 
+    void Context::BindDescriptorSet(VkCommandBuffer commandBuffer) const {
+        m_descriptorSlot->BindDescriptorSet(commandBuffer);
+    }
+
     RID Context::CreateDescriptorSlotBinding(const DescriptorSlotLayout& descriptorSlotLayout) {
-        auto descriptorSlotBinding = m_descriptorSlot.CreateSlotBinding(descriptorSlotLayout);
+        auto descriptorSlotBinding = m_descriptorSlot->CreateSlotBinding(descriptorSlotLayout);
         return m_descriptorSlots.Add(std::move(descriptorSlotBinding));
     }
 

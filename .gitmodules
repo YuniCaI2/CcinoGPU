@@ -20,3 +20,6 @@
 [submodule "ThirdPart/glslang"]
 	path = ThirdPart/glslang
 	url = https://github.com/KhronosGroup/glslang.git
+[submodule "ThirdPart/SDL"]
+	path = ThirdPart/SDL
+	url = https://github.com/libsdl-org/SDL.git

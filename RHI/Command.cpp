@@ -1,5 +1,6 @@
 #include "Command.h"
 #include "Context.h"
+#include "Core.h"
 #include <algorithm>
 #include <stdexcept>
 
