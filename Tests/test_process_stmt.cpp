@@ -951,6 +951,7 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
     const std::string expectedGlsl =
         "#version 460\n"
         "#extension GL_EXT_buffer_reference2 : require\n"
+        "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
         "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"
         "layout(buffer_reference, std430) buffer Particle {\n"
         "    vec3 pos;\n"
@@ -1066,7 +1067,7 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
     const auto shaders = RunProcessComputeShaderOnCode(
         kShaderTestPreamble + extraTypesPreamble + R"(
             void TestEntry() {
-                uint64_t bda = 0;
+                uint64_t u64 = 0;
                 double d = 1.0;
                 float f = 2.0f;
                 int i = -3;
@@ -1092,7 +1093,7 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
                 Ccino::DMat2 dm2;
                 Ccino::DMat4x3 dm4x3;
 
-                auto cs = [bda, d, f, i, u, b, v2, v3, v4, iv2, iv4, uv2, uv4, bv2, bv4, dv2, dv3, dv4, m2, m3, m4, m2x3, m3x4, dm2, dm4x3]() {
+                auto cs = [u64, d, f, i, u, b, v2, v3, v4, iv2, iv4, uv2, uv4, bv2, bv4, dv2, dv3, dv4, m2, m3, m4, m2x3, m3x4, dm2, dm4x3]() {
                     int dummy = i;
                 };
             }
@@ -1104,7 +1105,7 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
     const Ccino::ShaderIR& ir = shaders[0];
 
     const Ccino::DescriptorSlotLayout expectedLayout = {
-        {"bda",   Ccino::UniformDataType::Buffer},
+        {"u64",   Ccino::UniformDataType::UInt64},
         {"d",     Ccino::UniformDataType::Double},
         {"f",     Ccino::UniformDataType::Float},
         {"i",     Ccino::UniformDataType::Int},
@@ -1136,14 +1137,14 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
 
     // 验证前 6 个基础标量字段在 C++ Lambda 结构体中的精确字节偏移
     struct ExpectedScalarCapturePrefix {
-        uint64_t bda;
+        uint64_t u64;
         double d;
         float f;
         int i;
         uint32_t u;
         bool b;
     };
-    EXPECT_EQ(ir.uniformDataBindings[0].offset, offsetof(ExpectedScalarCapturePrefix, bda));
+    EXPECT_EQ(ir.uniformDataBindings[0].offset, offsetof(ExpectedScalarCapturePrefix, u64));
     EXPECT_EQ(ir.uniformDataBindings[1].offset, offsetof(ExpectedScalarCapturePrefix, d));
     EXPECT_EQ(ir.uniformDataBindings[2].offset, offsetof(ExpectedScalarCapturePrefix, f));
     EXPECT_EQ(ir.uniformDataBindings[3].offset, offsetof(ExpectedScalarCapturePrefix, i));

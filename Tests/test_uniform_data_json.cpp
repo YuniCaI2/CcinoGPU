@@ -28,6 +28,7 @@ namespace {
         {UniformDataType::Bool,   "Bool"},
         {UniformDataType::Int,    "Int"},
         {UniformDataType::UInt,   "UInt"},
+        {UniformDataType::UInt64, "UInt64"},
         {UniformDataType::Float,  "Float"},
         {UniformDataType::Double, "Double"},
 

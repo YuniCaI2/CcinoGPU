@@ -351,7 +351,8 @@ namespace Ccino
         shaderIR.passName = passName;
         shaderIR.uniformDataBindings = GetUniformDataBindings(lambda, context);
         shaderIR.glsl += "#version 460\n"
-                "#extension GL_EXT_buffer_reference2 : require\n";
+                "#extension GL_EXT_buffer_reference2 : require\n"
+                "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
         std::string localSizeArgs;
         auto appendLocalSize = [&](const char* name, uint32_t size) {
             if (!size) return;
@@ -445,6 +446,8 @@ namespace Ccino
                 case clang::BuiltinType::Bool: return "bool";
                 case clang::BuiltinType::Int: return "int";
                 case clang::BuiltinType::UInt: return "uint";  // uint32_t 和 unsigned int 在这都会命中
+                case clang::BuiltinType::ULong: return "uint";  // Windows 上unsigned long 是32位
+                case clang::BuiltinType::ULongLong: return "uint64_t";  // 需要GL_EXT_shader_explicit_arithmetic_types_int64
                 case clang::BuiltinType::Float: return "float";
                 case clang::BuiltinType::Double: return "double";
                 default: break;
@@ -1026,8 +1029,8 @@ namespace Ccino
                 case clang::BuiltinType::Bool: return UniformDataType::Bool;
                 case clang::BuiltinType::Int: return UniformDataType::Int;
                 case clang::BuiltinType::UInt: return UniformDataType::UInt;
-                case clang::BuiltinType::ULong:
-                case clang::BuiltinType::ULongLong: return UniformDataType::Buffer;  // uint64_t (BDA)
+                case clang::BuiltinType::ULong: return UniformDataType::UInt;  // Windows 上unsigned long 是32位
+                case clang::BuiltinType::ULongLong: return UniformDataType::UInt64;  // uint64_t 只是普通整数参数, Buffer 语义来自下面的Accessor
                 case clang::BuiltinType::Float: return UniformDataType::Float;
                 case clang::BuiltinType::Double: return UniformDataType::Double;
                 default: break;

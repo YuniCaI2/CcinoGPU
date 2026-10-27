@@ -22,6 +22,7 @@ namespace Ccino {
         Bool, //GLSL bool 占4字节, BindParam 传入bool 时自动展开成uint32_t
         Int, //int32_t
         UInt, //uint32_t
+        UInt64, //uint64_t, 和Buffer 的BDA 存储同为8字节, 但只是普通整数参数
         Float, //float
         Double, //double
 
@@ -67,12 +68,11 @@ namespace Ccino {
     // X(EnumName, CppType, Std140Info)
     // 1. 与C++ 类型一一对应的Uniform 类型 (支持 CppType <-> UniformDataType 双向映射)
     #define CCINO_UNIFORM_BIDIR_TYPES(X) \
-        /* Resource (BDA) */ \
-        X(Buffer,   uint64_t,     Std140::Scalar(8)) \
         /* Param 标量 */ \
         X(Bool,     bool,         Std140::Scalar(4)) \
         X(Int,      int32_t,      Std140::Scalar(4)) \
         X(UInt,     uint32_t,     Std140::Scalar(4)) \
+        X(UInt64,   uint64_t,     Std140::Scalar(8)) \
         X(Float,    float,        Std140::Scalar(4)) \
         X(Double,   double,       Std140::Scalar(8)) \
         /* Param 向量 (对应 Core/CcinoType.h) */ \
@@ -112,15 +112,17 @@ namespace Ccino {
         X(DMat4x2,  glm::dmat4x2, Std140::Matrix(4, 2, 8)) \
         X(DMat4x3,  glm::dmat4x3, Std140::Matrix(4, 3, 8))
 
-    // 2. 全局DescriptorSet 中的uint32_t 数组索引资源 (单向映射: UniformDataType -> uint32_t)
-    #define CCINO_UNIFORM_INDEX_TYPES(X) \
+    // 2. 资源类型 (单向映射: UniformDataType -> Uniform 中的表示类型, 不能由C++ 类型反推)
+    // Buffer 存的是BDA, 和普通uint64_t 参数同为8字节, 但语义来自Accessor 而不是整数本身
+    #define CCINO_UNIFORM_REPR_TYPES(X) \
+        X(Buffer,       uint64_t, Std140::Scalar(8)) \
         X(SampledImage, uint32_t, Std140::Scalar(4)) \
         X(StorageImage, uint32_t, Std140::Scalar(4)) \
         X(Sampler,      uint32_t, Std140::Scalar(4))
 
     #define CCINO_UNIFORM_ALL_TYPES(X) \
         CCINO_UNIFORM_BIDIR_TYPES(X) \
-        CCINO_UNIFORM_INDEX_TYPES(X)
+        CCINO_UNIFORM_REPR_TYPES(X)
 
     #define CCINO_DETAIL_JSON_PAIR(EnumName, CppType, Info) {UniformDataType::EnumName, #EnumName},
     NLOHMANN_JSON_SERIALIZE_ENUM_STRICT(UniformDataType, {

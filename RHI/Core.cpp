@@ -36,6 +36,7 @@ namespace Ccino::RHI {
         //配置Vulkan Device Features
         VkPhysicalDeviceFeatures deviceFeatures{};
         deviceFeatures.samplerAnisotropy = VK_TRUE;
+        deviceFeatures.shaderInt64 = VK_TRUE;  // Shader 里使用uint64_t 参数 (GL_EXT_shader_explicit_arithmetic_types_int64)
 
         VkPhysicalDeviceVulkan11Features features11{};
         features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
