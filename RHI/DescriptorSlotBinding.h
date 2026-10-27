@@ -40,6 +40,8 @@ namespace Ccino::RHI {
         DescriptorSlotBinding& BindBuffer(const std::string& name, RID rid); //写入Buffer 的BDA
         DescriptorSlotBinding& BindSampler(const std::string& name, SamplerType type); //写入Sampler 在全局DescriptorSet 中的数组索引
         //TODO: BindTexture, 等RHI 支持Texture 创建后实现, 写入SampledImage / StorageImage 的数组索引
+        DescriptorSlotBinding& BindTexture2DUAV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo); //StorageTexture StorageImage
+        DescriptorSlotBinding& BindTexture2DSRV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo); //SampledTexture
 
         //常量绑定, 按layout 中声明的类型检查, 矩阵按std140 逐列写入
         template<typename T>
@@ -83,6 +85,13 @@ namespace Ccino::RHI {
 
         const UniformOffset& FindField(const std::string& name) const;
         void MarkDirty();
+        DescriptorSlotBinding& BindTexture2D(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo, bool storage);
+
+        struct BoundTexture {
+            bool storage = false;
+            RID imageView{};
+        };
+        std::unordered_map<std::string, BoundTexture> m_boundTextures; //字段名 -> 已绑定的ImageView, 重绑/释放时把旧的延迟回收
 
         bool isRelease = false;
         DescriptorSlot* m_slotContext = nullptr; //指向DescriptorSlot的指针 相当于全局的上下文

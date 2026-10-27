@@ -145,6 +145,16 @@ namespace Ccino::RHI {
             }
         });
 
+        //View 引用着Image, 必须在Image 之前销毁
+        if (device != VK_NULL_HANDLE) {
+            m_imageViews.ForEach([&](VkImageView& imageView) {
+                if (imageView != VK_NULL_HANDLE) {
+                    vkDestroyImageView(device, imageView, nullptr);
+                    imageView = VK_NULL_HANDLE;
+                }
+            });
+        }
+
         m_textures.ForEach([&](VulkanTexture& texture) {
             if (texture.isSwapchain || texture.image == VK_NULL_HANDLE) {
                 return;
@@ -704,6 +714,24 @@ namespace Ccino::RHI {
         m_textures.Remove(rid);
     }
 
+    RID Context::CreateImageView(const VkImageViewCreateInfo& createInfo) {
+        VkImageView imageView = VK_NULL_HANDLE;
+        VULKAN_CHECK(vkCreateImageView(m_core->GetVkDevice(), &createInfo, nullptr, &imageView));
+        return m_imageViews.Add(imageView);
+    }
+
+    void Context::DestroyImageView(RID rid) {
+        VkImageView* imageView = m_imageViews.Get(rid);
+        if (imageView == nullptr) {
+            return;
+        }
+        if (*imageView != VK_NULL_HANDLE) {
+            vkDestroyImageView(m_core->GetVkDevice(), *imageView, nullptr);
+            *imageView = VK_NULL_HANDLE;
+        }
+        m_imageViews.Remove(rid);
+    }
+
     void Context::TransitionTextureLayout(RID rid, VkImageLayout newLayout) {
         VulkanTexture* texture = m_textures.Get(rid);
         if (texture == nullptr || texture->image == VK_NULL_HANDLE) {
@@ -823,6 +851,8 @@ namespace Ccino::RHI {
             DestroyBuffer(rid);
         } else if (rid.type == RID::GetIndex<VulkanTexture>()) {
             DestroyTexture(rid);
+        } else if (rid.type == RID::GetIndex<VkImageView>()) {
+            DestroyImageView(rid);
         } else if (rid.type == RID::GetIndex<VkSemaphore>()) {
             DestroySemaphore(rid);
         } else if (rid.type == RID::GetIndex<ComputePipeline>()) {

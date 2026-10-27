@@ -110,7 +110,8 @@ namespace Ccino::RHI {
           m_uniformBufferSize(std::exchange(other.m_uniformBufferSize, 0)),
           m_uniformBuffers(std::move(other.m_uniformBuffers)),
           m_uniformBufferAddresses(std::move(other.m_uniformBufferAddresses)),
-          m_frameDirty(std::move(other.m_frameDirty)) {
+          m_frameDirty(std::move(other.m_frameDirty)),
+          m_boundTextures(std::move(other.m_boundTextures)) {
         //被移动的对象m_slotContext 为空, 析构时什么都不释放
     }
 
@@ -125,6 +126,7 @@ namespace Ccino::RHI {
             m_uniformBuffers = std::move(other.m_uniformBuffers);
             m_uniformBufferAddresses = std::move(other.m_uniformBufferAddresses);
             m_frameDirty = std::move(other.m_frameDirty);
+            m_boundTextures = std::move(other.m_boundTextures);
         }
         return *this;
     }
@@ -139,6 +141,12 @@ namespace Ccino::RHI {
         if (m_slotContext == nullptr) {
             return;
         }
+
+        //Texture 的View 可能还在被GPU 通过描述符索引访问, 交给DescriptorSlot 按飞行帧延迟回收
+        for (auto& [name, bound] : m_boundTextures) {
+            m_slotContext->DeferReleaseTexture(bound.storage, bound.imageView);
+        }
+        m_boundTextures.clear();
 
         //UniformBuffer 可能还在被GPU 读取, 交给Context 的延迟释放队列, 等这一帧的飞行帧回来再销毁
         for (const RID rid : m_uniformBuffers) {
@@ -214,6 +222,44 @@ namespace Ccino::RHI {
             throw std::runtime_error("Field is not a sampler in descriptor slot layout: " + name);
         }
         Std140::WriteParam(m_uniformData.data() + field.offset, m_slotContext->GetSamplerIndex(type));
+        MarkDirty();
+        return *this;
+    }
+
+    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2DUAV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo) {
+        return BindTexture2D(name, rid, viewCreateInfo, true);
+    }
+
+    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2DSRV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo) {
+        return BindTexture2D(name, rid, viewCreateInfo, false);
+    }
+
+    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2D(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo, bool storage) {
+        const UniformOffset& field = FindField(name);
+        const UniformDataType expected = storage ? UniformDataType::StorageImage : UniformDataType::SampledImage;
+        if (field.uniformDataType != expected) {
+            throw std::runtime_error(std::string("Field is not a ") + (storage ? "storage" : "sampled") +
+                " image in descriptor slot layout: " + name);
+        }
+
+        viewCreateInfo.image = m_context->GetVkImage(rid);
+        const RID imageView = m_context->CreateImageView(viewCreateInfo);
+
+        uint32_t index = 0;
+        try {
+            index = m_slotContext->WriteTextureDescriptor(storage, imageView);
+        } catch (...) {
+            m_context->DestroyImageView(imageView); //还没被GPU 用过, 可以直接销毁
+            throw;
+        }
+
+        //重绑同一个字段时, 旧View 可能还在被飞行中的命令通过旧索引访问, 交给DescriptorSlot 延迟回收
+        if (auto it = m_boundTextures.find(name); it != m_boundTextures.end()) {
+            m_slotContext->DeferReleaseTexture(it->second.storage, it->second.imageView);
+        }
+        m_boundTextures[name] = BoundTexture{storage, imageView};
+
+        Std140::WriteParam(m_uniformData.data() + field.offset, index);
         MarkDirty();
         return *this;
     }
@@ -371,18 +417,45 @@ namespace Ccino::RHI {
             VULKAN_CHECK(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_descriptorSet));
         }
 
+        //初始化延迟释放桶
+        m_releaseSRVBucket.resize(m_context->GetFlightFrameCount());
+        m_releaseUAVBucket.resize(m_context->GetFlightFrameCount());
+
         WriteAllSampler();
     }
 
     void DescriptorSlot::Update() {
-        //Buffer 走BDA, UniformBuffer 由Context 按飞行帧延迟释放, 目前这里没有需要回收的东西
-        //TODO: Texture 实现后, 在这里按飞行帧回收SampledImage / StorageImage 数组中的索引
+        //每帧开始、等待这一帧的fence 之后调用: 回收当前飞行帧桶里的Texture View 并腾出索引
+        if (m_context == nullptr) {
+            return;
+        }
+        const uint32_t frameIndex = m_context->GetCurrentFrameIndex();
+        RecycleTextureBucket(false, frameIndex);
+        RecycleTextureBucket(true, frameIndex);
     }
 
     void DescriptorSlot::Destroy() {
         if (m_liveBindingCount.load(std::memory_order_relaxed) != 0) {
             throw std::runtime_error("DescriptorSlot destroyed while bindings are still alive");
         }
+
+        //Binding 释放时View 进了回收桶、还没真正销毁, DescriptorSet 销毁前一起交给Context 释放
+        if (m_context != nullptr) {
+            for (const RID imageView : m_textureSRVArray) {
+                if (imageView) {
+                    m_context->DeleteResource(imageView);
+                }
+            }
+            for (const RID imageView : m_textureUAVArray) {
+                if (imageView) {
+                    m_context->DeleteResource(imageView);
+                }
+            }
+        }
+        m_textureSRVArray.clear();
+        m_textureUAVArray.clear();
+        m_releaseSRVBucket.clear();
+        m_releaseUAVBucket.clear();
 
         //全局DescriptorPool 已经销毁时, DescriptorSet 已经跟着释放了
         if (m_descriptorSet != VK_NULL_HANDLE && m_globalDescriptorPool != VK_NULL_HANDLE) {
@@ -429,5 +502,78 @@ namespace Ccino::RHI {
         write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         write.pImageInfo = imageInfos.data();
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    }
+
+    uint32_t DescriptorSlot::WriteTextureDescriptor(bool storage, RID imageView) {
+        std::vector<RID>& array = storage ? m_textureUAVArray : m_textureSRVArray;
+        const uint32_t maxCount = storage ? DESCRIPTOR_MAX_STORAGE_IMAGE_COUNT : DESCRIPTOR_MAX_SAMPLED_IMAGE_COUNT;
+
+        //优先复用回收腾出的空位, 没有空位再往后追加
+        uint32_t index = UINT32_MAX;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(array.size()); i++) {
+            if (!array[i]) {
+                index = i;
+                break;
+            }
+        }
+        if (index == UINT32_MAX) {
+            if (array.size() >= maxCount) {
+                throw std::runtime_error("DescriptorSlot texture descriptor array is full");
+            }
+            index = static_cast<uint32_t>(array.size());
+            array.push_back(RID::Invalid());
+        }
+
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageView = m_context->GetVkImageView(imageView);
+        imageInfo.imageLayout = storage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = m_descriptorSet;
+        write.dstBinding = storage ? DESCRIPTOR_BINDING_STORAGE_IMAGE : DESCRIPTOR_BINDING_SAMPLED_IMAGE;
+        write.dstArrayElement = index;
+        write.descriptorCount = 1;
+        write.descriptorType = storage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+
+        array[index] = imageView;
+        return index;
+    }
+
+    void DescriptorSlot::DeferReleaseTexture(bool storage, RID imageView) {
+        if (!imageView || m_context == nullptr) {
+            return;
+        }
+        std::vector<std::vector<RID>>& buckets = storage ? m_releaseUAVBucket : m_releaseSRVBucket;
+        if (buckets.empty()) {
+            m_context->DeleteResource(imageView);
+            return;
+        }
+        buckets[m_context->GetCurrentFrameIndex()].push_back(imageView);
+    }
+
+    void DescriptorSlot::RecycleTextureBucket(bool storage, uint32_t frameIndex) {
+        std::vector<std::vector<RID>>& buckets = storage ? m_releaseUAVBucket : m_releaseSRVBucket;
+        if (frameIndex >= buckets.size()) {
+            return;
+        }
+        std::vector<RID>& bucket = buckets[frameIndex];
+        if (bucket.empty()) {
+            return;
+        }
+
+        std::vector<RID>& array = storage ? m_textureUAVArray : m_textureSRVArray;
+        for (const RID imageView : bucket) {
+            //索引先腾出来给后续绑定复用, View 再交给Context 的延迟队列销毁
+            for (RID& slot : array) {
+                if (slot == imageView) {
+                    slot = RID::Invalid();
+                }
+            }
+            m_context->DeleteResource(imageView);
+        }
+        bucket.clear();
     }
 }

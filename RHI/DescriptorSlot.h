@@ -68,13 +68,24 @@ namespace Ccino::RHI {
         uint32_t GetSamplerIndex(SamplerType type) const;
         void WriteAllSampler(); //把全局Sampler 写进这个DescriptorSet 的Sampler 数组, 索引就是SamplerType 的枚举值
 
+        //Texture: 绑定时分配数组索引并写DescriptorSet, 返回Shader 访问用的索引
+        uint32_t WriteTextureDescriptor(bool storage, RID imageView);
+        //旧View 还可能被飞行中的命令通过旧索引访问, 先放进当前飞行帧的桶, Update 时再真正释放
+        void DeferReleaseTexture(bool storage, RID imageView);
+        void RecycleTextureBucket(bool storage, uint32_t frameIndex);
+
         Context* m_context = nullptr;
         VkDevice m_device = VK_NULL_HANDLE;
         VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
 
         std::atomic<uint32_t> m_liveBindingCount{0};
 
-        //TODO: Texture 在SampledImage / StorageImage 数组中的索引分配, 以及按飞行帧延迟回收
+        //Texture 描述符数组: 下标就是Shader 访问用的索引, 元素是ImageView 的RID, 空位为Invalid
+        std::vector<RID> m_textureUAVArray; //这里直接当做View即可
+        std::vector<RID> m_textureSRVArray;
+        //Release Bucket: 按飞行帧分桶存放待释放的View, 桶到期后腾出数组索引并销毁View
+        std::vector<std::vector<RID>> m_releaseUAVBucket; //当做View即可
+        std::vector<std::vector<RID>> m_releaseSRVBucket;
 
         //全局共享, 只支持一个Context
         inline static VkDevice m_globalDevice = VK_NULL_HANDLE;

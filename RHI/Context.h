@@ -99,6 +99,11 @@ namespace Ccino::RHI {
         void TransitionTextureLayout(RID rid, VkImageLayout newLayout);
         VkImage GetVkImage(RID rid) { return m_textures.Get(rid)->image; }
 
+        //ImageView 直接传入VkImageViewCreateInfo 创建, image 由调用方从GetVkImage 填入
+        RID CreateImageView(const VkImageViewCreateInfo& createInfo);
+        void DestroyImageView(RID rid);
+        VkImageView GetVkImageView(RID rid) { return *m_imageViews.Get(rid); }
+
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
         void UnRegisterSwapchainImages(const std::vector<RID>& imageRIDs);
 
@@ -198,6 +203,7 @@ namespace Ccino::RHI {
 
         TRIDArray<VulkanBuffer> m_buffers;
         TRIDArray<VkSemaphore> m_semaphores;
+        TRIDArray<VkImageView> m_imageViews; //轻量包装托管到RID中 ，后续再DescriptorSlot中使用
         TRIDArray<ComputePipeline> m_computePipelines;
         TRIDArray<DescriptorSlotBinding> m_descriptorSlots;
         TRIDArray<VulkanTexture> m_textures;
