@@ -27,6 +27,21 @@ namespace Ccino::RHI {
         bool hostVisible = false;
     };
 
+    //Texture比较复杂有各种类型的不同Format的
+    //先不支持复杂度Array
+    struct TextureCreateInfo {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t depth = 1;
+        uint32_t mipLevels = 1;
+        uint32_t arrayLayers = 1;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkImageType type = VK_IMAGE_TYPE_2D;
+        VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
+        VkImageUsageFlags usage = 0;
+        //Layout 初始都是未定义
+    };
+
     class Context {
     public:
         Context();
@@ -79,6 +94,10 @@ namespace Ccino::RHI {
         bool IsGlobalTimelineSemaphoreAvailable(CommandQueueType queueType, uint64_t value); //使用value来判断是否可用
 
         //Texture
+        RID CreateTexture(const TextureCreateInfo& createInfo);
+        void DestroyTexture(RID rid);
+        VkImage GetVkImage(RID rid) { return m_textures.Get(rid)->image; }
+
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
         void UnRegisterSwapchainImages(const std::vector<RID>& imageRIDs);
 
@@ -152,6 +171,13 @@ namespace Ccino::RHI {
             bool isSwapchain = false;
             uint32_t width = 0;
             uint32_t height = 0;
+            uint32_t depth = 1;
+            uint32_t mipLevels = 1;
+            uint32_t arrayLayers = 1;
+            VkFormat format = VK_FORMAT_UNDEFINED;
+            VkImageType type = VK_IMAGE_TYPE_2D;
+            VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
+            VkImageUsageFlags usage = 0;
         };
 
         void DestroyResource(RID rid); 

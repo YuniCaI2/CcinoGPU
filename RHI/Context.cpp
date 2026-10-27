@@ -82,6 +82,15 @@ namespace Ccino::RHI {
             }
         });
 
+        m_textures.ForEach([&](VulkanTexture& texture) {
+            if (texture.isSwapchain || texture.image == VK_NULL_HANDLE) {
+                return;
+            }
+            vmaDestroyImage(m_core->GetVmaAllocator(), texture.image, texture.allocation);
+            texture.image = VK_NULL_HANDLE;
+            texture.allocation = VK_NULL_HANDLE;
+        });
+
         if (device != VK_NULL_HANDLE) {
             m_semaphores.ForEach([&](VkSemaphore& semaphore) {
                 if (semaphore != VK_NULL_HANDLE) {
@@ -527,6 +536,103 @@ namespace Ccino::RHI {
         return m_timelines[queueFamilyIndex].get();
     }
     
+    RID Context::CreateTexture(const TextureCreateInfo& createInfo) {
+        if (createInfo.arrayLayers > 1) {
+            throw std::runtime_error("Texture arrays are not supported");
+        }
+        if (createInfo.width == 0 || createInfo.format == VK_FORMAT_UNDEFINED || createInfo.usage == 0) {
+            throw std::runtime_error("Texture create info is invalid");
+        }
+
+        VkExtent3D extent{createInfo.width, 1, 1};
+        switch (createInfo.type) {
+        case VK_IMAGE_TYPE_1D:
+            break;
+        case VK_IMAGE_TYPE_2D:
+            if (createInfo.height == 0) {
+                throw std::runtime_error("Texture create info is invalid");
+            }
+            extent.height = createInfo.height;
+            break;
+        case VK_IMAGE_TYPE_3D:
+            if (createInfo.height == 0 || createInfo.depth == 0) {
+                throw std::runtime_error("Texture create info is invalid");
+            }
+            extent.height = createInfo.height;
+            extent.depth = createInfo.depth;
+            break;
+        default:
+            throw std::runtime_error("Invalid texture type");
+        }
+
+        VkImageCreateInfo imageCreateInfo{};
+        imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageCreateInfo.imageType = createInfo.type;
+        imageCreateInfo.format = createInfo.format;
+        imageCreateInfo.extent = extent;
+        imageCreateInfo.mipLevels = std::max(createInfo.mipLevels, 1u);
+        imageCreateInfo.arrayLayers = 1;
+        imageCreateInfo.samples = createInfo.sampleCount == 0 ? VK_SAMPLE_COUNT_1_BIT : createInfo.sampleCount;
+        imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageCreateInfo.usage = createInfo.usage;
+        imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        uint32_t queueFamilies[] = {
+            m_core->GetGraphicsQueueFamilyIndex(),
+            m_core->GetComputeQueueFamilyIndex(),
+            m_core->GetTransferQueueFamilyIndex()
+        };
+        std::vector<uint32_t> uniqueQueueFamilies;
+        for (uint32_t family : queueFamilies) {
+            if (std::find(uniqueQueueFamilies.begin(), uniqueQueueFamilies.end(), family) == uniqueQueueFamilies.end()) {
+                uniqueQueueFamilies.push_back(family);
+            }
+        }
+        if (uniqueQueueFamilies.size() > 1) {
+            imageCreateInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            imageCreateInfo.queueFamilyIndexCount = static_cast<uint32_t>(uniqueQueueFamilies.size());
+            imageCreateInfo.pQueueFamilyIndices = uniqueQueueFamilies.data();
+        } else {
+            imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
+
+        VmaAllocationCreateInfo allocCreateInfo{};
+        allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+        VulkanTexture texture{};
+        VULKAN_CHECK(vmaCreateImage(
+            m_core->GetVmaAllocator(),
+            &imageCreateInfo,
+            &allocCreateInfo,
+            &texture.image,
+            &texture.allocation,
+            nullptr));
+
+        texture.width = extent.width;
+        texture.height = extent.height;
+        texture.depth = extent.depth;
+        texture.mipLevels = imageCreateInfo.mipLevels;
+        texture.arrayLayers = imageCreateInfo.arrayLayers;
+        texture.format = createInfo.format;
+        texture.type = createInfo.type;
+        texture.sampleCount = imageCreateInfo.samples;
+        texture.usage = createInfo.usage;
+        return m_textures.Add(std::move(texture));
+    }
+
+    void Context::DestroyTexture(RID rid) {
+        VulkanTexture* texture = m_textures.Get(rid);
+        if (texture == nullptr) {
+            return;
+        }
+        if (!texture->isSwapchain && texture->image != VK_NULL_HANDLE) {
+            vmaDestroyImage(m_core->GetVmaAllocator(), texture->image, texture->allocation);
+            texture->image = VK_NULL_HANDLE;
+            texture->allocation = VK_NULL_HANDLE;
+        }
+        m_textures.Remove(rid);
+    }
+
     std::vector<RID> Context::RegisterSwapchainImages(const std::vector<VkImage>& images) {
         //创建Textures
         std::vector<RID> results;
@@ -579,6 +685,8 @@ namespace Ccino::RHI {
         }
         if (rid.type == RID::GetIndex<VulkanBuffer>()) {
             DestroyBuffer(rid);
+        } else if (rid.type == RID::GetIndex<VulkanTexture>()) {
+            DestroyTexture(rid);
         } else if (rid.type == RID::GetIndex<VkSemaphore>()) {
             DestroySemaphore(rid);
         } else if (rid.type == RID::GetIndex<ComputePipeline>()) {
