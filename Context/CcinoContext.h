@@ -3,6 +3,7 @@
 #include <memory>
 #include <unordered_map>
 #include "RG/RenderGraph.h"
+#include "Core/Texture2D.h"
 
 namespace Ccino {
     class Context {
@@ -19,6 +20,10 @@ namespace Ccino {
 
         Ref<Buffer> CreateBuffer(const Buffer::CreateArgs& createArgs) {
             return Buffer::Create(m_rhiContext, createArgs);
+        }
+
+        Ref<Texture2D> CreateTexture2D(const Texture2D::CreateArgs& createArgs) {
+            return Texture2D::Create(m_rhiContext, createArgs);
         }
 
         RHI::Context& GetRHIContext() { return m_rhiContext; }
