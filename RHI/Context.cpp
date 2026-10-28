@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -36,6 +37,136 @@ namespace Ccino::RHI {
                 return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
             default:
                 return VK_IMAGE_ASPECT_COLOR_BIT;
+            }
+        }
+
+        //紧密打包下单个 texel 的字节数；压缩 / combined depth-stencil 等格式暂不支持，返回 0
+        uint32_t BytesPerTexel(VkFormat format) {
+            switch (format) {
+            case VK_FORMAT_R8_UNORM:
+            case VK_FORMAT_R8_SNORM:
+            case VK_FORMAT_R8_USCALED:
+            case VK_FORMAT_R8_SSCALED:
+            case VK_FORMAT_R8_UINT:
+            case VK_FORMAT_R8_SINT:
+            case VK_FORMAT_R8_SRGB:
+            case VK_FORMAT_S8_UINT:
+                return 1;
+            case VK_FORMAT_R8G8_UNORM:
+            case VK_FORMAT_R8G8_SNORM:
+            case VK_FORMAT_R8G8_USCALED:
+            case VK_FORMAT_R8G8_SSCALED:
+            case VK_FORMAT_R8G8_UINT:
+            case VK_FORMAT_R8G8_SINT:
+            case VK_FORMAT_R8G8_SRGB:
+            case VK_FORMAT_R16_UNORM:
+            case VK_FORMAT_R16_SNORM:
+            case VK_FORMAT_R16_USCALED:
+            case VK_FORMAT_R16_SSCALED:
+            case VK_FORMAT_R16_UINT:
+            case VK_FORMAT_R16_SINT:
+            case VK_FORMAT_R16_SFLOAT:
+            case VK_FORMAT_D16_UNORM:
+                return 2;
+            case VK_FORMAT_R8G8B8_UNORM:
+            case VK_FORMAT_R8G8B8_SNORM:
+            case VK_FORMAT_R8G8B8_USCALED:
+            case VK_FORMAT_R8G8B8_SSCALED:
+            case VK_FORMAT_R8G8B8_UINT:
+            case VK_FORMAT_R8G8B8_SINT:
+            case VK_FORMAT_R8G8B8_SRGB:
+            case VK_FORMAT_B8G8R8_UNORM:
+            case VK_FORMAT_B8G8R8_SNORM:
+            case VK_FORMAT_B8G8R8_USCALED:
+            case VK_FORMAT_B8G8R8_SSCALED:
+            case VK_FORMAT_B8G8R8_UINT:
+            case VK_FORMAT_B8G8R8_SINT:
+            case VK_FORMAT_B8G8R8_SRGB:
+                return 3;
+            case VK_FORMAT_R8G8B8A8_UNORM:
+            case VK_FORMAT_R8G8B8A8_SNORM:
+            case VK_FORMAT_R8G8B8A8_USCALED:
+            case VK_FORMAT_R8G8B8A8_SSCALED:
+            case VK_FORMAT_R8G8B8A8_UINT:
+            case VK_FORMAT_R8G8B8A8_SINT:
+            case VK_FORMAT_R8G8B8A8_SRGB:
+            case VK_FORMAT_B8G8R8A8_UNORM:
+            case VK_FORMAT_B8G8R8A8_SNORM:
+            case VK_FORMAT_B8G8R8A8_USCALED:
+            case VK_FORMAT_B8G8R8A8_SSCALED:
+            case VK_FORMAT_B8G8R8A8_UINT:
+            case VK_FORMAT_B8G8R8A8_SINT:
+            case VK_FORMAT_B8G8R8A8_SRGB:
+            case VK_FORMAT_A8B8G8R8_UNORM_PACK32:
+            case VK_FORMAT_A8B8G8R8_SNORM_PACK32:
+            case VK_FORMAT_A8B8G8R8_USCALED_PACK32:
+            case VK_FORMAT_A8B8G8R8_SSCALED_PACK32:
+            case VK_FORMAT_A8B8G8R8_UINT_PACK32:
+            case VK_FORMAT_A8B8G8R8_SINT_PACK32:
+            case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+            case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+            case VK_FORMAT_A2R10G10B10_SNORM_PACK32:
+            case VK_FORMAT_A2R10G10B10_USCALED_PACK32:
+            case VK_FORMAT_A2R10G10B10_SSCALED_PACK32:
+            case VK_FORMAT_A2R10G10B10_UINT_PACK32:
+            case VK_FORMAT_A2R10G10B10_SINT_PACK32:
+            case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            case VK_FORMAT_A2B10G10R10_SNORM_PACK32:
+            case VK_FORMAT_A2B10G10R10_USCALED_PACK32:
+            case VK_FORMAT_A2B10G10R10_SSCALED_PACK32:
+            case VK_FORMAT_A2B10G10R10_UINT_PACK32:
+            case VK_FORMAT_A2B10G10R10_SINT_PACK32:
+            case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+            case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:
+            case VK_FORMAT_R16G16_UNORM:
+            case VK_FORMAT_R16G16_SNORM:
+            case VK_FORMAT_R16G16_USCALED:
+            case VK_FORMAT_R16G16_SSCALED:
+            case VK_FORMAT_R16G16_UINT:
+            case VK_FORMAT_R16G16_SINT:
+            case VK_FORMAT_R16G16_SFLOAT:
+            case VK_FORMAT_R32_UINT:
+            case VK_FORMAT_R32_SINT:
+            case VK_FORMAT_R32_SFLOAT:
+            case VK_FORMAT_D32_SFLOAT:
+            case VK_FORMAT_X8_D24_UNORM_PACK32:
+            case VK_FORMAT_D24_UNORM_S8_UINT:
+                return 4;
+            case VK_FORMAT_R16G16B16_UNORM:
+            case VK_FORMAT_R16G16B16_SNORM:
+            case VK_FORMAT_R16G16B16_USCALED:
+            case VK_FORMAT_R16G16B16_SSCALED:
+            case VK_FORMAT_R16G16B16_UINT:
+            case VK_FORMAT_R16G16B16_SINT:
+            case VK_FORMAT_R16G16B16_SFLOAT:
+                return 6;
+            case VK_FORMAT_R16G16B16A16_UNORM:
+            case VK_FORMAT_R16G16B16A16_SNORM:
+            case VK_FORMAT_R16G16B16A16_USCALED:
+            case VK_FORMAT_R16G16B16A16_SSCALED:
+            case VK_FORMAT_R16G16B16A16_UINT:
+            case VK_FORMAT_R16G16B16A16_SINT:
+            case VK_FORMAT_R16G16B16A16_SFLOAT:
+            case VK_FORMAT_R32G32_UINT:
+            case VK_FORMAT_R32G32_SINT:
+            case VK_FORMAT_R32G32_SFLOAT:
+            case VK_FORMAT_R64_UINT:
+            case VK_FORMAT_R64_SINT:
+            case VK_FORMAT_R64_SFLOAT:
+                return 8;
+            case VK_FORMAT_R32G32B32_UINT:
+            case VK_FORMAT_R32G32B32_SINT:
+            case VK_FORMAT_R32G32B32_SFLOAT:
+                return 12;
+            case VK_FORMAT_R32G32B32A32_UINT:
+            case VK_FORMAT_R32G32B32A32_SINT:
+            case VK_FORMAT_R32G32B32A32_SFLOAT:
+            case VK_FORMAT_R64G64_UINT:
+            case VK_FORMAT_R64G64_SINT:
+            case VK_FORMAT_R64G64_SFLOAT:
+                return 16;
+            default:
+                return 0;
             }
         }
 
@@ -83,6 +214,34 @@ namespace Ccino::RHI {
                 access = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
                 break;
             }
+        }
+
+        VkImageMemoryBarrier2 MakeLayoutBarrier(VkImage image, VkFormat format, VkImageLayout oldLayout,
+            VkImageLayout newLayout, uint32_t mipLevels, uint32_t arrayLayers) {
+            VkPipelineStageFlags2 srcStage = VK_PIPELINE_STAGE_2_NONE;
+            VkAccessFlags2 srcAccess = VK_ACCESS_2_NONE;
+            VkPipelineStageFlags2 dstStage = VK_PIPELINE_STAGE_2_NONE;
+            VkAccessFlags2 dstAccess = VK_ACCESS_2_NONE;
+            LayoutSync(oldLayout, srcStage, srcAccess);
+            LayoutSync(newLayout, dstStage, dstAccess);
+
+            VkImageMemoryBarrier2 barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            barrier.srcStageMask = srcStage;
+            barrier.srcAccessMask = srcAccess;
+            barrier.dstStageMask = dstStage;
+            barrier.dstAccessMask = dstAccess;
+            barrier.oldLayout = oldLayout;
+            barrier.newLayout = newLayout;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = image;
+            barrier.subresourceRange.aspectMask = ImageAspect(format);
+            barrier.subresourceRange.baseMipLevel = 0;
+            barrier.subresourceRange.levelCount = mipLevels == 0 ? VK_REMAINING_MIP_LEVELS : mipLevels;
+            barrier.subresourceRange.baseArrayLayer = 0;
+            barrier.subresourceRange.layerCount = arrayLayers == 0 ? VK_REMAINING_ARRAY_LAYERS : arrayLayers;
+            return barrier;
         }
     }
 
@@ -755,32 +914,13 @@ namespace Ccino::RHI {
             throw std::runtime_error("Texture was destroyed");
         }
 
-        VkPipelineStageFlags2 srcStage = VK_PIPELINE_STAGE_2_NONE;
-        VkAccessFlags2 srcAccess = VK_ACCESS_2_NONE;
-        VkPipelineStageFlags2 dstStage = VK_PIPELINE_STAGE_2_NONE;
-        VkAccessFlags2 dstAccess = VK_ACCESS_2_NONE;
-        LayoutSync(oldLayout, srcStage, srcAccess);
-        LayoutSync(newLayout, dstStage, dstAccess);
-
-        VkImageMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        barrier.srcStageMask = srcStage;
-        barrier.srcAccessMask = srcAccess;
-        barrier.dstStageMask = dstStage;
-        barrier.dstAccessMask = dstAccess;
-        barrier.oldLayout = oldLayout;
-        barrier.newLayout = newLayout;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = texture->image;
-        barrier.subresourceRange.aspectMask = ImageAspect(texture->format);
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = texture->mipLevels == 0 ? VK_REMAINING_MIP_LEVELS : texture->mipLevels;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = texture->arrayLayers == 0 ? VK_REMAINING_ARRAY_LAYERS : texture->arrayLayers;
-
         CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::GRAPHICS);
+        auto barrier = MakeLayoutBarrier(texture->image, texture->format, texture->layout, newLayout, 
+            texture->mipLevels == 0 ? VK_REMAINING_MIP_LEVELS : texture->mipLevels, 
+            texture->arrayLayers == 0 ? VK_REMAINING_ARRAY_LAYERS : texture->arrayLayers);
         StartRecording(commandBuffer);
+
+
         VkDependencyInfo dependency{};
         dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         dependency.imageMemoryBarrierCount = 1;
@@ -796,6 +936,376 @@ namespace Ccino::RHI {
         texture->layout = newLayout;
         texture->lastQueue = CommandQueueType::GRAPHICS;
         texture->lastTimelineValue = signalValue;
+    }
+
+    uint32_t Context::GetTextureSize(RID rid) {
+        const VulkanTexture* texture = m_textures.Get(rid);
+        if (texture == nullptr || texture->width == 0 || texture->height == 0 || texture->depth == 0) {
+            return 0;
+        }
+        const uint32_t bytesPerTexel = BytesPerTexel(texture->format);
+        if (bytesPerTexel == 0) {
+            return 0;
+        }
+
+        //紧密打包（bufferRowLength = 0）下整张纹理的字节数：所有 mip、所有 array layer 累加
+        //交换链图像没有登记尺寸 / format，会走上面的分支返回 0
+        const uint32_t mipLevels = std::max(texture->mipLevels, 1u);
+        const uint32_t arrayLayers = std::max(texture->arrayLayers, 1u);
+        uint64_t totalSize = 0;
+        for (uint32_t level = 0; level < mipLevels; ++level) {
+            //Mipmap Level 每级 / 2
+            const uint64_t mipWidth = level < 32 ? std::max(texture->width >> level, 1u) : 1u;
+            const uint64_t mipHeight = level < 32 ? std::max(texture->height >> level, 1u) : 1u;
+            const uint64_t mipDepth = level < 32 ? std::max(texture->depth >> level, 1u) : 1u;
+            totalSize += mipWidth * mipHeight * mipDepth * bytesPerTexel * arrayLayers;
+            if (totalSize > std::numeric_limits<uint32_t>::max()) {
+                return 0; //超出返回值能表示的范围
+            }
+        }
+        return static_cast<uint32_t>(totalSize);
+    }
+
+    bool Context::CopyTexFromBuffer(RID dstTex, RID srcBuffer) {
+        auto* texture = m_textures.Get(dstTex);
+        auto* buffer = m_buffers.Get(srcBuffer);
+        if (texture == nullptr || buffer == nullptr || texture->image == VK_NULL_HANDLE || buffer->buffer == VK_NULL_HANDLE) {
+            std::cerr << "CopyTexFromBuffer: invalid texture or buffer" << std::endl;
+            return false;
+        }
+        if (texture->mipLevels > 1) {
+            std::cerr << "Don't Support more mipmap level texture" << std::endl;
+            return false;
+        }
+        if (texture->sampleCount != VK_SAMPLE_COUNT_1_BIT) {
+            std::cerr << "CopyTexFromBuffer: multisampled texture is not supported" << std::endl;
+            return false;
+        }
+        if ((texture->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0 ||
+            (buffer->usage & VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT) == 0) {
+            std::cerr << "CopyTexFromBuffer: texture needs TransferDst usage and buffer needs TransferSrc usage" << std::endl;
+            return false;
+        }
+        const uint32_t textureSize = GetTextureSize(dstTex);
+        if (textureSize == 0 || buffer->size < textureSize) {
+            std::cerr << "CopyTexFromBuffer: buffer is smaller than the texture" << std::endl;
+            return false;
+        }
+
+        const VkImage dstImage = texture->image;
+        const VkBuffer srcBuf = buffer->buffer;
+        const VkFormat format = texture->format;
+        const VkImageLayout oldLayout = texture->layout;
+        const uint32_t mipLevels = texture->mipLevels;
+        const uint32_t arrayLayers = texture->arrayLayers;
+        const VkExtent3D extent{texture->width, texture->height, texture->depth};
+
+        //资源上次在别的队列家族用过时先在 CPU 侧等它完成，和 TransitionTextureLayout 的处理一致
+        auto waitForPreviousUse = [this](CommandQueueType lastQueue, uint64_t lastTimelineValue) {
+            if (lastTimelineValue == 0) {
+                return;
+            }
+            const uint32_t lastFamily = m_core->GetQueueFamilyIndex(lastQueue);
+            if (lastFamily != m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER)) {
+                if (TimelineSemaphore* timeline = GetTimeline(lastFamily)) {
+                    timeline->Wait(lastTimelineValue);
+                }
+            }
+        };
+        waitForPreviousUse(texture->lastQueue, texture->lastTimelineValue);
+        waitForPreviousUse(buffer->lastQueue, buffer->lastTimelineValue);
+
+        CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::TRANSFER);
+        StartRecording(commandBuffer);
+
+        if (oldLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            VkImageMemoryBarrier2 barrier = MakeLayoutBarrier(dstImage, format, oldLayout,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels, arrayLayers);
+            VkDependencyInfo dependency{};
+            dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = 1;
+            dependency.pImageMemoryBarriers = &barrier;
+            vkCmdPipelineBarrier2(commandBuffer.commandBuffer, &dependency);
+        }
+
+        VkBufferImageCopy2 region{};
+        region.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0; //紧密打包
+        region.bufferImageHeight = 0;
+        region.imageSubresource.aspectMask = ImageAspect(format);
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = arrayLayers;
+        region.imageOffset = {0, 0, 0};
+        region.imageExtent = extent;
+
+        VkCopyBufferToImageInfo2 copyInfo{};
+        copyInfo.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;
+        copyInfo.srcBuffer = srcBuf;
+        copyInfo.dstImage = dstImage;
+        copyInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        copyInfo.regionCount = 1;
+        copyInfo.pRegions = &region;
+        vkCmdCopyBufferToImage2(commandBuffer.commandBuffer, &copyInfo);
+
+        EndRecording(commandBuffer);
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+
+        texture = m_textures.Get(dstTex);
+        if (texture != nullptr) {
+            texture->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            texture->lastQueue = CommandQueueType::TRANSFER;
+            texture->lastTimelineValue = signalValue;
+        }
+        buffer = m_buffers.Get(srcBuffer);
+        if (buffer != nullptr) {
+            buffer->lastQueue = CommandQueueType::TRANSFER;
+            buffer->lastTimelineValue = signalValue;
+        }
+        return true;
+    }
+
+    bool Context::CopyTexToBuffer(RID srcTex, RID dstBuffer) {
+        auto* texture = m_textures.Get(srcTex);
+        auto* buffer = m_buffers.Get(dstBuffer);
+        if (texture == nullptr || buffer == nullptr || texture->image == VK_NULL_HANDLE || buffer->buffer == VK_NULL_HANDLE) {
+            std::cerr << "CopyTexToBuffer: invalid texture or buffer" << std::endl;
+            return false;
+        }
+        if (texture->mipLevels > 1) {
+            std::cerr << "Don't Support more mipmap level texture" << std::endl;
+            return false;
+        }
+        if (texture->sampleCount != VK_SAMPLE_COUNT_1_BIT) {
+            std::cerr << "CopyTexToBuffer: multisampled texture is not supported" << std::endl;
+            return false;
+        }
+        if ((texture->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0 ||
+            (buffer->usage & VK_BUFFER_USAGE_2_TRANSFER_DST_BIT) == 0) {
+            std::cerr << "CopyTexToBuffer: texture needs TransferSrc usage and buffer needs TransferDst usage" << std::endl;
+            return false;
+        }
+        const uint32_t textureSize = GetTextureSize(srcTex);
+        if (textureSize == 0 || buffer->size < textureSize) {
+            std::cerr << "CopyTexToBuffer: buffer is smaller than the texture" << std::endl;
+            return false;
+        }
+
+        const VkImage srcImage = texture->image;
+        const VkBuffer dstBuf = buffer->buffer;
+        const VkFormat format = texture->format;
+        const VkImageLayout oldLayout = texture->layout;
+        const uint32_t mipLevels = texture->mipLevels;
+        const uint32_t arrayLayers = texture->arrayLayers;
+        const VkExtent3D extent{texture->width, texture->height, texture->depth};
+        const bool hostVisible = buffer->hostVisible;
+
+        auto waitForPreviousUse = [this](CommandQueueType lastQueue, uint64_t lastTimelineValue) {
+            if (lastTimelineValue == 0) {
+                return;
+            }
+            const uint32_t lastFamily = m_core->GetQueueFamilyIndex(lastQueue);
+            if (lastFamily != m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER)) {
+                if (TimelineSemaphore* timeline = GetTimeline(lastFamily)) {
+                    timeline->Wait(lastTimelineValue);
+                }
+            }
+        };
+        waitForPreviousUse(texture->lastQueue, texture->lastTimelineValue);
+        waitForPreviousUse(buffer->lastQueue, buffer->lastTimelineValue);
+
+        CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::TRANSFER);
+        StartRecording(commandBuffer);
+
+        if (oldLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+            VkImageMemoryBarrier2 barrier = MakeLayoutBarrier(srcImage, format, oldLayout,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mipLevels, arrayLayers);
+            VkDependencyInfo dependency{};
+            dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = 1;
+            dependency.pImageMemoryBarriers = &barrier;
+            vkCmdPipelineBarrier2(commandBuffer.commandBuffer, &dependency);
+        }
+
+        VkBufferImageCopy2 region{};
+        region.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
+        region.bufferOffset = 0;
+        region.bufferRowLength = 0; //紧密打包
+        region.bufferImageHeight = 0;
+        region.imageSubresource.aspectMask = ImageAspect(format);
+        region.imageSubresource.mipLevel = 0;
+        region.imageSubresource.baseArrayLayer = 0;
+        region.imageSubresource.layerCount = arrayLayers;
+        region.imageOffset = {0, 0, 0};
+        region.imageExtent = extent;
+
+        VkCopyImageToBufferInfo2 copyInfo{};
+        copyInfo.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2;
+        copyInfo.srcImage = srcImage;
+        copyInfo.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        copyInfo.dstBuffer = dstBuf;
+        copyInfo.regionCount = 1;
+        copyInfo.pRegions = &region;
+        vkCmdCopyImageToBuffer2(commandBuffer.commandBuffer, &copyInfo);
+
+        if (hostVisible) {
+            //让 CPU 后续 Map 读取能看到拷贝结果，和 ReadbackBuffer 的处理一致
+            VkBufferMemoryBarrier2 barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+            barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+            barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.buffer = dstBuf;
+            barrier.offset = 0;
+            barrier.size = textureSize;
+
+            VkDependencyInfo dependency{};
+            dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.bufferMemoryBarrierCount = 1;
+            dependency.pBufferMemoryBarriers = &barrier;
+            vkCmdPipelineBarrier2(commandBuffer.commandBuffer, &dependency);
+        }
+
+        EndRecording(commandBuffer);
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+
+        texture = m_textures.Get(srcTex);
+        if (texture != nullptr) {
+            texture->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            texture->lastQueue = CommandQueueType::TRANSFER;
+            texture->lastTimelineValue = signalValue;
+        }
+        buffer = m_buffers.Get(dstBuffer);
+        if (buffer != nullptr) {
+            buffer->lastQueue = CommandQueueType::TRANSFER;
+            buffer->lastTimelineValue = signalValue;
+        }
+        return true;
+    }
+
+    bool Context::CopyTex(RID srcTex, RID dstTex) {
+        if (srcTex == dstTex) {
+            std::cerr << "CopyTex: source and destination are the same texture" << std::endl;
+            return false;
+        }
+        auto* srcTexture = m_textures.Get(srcTex);
+        auto* dstTexture = m_textures.Get(dstTex);
+        if (srcTexture == nullptr || dstTexture == nullptr ||
+            srcTexture->image == VK_NULL_HANDLE || dstTexture->image == VK_NULL_HANDLE) {
+            std::cerr << "CopyTex: invalid texture" << std::endl;
+            return false;
+        }
+        if (srcTexture->mipLevels > 1 || dstTexture->mipLevels > 1) {
+            std::cerr << "Don't Support more mipmap level texture" << std::endl;
+            return false;
+        }
+        if (srcTexture->sampleCount != VK_SAMPLE_COUNT_1_BIT || dstTexture->sampleCount != VK_SAMPLE_COUNT_1_BIT) {
+            std::cerr << "CopyTex: multisampled texture is not supported" << std::endl;
+            return false;
+        }
+        if ((srcTexture->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0 ||
+            (dstTexture->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0) {
+            std::cerr << "CopyTex: source needs TransferSrc usage and destination needs TransferDst usage" << std::endl;
+            return false;
+        }
+        if (srcTexture->width != dstTexture->width || srcTexture->height != dstTexture->height ||
+            srcTexture->depth != dstTexture->depth || srcTexture->format != dstTexture->format ||
+            srcTexture->arrayLayers != dstTexture->arrayLayers) {
+            std::cerr << "CopyTex: textures must have the same extent, format and array layers" << std::endl;
+            return false;
+        }
+        if (GetTextureSize(srcTex) == 0) {
+            std::cerr << "CopyTex: unsupported texture format" << std::endl;
+            return false;
+        }
+
+        const VkImage srcImage = srcTexture->image;
+        const VkImage dstImage = dstTexture->image;
+        const VkFormat format = srcTexture->format;
+        const VkImageLayout srcOldLayout = srcTexture->layout;
+        const VkImageLayout dstOldLayout = dstTexture->layout;
+        const uint32_t mipLevels = srcTexture->mipLevels;
+        const uint32_t arrayLayers = srcTexture->arrayLayers;
+        const VkExtent3D extent{srcTexture->width, srcTexture->height, srcTexture->depth};
+
+        auto waitForPreviousUse = [this](CommandQueueType lastQueue, uint64_t lastTimelineValue) {
+            if (lastTimelineValue == 0) {
+                return;
+            }
+            const uint32_t lastFamily = m_core->GetQueueFamilyIndex(lastQueue);
+            if (lastFamily != m_core->GetQueueFamilyIndex(CommandQueueType::TRANSFER)) {
+                if (TimelineSemaphore* timeline = GetTimeline(lastFamily)) {
+                    timeline->Wait(lastTimelineValue);
+                }
+            }
+        };
+        waitForPreviousUse(srcTexture->lastQueue, srcTexture->lastTimelineValue);
+        waitForPreviousUse(dstTexture->lastQueue, dstTexture->lastTimelineValue);
+
+        CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::TRANSFER);
+        StartRecording(commandBuffer);
+
+        std::vector<VkImageMemoryBarrier2> barriers;
+        if (srcOldLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+            barriers.push_back(MakeLayoutBarrier(srcImage, format, srcOldLayout,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mipLevels, arrayLayers));
+        }
+        if (dstOldLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+            barriers.push_back(MakeLayoutBarrier(dstImage, format, dstOldLayout,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels, arrayLayers));
+        }
+        if (!barriers.empty()) {
+            VkDependencyInfo dependency{};
+            dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            dependency.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependency.pImageMemoryBarriers = barriers.data();
+            vkCmdPipelineBarrier2(commandBuffer.commandBuffer, &dependency);
+        }
+
+        VkImageCopy2 region{};
+        region.sType = VK_STRUCTURE_TYPE_IMAGE_COPY_2;
+        region.srcSubresource.aspectMask = ImageAspect(format);
+        region.srcSubresource.mipLevel = 0;
+        region.srcSubresource.baseArrayLayer = 0;
+        region.srcSubresource.layerCount = arrayLayers;
+        region.srcOffset = {0, 0, 0};
+        region.dstSubresource.aspectMask = ImageAspect(format);
+        region.dstSubresource.mipLevel = 0;
+        region.dstSubresource.baseArrayLayer = 0;
+        region.dstSubresource.layerCount = arrayLayers;
+        region.dstOffset = {0, 0, 0};
+        region.extent = extent;
+
+        VkCopyImageInfo2 copyInfo{};
+        copyInfo.sType = VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2;
+        copyInfo.srcImage = srcImage;
+        copyInfo.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        copyInfo.dstImage = dstImage;
+        copyInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        copyInfo.regionCount = 1;
+        copyInfo.pRegions = &region;
+        vkCmdCopyImage2(commandBuffer.commandBuffer, &copyInfo);
+
+        EndRecording(commandBuffer);
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+
+        srcTexture = m_textures.Get(srcTex);
+        if (srcTexture != nullptr) {
+            srcTexture->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            srcTexture->lastQueue = CommandQueueType::TRANSFER;
+            srcTexture->lastTimelineValue = signalValue;
+        }
+        dstTexture = m_textures.Get(dstTex);
+        if (dstTexture != nullptr) {
+            dstTexture->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            dstTexture->lastQueue = CommandQueueType::TRANSFER;
+            dstTexture->lastTimelineValue = signalValue;
+        }
+        return true;
     }
 
     std::vector<RID> Context::RegisterSwapchainImages(const std::vector<VkImage>& images) {

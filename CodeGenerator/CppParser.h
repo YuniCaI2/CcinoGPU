@@ -1,3 +1,4 @@
+#pragma once
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/Type.h>
 #include <vector>

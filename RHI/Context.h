@@ -98,6 +98,13 @@ namespace Ccino::RHI {
         void DestroyTexture(RID rid);
         void TransitionTextureLayout(RID rid, VkImageLayout newLayout);
         VkImage GetVkImage(RID rid) { return m_textures.Get(rid)->image; }
+        uint32_t GetTextureSize(RID rid);
+
+        //不支持多MipmapLevel TODO：完善对多格式和布局的TextureCopy的支持
+        bool CopyTexFromBuffer(RID dstTex, RID srcBuffer); //先只支持全量copy
+        bool CopyTexToBuffer(RID srcTex, RID dstBuffer);
+        bool CopyTex(RID srcTex, RID dstTex);
+
 
         //ImageView 直接传入VkImageViewCreateInfo 创建, image 由调用方从GetVkImage 填入
         RID CreateImageView(const VkImageViewCreateInfo& createInfo);

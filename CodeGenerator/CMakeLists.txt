@@ -13,6 +13,13 @@ endif()
 
 add_library(CodeGenerator STATIC ${CODE_GENERATOR_SOURCES})
 
+if(CCINO_UNITY_BUILD)
+    set_target_properties(CodeGenerator PROPERTIES
+        UNITY_BUILD ON
+        UNITY_BUILD_BATCH_SIZE 0
+    )
+endif()
+
 # LibTooling does not build or locate builtin headers for our executables automatically.
 # Use headers from the same pinned Clang rather than guessing relative to GeneratorMain/Tests.
 # 此处使用了惰性加载的策略如果，我们的代码依赖了clang的头文件,clang会将其copy到clang-resource-headers的运行时输出目录
