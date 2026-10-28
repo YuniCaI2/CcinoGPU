@@ -25,6 +25,7 @@ namespace Ccino::RHI {
         uint32_t size = 0;
         VkBufferUsageFlags2 usage = 0;
         bool hostVisible = false;
+        bool requireHostCoherent = false; //要求落在 HOST_VISIBLE | HOST_COHERENT 内存上，选不到时创建失败，不做降级
     };
 
     //Texture比较复杂有各种类型的不同Format的
@@ -171,6 +172,7 @@ namespace Ccino::RHI {
 
             void* mappedPtr = nullptr;
             bool hostVisible = false;
+            bool hostCoherent = false;
             bool persistentlyMapped = false;
             uint64_t bda = 0; //GPU的地址
 

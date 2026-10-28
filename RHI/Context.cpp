@@ -359,7 +359,7 @@ namespace Ccino::RHI {
 
     RID Context::CreateBuffer(const BufferCreateInfo& createInfo) {
         const VkBufferUsageFlags2 usage = createInfo.usage | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT;
-        const bool hostVisible = createInfo.hostVisible || IsHostWriteBuffer(usage);
+        const bool hostVisible = createInfo.hostVisible || createInfo.requireHostCoherent || IsHostWriteBuffer(usage);
         const bool hostRead = hostVisible && !IsHostWriteBuffer(usage);
 
         VkBufferCreateInfo bufferCreateInfo{};
@@ -399,6 +399,11 @@ namespace Ccino::RHI {
             allocCreateInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
                 (hostRead ? VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT
                           : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            if (createInfo.requireHostCoherent) {
+                //用 requiredFlags 才是保证：没有满足的内存类型时 vmaCreateBuffer 直接失败
+                allocCreateInfo.requiredFlags |=
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            }
         } else {
             allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         }
@@ -447,7 +452,12 @@ namespace Ccino::RHI {
     }
 
     RID Context::CreateUniformBuffer(uint32_t size, const void* data) {
-        RID rid = CreateBuffer(BufferCreateInfo{size, VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT});
+        BufferCreateInfo createInfo{};
+        createInfo.size = size;
+        createInfo.usage = VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT;
+        createInfo.hostVisible = true;
+        createInfo.requireHostCoherent = true; //Uniform 走持久映射裸写，必须保证主机一致，免去每次写后 Flush
+        RID rid = CreateBuffer(createInfo);
         if (data == nullptr) {
             MapBuffer(rid);
         } else {
