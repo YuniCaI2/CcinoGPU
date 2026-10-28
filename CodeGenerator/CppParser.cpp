@@ -770,6 +770,11 @@ namespace Ccino
         return "while (" + cond + ") {\n" + body + "}";
     }
 
+    std::string CppParser::ChangeTextureViewerToGLSL(clang::Stmt* stmt) {
+        // 两种类型 是否有= 如果有=则为Load和Sample 如果没=则为Store, 这里就是识别对象中是否有Viewer
+        return {}; 
+    }
+
     std::string CppParser::ChangeCppInitToGLSLInitializer(const clang::VarDecl* var) {
         if (!var) return {};
         const clang::Expr* init = var->getInit();

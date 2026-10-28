@@ -21,5 +21,13 @@ enum class TextureAccessFlagBits : uint32_t {
 };
 using TextureAccessFlags = Flags<TextureAccessFlagBits>;
 
+// 放 AccessorEnums.h
+constexpr bool HasTextureAccess(TextureAccessFlags flags, TextureAccessFlagBits bit) {
+    return (flags.mask & static_cast<uint32_t>(bit)) != 0;
+}
+
+template<TextureAccessFlags Access, TextureAccessFlagBits Bit>
+concept TextureAccessHas = HasTextureAccess(Access, Bit);
+
 //上面两个对象是不会同时存在的
 using ResourceAccessFlags = std::variant<BufferAccessFlags, TextureAccessFlags>;

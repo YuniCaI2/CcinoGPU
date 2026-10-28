@@ -241,8 +241,9 @@ namespace Ccino::RHI {
             throw std::runtime_error(std::string("Field is not a ") + (storage ? "storage" : "sampled") +
                 " image in descriptor slot layout: " + name);
         }
-
+        viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewCreateInfo.image = m_context->GetVkImage(rid);
+        viewCreateInfo.format = m_context->GetFormat(rid); //不支持多format这个后续支持, TODO：支持多format
         const RID imageView = m_context->CreateImageView(viewCreateInfo);
 
         uint32_t index = 0;

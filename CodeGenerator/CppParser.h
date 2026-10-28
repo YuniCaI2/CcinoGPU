@@ -53,6 +53,9 @@ namespace Ccino
         static std::string ChangeCppIfToGLSLIf(clang::IfStmt* ifStmt);
         static std::string ChangeCppForToGLSLFor(clang::ForStmt* forStmt);
         static std::string ChangeCppWhileToGLSLWhile(clang::WhileStmt* whileStmt);
+
+        //特殊处理CalLExpr,处理Texture的访问
+        static std::string ChangeTextureViewerToGLSL(clang::Stmt* stmt);
     };
 
 }

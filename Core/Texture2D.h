@@ -35,6 +35,7 @@ namespace Ccino {
     }
 
     //和 RHI 创建时传入的 VK_IMAGE_TYPE_2D 对齐
+    //仿照 Buffer: 只作为存储媒介, Format/Usage 都是运行期 CreateArgs, 不合法组合运行期抛异常
     class Texture2D : public RefCounted {
     public:
         virtual ~Texture2D() {

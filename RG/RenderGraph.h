@@ -2,10 +2,10 @@
 #include "Accessor.h"
 #include "AccessorEnums.h"
 #include "ShaderStruct/ShaderIR.h"
-#include "Pass.h"
 #include "RGResource.h"
 #include "RHI/RHIStruct.h"
 #include "RG/Pass.h"
+#include "RG/Viewer.h"
 #include "Core/ThreadPoo.h"
 #include "RefCounted.hpp"
 #include "ShaderStruct/ShaderCommon.h"
@@ -107,6 +107,10 @@ namespace Ccino {
 
         template<typename BufferResourceType>
         Accessor<BufferResourceType, BufferAccessFlagBits::Read> Read(RID& resource, RID& passRID) {
+            if (!CheckResourceType(resource, ResourceType::Buffer, "Read")) {
+                RID invalid = RID::Invalid();
+                return Accessor<BufferResourceType, BufferAccessFlagBits::Read>(invalid);
+            }
             uint32_t version = m_edgeNums[resource]; //Read不会改变版本，RWR所读的资源都一致
             m_edges.push_back(RGEdge{resource, passRID, version, BufferAccessFlagBits::Read});
             return Accessor<BufferResourceType, BufferAccessFlagBits::Read>(resource);
@@ -114,6 +118,10 @@ namespace Ccino {
 
         template<typename BufferResourceType>
         Accessor<BufferResourceType, BufferAccessFlagBits::Write> Write(RID& resource, RID& passRID) {
+            if (!CheckResourceType(resource, ResourceType::Buffer, "Write")) {
+                RID invalid = RID::Invalid();
+                return Accessor<BufferResourceType, BufferAccessFlagBits::Write>(invalid);
+            }
             uint32_t version = m_edgeNums[resource]++;
             m_edges.push_back(RGEdge{resource, passRID, version, BufferAccessFlagBits::Write});
             return Accessor<BufferResourceType, BufferAccessFlagBits::Write>(resource);
@@ -121,10 +129,59 @@ namespace Ccino {
 
         template<typename BufferResourceType>
         Accessor<BufferResourceType, BufferAccessFlagBits::ReadWrite> ReadWrite(RID& resource, RID& passRID) {
+            if (!CheckResourceType(resource, ResourceType::Buffer, "ReadWrite")) {
+                RID invalid = RID::Invalid();
+                return Accessor<BufferResourceType, BufferAccessFlagBits::ReadWrite>(invalid);
+            }
             uint32_t version = m_edgeNums[resource]++;
             m_edges.push_back(RGEdge{resource, passRID, version, BufferAccessFlagBits::ReadWrite});
             return Accessor<BufferResourceType, BufferAccessFlagBits::ReadWrite>(resource);
         }
+
+        //StorageImage 只读访问, 语义同 Read: 不递增版本
+        template<ViewType viewType>
+        Viewer<TextureAccessFlagBits::StorageRead, viewType> LoadUAV(RID& resource, RID& passRID, ViewRange viewRange = {}) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "LoadUAV")) {
+                return Viewer<TextureAccessFlagBits::StorageRead, viewType>(RID::Invalid(), viewRange);
+            }
+            uint32_t version = m_edgeNums[resource];
+            m_edges.push_back(RGEdge{resource, passRID, version, TextureAccessFlagBits::StorageRead});
+            return Viewer<TextureAccessFlagBits::StorageRead, viewType>(resource, viewRange);
+        }
+
+        //StorageImage 只写访问, 语义同 Write: 产生新版本
+        template<ViewType viewType>
+        Viewer<TextureAccessFlagBits::StorageWrite, viewType> StoreUAV(RID& resource, RID& passRID, ViewRange viewRange = {}) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "StoreUAV")) {
+                return Viewer<TextureAccessFlagBits::StorageWrite, viewType>(RID::Invalid(), viewRange);
+            }
+            uint32_t version = m_edgeNums[resource]++;
+            m_edges.push_back(RGEdge{resource, passRID, version, TextureAccessFlagBits::StorageWrite});
+            return Viewer<TextureAccessFlagBits::StorageWrite, viewType>(resource, viewRange);
+        }
+
+        //StorageImage 读写访问, 语义同 ReadWrite: 产生新版本
+        template<ViewType viewType>
+        Viewer<TextureAccessFlagBits::StorageReadWrite, viewType> LoadStoreUAV(RID& resource, RID& passRID, ViewRange viewRange = {}) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "LoadStoreUAV")) {
+                return Viewer<TextureAccessFlagBits::StorageReadWrite, viewType>(RID::Invalid(), viewRange);
+            }
+            uint32_t version = m_edgeNums[resource]++;
+            m_edges.push_back(RGEdge{resource, passRID, version, TextureAccessFlagBits::StorageReadWrite});
+            return Viewer<TextureAccessFlagBits::StorageReadWrite, viewType>(resource, viewRange);
+        }
+
+        //SampledImage 采样访问, 相当于Read: 不递增版本
+        template<ViewType viewType>
+        Viewer<TextureAccessFlagBits::Sampled, viewType> Sample(RID& resource, RID& passRID, ViewRange viewRange = {}) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "Sample")) {
+                return Viewer<TextureAccessFlagBits::Sampled, viewType>(RID::Invalid(), viewRange);
+            }
+            uint32_t version = m_edgeNums[resource];
+            m_edges.push_back(RGEdge{resource, passRID, version, TextureAccessFlagBits::Sampled});
+            return Viewer<TextureAccessFlagBits::Sampled, viewType>(resource, viewRange);
+        }
+
 
         //处理Texture依赖
         void BuildGraph();
@@ -148,8 +205,13 @@ namespace Ccino {
 
         RID CreateTransientBuffer(typename Buffer::CreateArgs createArgs);
         RID CreateExternalBuffer(const Ref<Buffer>& buffer);
+        RID CreateTransientTexture2D(typename Texture2D::CreateArgs createArgs);
+        RID CreateExternalTexture2D(const Ref<Texture2D>& texture);
 
     private:
+        //运行期资源类型检查(热路径, 不抛异常): 类型不符时cerr 报错并返回false, 调用方跳过建边并返回无效句柄
+        bool CheckResourceType(RID resourceRID, ResourceType expected, const char* accessName);
+
         //先不考虑资源的别名和并行录制
         void CreateGPUResource();
         void ReleaseGPUResource();

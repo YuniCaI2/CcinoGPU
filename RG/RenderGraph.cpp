@@ -6,7 +6,9 @@
 #include "ResourceConcept.h"
 #include "ShaderStruct/ShaderCommon.h"
 #include "ShaderStruct/UniformData.h"
+#include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
 #include "ThreadPoo.h"
+#include "Viewer.h"
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -70,7 +72,7 @@ namespace Ccino {
             if constexpr (std::is_same_v<T, BufferAccessFlags>) {
                 isWritable = static_cast<bool>(arg & BufferAccessFlagBits::Write);
             } else if constexpr (std::is_same_v<T, TextureAccessFlags>) {
-                // TODO Texture
+                isWritable = HasTextureAccess(arg, TextureAccessFlagBits::StorageWrite);
             }
         }, accessFlags);
         return isWritable;
@@ -83,10 +85,31 @@ namespace Ccino {
             if constexpr (std::is_same_v<T, BufferAccessFlags>) {
                 isReadable = static_cast<bool>(arg & BufferAccessFlagBits::Read);
             } else if constexpr (std::is_same_v<T, TextureAccessFlags>) {
-                // TODO Texture
+                isReadable = HasTextureAccess(arg, TextureAccessFlagBits::StorageRead) ||
+                             HasTextureAccess(arg, TextureAccessFlagBits::Sampled);
             }
         }, accessFlags);
         return isReadable;
+    }
+
+    bool RGBuilder::CheckResourceType(RID resourceRID, ResourceType expected, const char* accessName) {
+        //热路径检查: 只做一次资源查找和类型比较, 失败不抛异常, 只cerr 记录并让调用方跳过这次访问
+        auto* resource = m_resources.Get(resourceRID);
+        if (resource == nullptr || resource->m_handle == nullptr) {
+            std::cerr << "RGBuilder::" << accessName << ": RG resource not found (index "
+                      << resourceRID.index << "), access skipped\n";
+            return false;
+        }
+        const ResourceType actual = resource->GetResourceType();
+        if (actual != expected) {
+            std::cerr << "RGBuilder::" << accessName << ": resource type mismatch (index "
+                      << resourceRID.index << "), expected "
+                      << (expected == ResourceType::Buffer ? "Buffer" : "Texture") << " but got "
+                      << (actual == ResourceType::Buffer ? "Buffer" : "Texture")
+                      << ", access skipped\n";
+            return false;
+        }
+        return true;
     }
 
     void RGBuilder::Init(RHI::Context* context) {
@@ -159,7 +182,7 @@ namespace Ccino {
                 passInDegrees[dependency.dstPassRID]++; //入度+1
                 //Barrier注入 这里先不做，后续注册, 需要向RHI转换
                 auto* resource = m_resources.Get(dependency.resourceRID);
-                if (resource->resourceType == ResourceType::Buffer) {
+                if (resource != nullptr && resource->GetResourceType() == ResourceType::Buffer) {
                     RGBufferBarrier bufferBarrier;
                     std::visit([&](const auto& resourceFlags){
                         if constexpr (std::is_same_v<BufferAccessFlags, std::decay_t<decltype(resourceFlags)>>) {
@@ -259,33 +282,34 @@ namespace Ccino {
 
 
     RID RGBuilder::CreateTransientBuffer(typename Buffer::CreateArgs createArgs) {
-        auto rid = m_resources.Add(RGResource{ResourceType::Buffer, createArgs});
-        return  rid;
+        return m_resources.Add(RGResource::TransientBuffer(std::move(createArgs)));
     }
 
     RID RGBuilder::CreateExternalBuffer(const Ref<Buffer>& buffer) {
-        auto rid = m_resources.Add(RGResource{ResourceType::Buffer, buffer->GetCreateArgs(), true, buffer});
-        return rid;
+        return m_resources.Add(RGResource::ExternalBuffer(buffer));
+    }
+
+    RID RGBuilder::CreateTransientTexture2D(typename Texture2D::CreateArgs createArgs) {
+        return m_resources.Add(RGResource::TransientTexture2D(std::move(createArgs)));
+    }
+
+    RID RGBuilder::CreateExternalTexture2D(const Ref<Texture2D>& texture) {
+        return m_resources.Add(RGResource::ExternalTexture2D(texture));
     }
 
     void RGBuilder::CreateGPUResource() {
-        // 创建资源
+        // 创建资源: 具体类型由 RGResource 内部的多态句柄分发
+        if (m_context == nullptr) return;
         m_resources.ForEach([this](RGResource& resource){
             if (resource.isExternal) return;
-            if (resource.resourceType == ResourceType::Buffer) {
-                if (!resource.bufferRef.IsValid()) {
-                    resource.bufferRef = Buffer::Create(*m_context, resource.bufferCreateArgs);
-                }
-            }
+            resource.Create(*m_context);
         });
     }
 
     void RGBuilder::ReleaseGPUResource() {
         m_resources.ForEach([](RGResource& resource){
             if (resource.isExternal) return;
-            if (resource.resourceType == ResourceType::Buffer) {
-                resource.bufferRef.UnRef();
-            }
+            resource.Release();
         });
     }
 
@@ -303,8 +327,8 @@ namespace Ccino {
                 dependecyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
                 std::vector<VkBufferMemoryBarrier2> bufferBarriers;
                 for (auto& accessBarrier : m_bufferBarriers[i - 1]) {
-                    auto barrier = GenerateVkBufferBarrier(accessBarrier.srcFlags, accessBarrier.dstFlags, m_context, 
-                        m_resources.Get(accessBarrier.resourceRID)->bufferRef->GetRHI(), accessBarrier.srcPassType, accessBarrier.dstPassType);
+                    auto barrier = GenerateVkBufferBarrier(accessBarrier.srcFlags, accessBarrier.dstFlags, m_context,
+                        m_resources.Get(accessBarrier.resourceRID)->GetRHI(), accessBarrier.srcPassType, accessBarrier.dstPassType);
                     bufferBarriers.push_back(std::move(barrier));
                 }
                 dependecyInfo.bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size());
@@ -324,8 +348,38 @@ namespace Ccino {
                     if (data.uniformDataType == UniformDataType::Buffer) {
                         //直接得到Accessor第一个元素 rid , lambda实例化后相当于是一个struct
                         auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
-                        RID rhiBufferRID = m_resources.Get(*rid)->bufferRef->GetRHI();
+                        RID rhiBufferRID = m_resources.Get(*rid)->GetRHI();
                         descriptorSlot->BindBuffer(data.name, rhiBufferRID);
+                    } else if (data.uniformDataType == UniformDataType::SampledImage) {
+                        auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
+                        auto* viewRange =  reinterpret_cast<ViewRange*>(static_cast<char*>(pass->lambda.data()) + data.offset + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
+                        RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
+                        VkImageViewCreateInfo createInfo = {};
+                        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; //支持2D 这里的UniformData不太合适
+                        createInfo.subresourceRange.aspectMask = ToVkAspectFlags(viewRange->aspectMask);
+                        createInfo.subresourceRange.baseArrayLayer = viewRange->baseArray;
+                        createInfo.subresourceRange.layerCount = viewRange->arrayCounts;
+                        createInfo.subresourceRange.levelCount = viewRange->mipMapCounts;
+                        createInfo.subresourceRange.baseMipLevel = viewRange->baseMipMap;
+
+                        descriptorSlot->BindTexture2DSRV(data.name, rhiTextureRID, createInfo);
+
+                    } else if (data.uniformDataType == UniformDataType::StorageImage) {
+                        auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
+                        auto* viewRange =  reinterpret_cast<ViewRange*>(static_cast<char*>(pass->lambda.data()) + data.offset + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
+                        RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
+
+                        VkImageViewCreateInfo createInfo = {};
+                        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                        createInfo.subresourceRange.aspectMask = ToVkAspectFlags(viewRange->aspectMask);
+                        createInfo.subresourceRange.baseArrayLayer = viewRange->baseArray;
+                        createInfo.subresourceRange.layerCount = viewRange->arrayCounts;
+                        createInfo.subresourceRange.levelCount = viewRange->mipMapCounts;
+                        createInfo.subresourceRange.baseMipLevel = viewRange->baseMipMap;
+
+                        descriptorSlot->BindTexture2DUAV(data.name, rhiTextureRID, createInfo);
                     } else {
                         descriptorSlot->BindParam(data.name, data.uniformDataType, static_cast<char*>(pass->lambda.data()) + data.offset);
                     }
