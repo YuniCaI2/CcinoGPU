@@ -32,10 +32,17 @@ namespace Ccino::GLSL {
         virtual Kind GetKind() = 0;
     };
 
+    struct VarDecl {
+        std::string type;
+        std::string name;
+        std::string dimensions;
+        std::unique_ptr<Stmt> initStmt;
+    };
+
     struct DeclStmt : Stmt {
         Kind GetKind() override;
         std::string EmitGLSL() override;
-        std::vector<std::unique_ptr<Expr>> exprs;
+        std::vector<VarDecl> decls;
     };
 
     struct IfStmt : Stmt {

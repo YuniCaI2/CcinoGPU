@@ -1,9 +1,15 @@
 #pragma once
 #include "CodeGenerator/GLSLAST.h"
+#include <clang/AST/Stmt.h>
 #include <unordered_set>
 
 namespace clang {
     class Stmt;
+    class DeclStmt;
+    class IfStmt;
+    class ForStmt;
+    class WhileStmt;
+    class ReturnStmt;
     class Expr;
     class MemberExpr;
     class CallExpr;
@@ -24,10 +30,11 @@ namespace Ccino {
 
     private:
         //Stmt
-        std::unique_ptr<GLSL::LoweringStmt> ProcessIfStmt(clang::Stmt* stmt);
-        std::unique_ptr<GLSL::LoweringStmt> ProcessForStmt(clang::Stmt* stmt);
-        std::unique_ptr<GLSL::LoweringStmt> ProcessWhileStmt(clang::Stmt* stmt);
-        std::unique_ptr<GLSL::LoweringStmt> ProcessReturnStmt(clang::Stmt* stmt);
+        std::unique_ptr<GLSL::DeclStmt> ProcessDeclStmt(clang::DeclStmt* stmt);
+        std::unique_ptr<GLSL::IfStmt> ProcessIfStmt(clang::IfStmt* stmt);
+        std::unique_ptr<GLSL::ForStmt> ProcessForStmt(clang::ForStmt* stmt);
+        std::unique_ptr<GLSL::WhileStmt> ProcessWhileStmt(clang::WhileStmt* stmt);
+        std::unique_ptr<GLSL::ReturnStmt> ProcessReturnStmt(clang::ReturnStmt* stmt);
 
         //Expr
         std::unique_ptr<GLSL::LoweringStmt> ProcessCallExpr(clang::CallExpr* expr);

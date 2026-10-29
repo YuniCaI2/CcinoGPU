@@ -48,6 +48,18 @@ namespace Ccino::GLSL {
             }
             return out;
         }
+
+        std::string FormatVarDecl(const VarDecl& decl) {
+            if (decl.type.empty() || decl.name.empty()) return {};
+            std::string out = decl.type + " " + decl.name + decl.dimensions;
+            if (decl.initStmt) {
+                std::string initExpr = EmitAsExpr(decl.initStmt);
+                if (!initExpr.empty()) {
+                    out += " = " + initExpr;
+                }
+            }
+            return out;
+        }
     }
 
     Kind DeclStmt::GetKind() { return Kind::DeclStmt; }
@@ -82,13 +94,21 @@ namespace Ccino::GLSL {
         return text + "\n";
     }
 
+    /*
+    初始化：
+    int temp = 0;
+    A a = temp;
+    */
+
     std::string DeclStmt::EmitGLSL() {
         std::string out;
-        for (const auto& expr : exprs) {
-            if (!expr || expr->text.empty()) continue;
-            out += expr->text;
-            if (out.back() != ';') out += ';';
-            out += '\n';
+        for (const auto& decl : decls) {
+            std::string declText = FormatVarDecl(decl);
+            if (declText.empty()) continue;
+            if (HasLoweringFields(decl.initStmt)) {
+                out += EmitLoweringFields(decl.initStmt);
+            }
+            out += declText + ";\n";
         }
         return out;
     }
@@ -179,21 +199,17 @@ namespace Ccino::GLSL {
         std::string initText;
 
         if (initStmt) {
-            if (HasLoweringFields(initStmt)) {
-                auto* lowering = static_cast<LoweringStmt*>(initStmt.get());
-                if (lowering->expr && !lowering->expr->text.empty()) {
-                    prologue += EmitLoweringFields(initStmt);
-                    initText = lowering->expr->text;
-                } else {
-                    for (size_t i = 0; i + 1 < lowering->fields.size(); ++i) {
-                        prologue += EmitChild(lowering->fields[i]);
-                    }
-                    if (!lowering->fields.empty()) {
-                        initText = TrimTrailingNewlines(EmitChild(lowering->fields.back()));
-                    }
-                }
+            std::string raw = TrimTrailingNewlines(initStmt->EmitGLSL()); //这里去掉了末尾的\n
+            if (!raw.empty() && raw.back() == ';') {
+                raw.pop_back();
+            }
+            const size_t lastNewline = raw.rfind('\n');
+            //这里非常的巧妙，倒着找到最后一个\n的index 也就是倒数第二个\n
+            if (lastNewline != std::string::npos) {
+                prologue = raw.substr(0, lastNewline + 1);
+                initText = raw.substr(lastNewline + 1);
             } else {
-                initText = TrimTrailingNewlines(EmitChild(initStmt));
+                initText = std::move(raw);
             }
         }
 
@@ -203,7 +219,7 @@ namespace Ccino::GLSL {
         std::string out = prologue;
         out += "for (";
         out += initText;
-        if (initText.empty() || initText.back() != ';') out += ';';
+        out += ';';
 
         if (!sinkCond) {
             out += EmitAsExpr(condStmt);

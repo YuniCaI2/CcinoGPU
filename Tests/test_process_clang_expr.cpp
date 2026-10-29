@@ -572,9 +572,13 @@ TEST(ProcessClangExprTest, IntegrationWithGLSLASTStmtEmission) {
     // 将 ProcessClangExpr 生成的 LoweringStmt 组装进 GLSL::ForStmt + GLSL::ReturnStmt
     auto forStmt = std::make_unique<Ccino::GLSL::ForStmt>();
     auto initDecl = std::make_unique<Ccino::GLSL::DeclStmt>();
+    Ccino::GLSL::VarDecl initVar;
+    initVar.type = "int";
+    initVar.name = "i";
     auto initExpr = std::make_unique<Ccino::GLSL::Expr>();
-    initExpr->text = "int i = 0";
-    initDecl->exprs.push_back(std::move(initExpr));
+    initExpr->text = "0";
+    initVar.initStmt = std::move(initExpr);
+    initDecl->decls.push_back(std::move(initVar));
     forStmt->initStmt = std::move(initDecl);
     forStmt->condStmt = std::move(collector.Lowerings[0]);
     forStmt->incStmt = std::move(collector.Lowerings[1]);
