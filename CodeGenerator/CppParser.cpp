@@ -541,7 +541,8 @@ namespace Ccino
 
         if (auto* ME = llvm::dyn_cast<clang::MemberExpr>(expr)) {
             std::string member = ME->getMemberDecl()->getNameAsString();
-            if (member.empty()) { //如果这里的member名字为空，则为union 匿名变量，就是glm数学库中的情况,这里直接向左透传 vec3 . <匿名Union> . x 这里就是跳过匿名Union 最先访问的是x
+            if (member.empty()) { //如果这里的member名字为空，则为union 匿名变量，就是glm数学库中的情况,
+                //这里直接向左透传 vec3 . <匿名Union> . x 这里就是跳过匿名Union 最先访问的是x
                 return ChangeCppExprToGLSLExpr(ME->getBase());
             }
             if (ME->isImplicitAccess()) {

@@ -663,6 +663,9 @@ namespace Ccino {
         "bitCount",
         "findLSB",
         "findMSB",
+
+        // 9. 同步与屏障函数 (Shader Invocation Control & Memory Barrier Functions)
+        "barrier",
     };
 
     // Cpp -> GLSL 内建变量映射表

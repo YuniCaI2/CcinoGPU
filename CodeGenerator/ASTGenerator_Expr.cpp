@@ -1,0 +1,434 @@
+#include "CodeGenerator/ASTGenerator.h"
+#include "CodeGenerator/SignatureFlattener.h"
+#include "Core/CcinoType.h"
+#include "GLSLAST.h"
+#include <algorithm>
+#include <cctype>
+#include <clang/AST/ASTContext.h>
+#include <clang/AST/DeclCXX.h>
+#include <clang/AST/Expr.h>
+#include <clang/AST/ExprCXX.h>
+#include <clang/AST/OperationKinds.h>
+#include <clang/AST/Type.h>
+#include <clang/Basic/OperatorKinds.h>
+#include <llvm/ADT/SmallString.h>
+#include <llvm/Support/Casting.h>
+#include <llvm/Support/raw_ostream.h>
+#include <memory>
+#include <string>
+#include <utility>
+
+namespace Ccino {
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessClangExpr(clang::Expr* expr) {
+        if (!expr) return {};
+        expr = expr->IgnoreUnlessSpelledInSource();
+
+        auto lowering = std::make_unique<GLSL::LoweringStmt>();
+
+        // 禁止在 Shader 函数体内嵌套局部 Lambda
+        if (llvm::isa<clang::LambdaExpr>(expr)) {
+            llvm::errs() << "Error: Unsupported nested LambdaExpr in ASTGenerator\n";
+            return {};
+        }
+
+        // 默认参数表达式
+        if (auto* DAE = llvm::dyn_cast<clang::CXXDefaultArgExpr>(expr)) {
+            return ProcessClangExpr(DAE->getExpr());
+        }
+
+        // 显式 this 指针 (如 this->member)
+        if (llvm::isa<clang::CXXThisExpr>(expr)) {
+            auto thisExpr = std::make_unique<GLSL::Expr>();
+            thisExpr->text = "self";
+            lowering->expr = std::move(thisExpr);
+            return lowering;
+        }
+
+        if (auto* DRE = llvm::dyn_cast<clang::DeclRefExpr>(expr)) {
+            // 只有一个值时走,引用表达式
+            auto refExpr = std::make_unique<GLSL::Expr>();
+            auto* decl = DRE->getDecl();
+            auto name = decl->getNameAsString();
+            const auto* varDecl = llvm::dyn_cast<clang::VarDecl>(decl);
+
+            if (DRE->refersToEnclosingVariableOrCapture() || (varDecl && varDecl->isInitCapture())) { //是被捕获的变量
+                // Lambda 捕获的外部变量 (Accessor / Uniform 标量 / 向量 / 矩阵 / 广义初始化捕获)
+                refExpr->text = "pc.uniformData." + name;
+            } else if ((!varDecl || !varDecl->isLocalVarDeclOrParm()) && GLSLBuiltinVarMap.contains(name)) {
+                // C++ 内建全局变量 (如 Ccino::ComputeGlobalID -> gl_GlobalInvocationID)
+                refExpr->text = GLSLBuiltinVarMap.at(name); //全局变量羊二十DeclRefExpr 所以这里直接查表替换即可
+            } else {
+                refExpr->text = name;
+            }
+
+            lowering->expr = std::move(refExpr);
+            return lowering;
+        }
+
+        //成员访问
+        if (auto* ME = llvm::dyn_cast<clang::MemberExpr>(expr)) {
+            return ProcessMemberExpr(ME);
+        }
+
+        //ASE
+        if (auto* ASE = llvm::dyn_cast<clang::ArraySubscriptExpr>(expr)) {
+            auto base = ProcessClangExpr(ASE->getBase());
+            auto idx = ProcessClangExpr(ASE->getIdx());
+            if (!base || !base->expr || !idx || !idx->expr) return {};
+            for (auto& idxField : idx->fields) {
+                base->fields.push_back(std::move(idxField));
+            }
+            base->expr->text += "[" + idx->expr->text + "]";
+            return base;
+        }
+
+        //Member Call (必须在 CallExpr 之前)
+        if (auto* MCE = llvm::dyn_cast<clang::CXXMemberCallExpr>(expr)) {
+            return ProcessMemberCallExpr(MCE);
+        }
+
+        //重载运算符调用 (必须在 CallExpr 之前，因为 CXXOperatorCallExpr 继承自 CallExpr)
+        if (auto* Op = llvm::dyn_cast<clang::CXXOperatorCallExpr>(expr)) {
+            return ProcessOperatorCallExpr(Op);
+        }
+
+        if (auto* Call = llvm::dyn_cast<clang::CallExpr>(expr)) {
+            return ProcessCallExpr(Call);
+        }
+
+        //内置二元运算符
+        if (auto* Op = llvm::dyn_cast<clang::BinaryOperator>(expr)) {
+            auto lhs = ProcessClangExpr(Op->getLHS());
+            auto rhs = ProcessClangExpr(Op->getRHS());
+            if (!lhs || !lhs->expr || !rhs || !rhs->expr) return {};
+            for (auto& f : lhs->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            for (auto& f : rhs->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            std::string op = Op->getOpcodeStr().str();
+            auto binExpr = std::make_unique<GLSL::Expr>();
+            binExpr->text = "(" + lhs->expr->text + " " + op + " " + rhs->expr->text + ")";
+            lowering->expr = std::move(binExpr);
+            return lowering;
+        }
+
+        //内置一元运算符
+        if (auto* UO = llvm::dyn_cast<clang::UnaryOperator>(expr)) {
+            auto sub = ProcessClangExpr(UO->getSubExpr());
+            if (!sub || !sub->expr) return {};
+            for (auto& f : sub->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            std::string op = clang::UnaryOperator::getOpcodeStr(UO->getOpcode()).str();
+            auto unaryExpr = std::make_unique<GLSL::Expr>();
+            unaryExpr->text = UO->isPostfix()
+                                  ? "(" + sub->expr->text + op + ")"
+                                  : "(" + op + sub->expr->text + ")";
+            lowering->expr = std::move(unaryExpr);
+            return lowering;
+        }
+
+        //三元条件运算符
+        if (auto* CO = llvm::dyn_cast<clang::ConditionalOperator>(expr)) {
+            auto cond = ProcessClangExpr(CO->getCond());
+            auto trueExpr = ProcessClangExpr(CO->getTrueExpr());
+            auto falseExpr = ProcessClangExpr(CO->getFalseExpr());
+            if (!cond || !cond->expr || !trueExpr || !trueExpr->expr || !falseExpr || !falseExpr->expr) {
+                return {};
+            }
+            for (auto& f : cond->fields) lowering->fields.push_back(std::move(f));
+            for (auto& f : trueExpr->fields) lowering->fields.push_back(std::move(f));
+            for (auto& f : falseExpr->fields) lowering->fields.push_back(std::move(f));
+            auto condOpExpr = std::make_unique<GLSL::Expr>();
+            condOpExpr->text = "(" + cond->expr->text + " ? " + trueExpr->expr->text + " : " + falseExpr->expr->text + ")";
+            lowering->expr = std::move(condOpExpr);
+            return lowering;
+        }
+
+        //浮点数字面量
+        if (auto* FL = llvm::dyn_cast<clang::FloatingLiteral>(expr)) {
+            llvm::SmallString<16> S;
+            FL->getValue().toString(S);
+            std::string str = S.str().str();
+            if (str.find('.') == std::string::npos &&
+                str.find('e') == std::string::npos &&
+                str.find('E') == std::string::npos) {
+                str += ".0";
+            }
+            auto litExpr = std::make_unique<GLSL::Expr>();
+            litExpr->text = std::move(str);
+            lowering->expr = std::move(litExpr);
+            return lowering;
+        }
+
+        //整数字面量
+        if (auto* IL = llvm::dyn_cast<clang::IntegerLiteral>(expr)) {
+            llvm::SmallString<32> S;
+            IL->getValue().toString(S, 10, IL->getType()->isSignedIntegerType());
+            auto litExpr = std::make_unique<GLSL::Expr>();
+            litExpr->text = S.str().str();
+            lowering->expr = std::move(litExpr);
+            return lowering;
+        }
+
+        //布尔字面量
+        if (auto* BL = llvm::dyn_cast<clang::CXXBoolLiteralExpr>(expr)) {
+            auto litExpr = std::make_unique<GLSL::Expr>();
+            litExpr->text = BL->getValue() ? "true" : "false";
+            lowering->expr = std::move(litExpr);
+            return lowering;
+        }
+
+        //显式类型转换 (如 float(x), (float)x, static_cast<float>(x))
+        if (auto* Cast = llvm::dyn_cast<clang::ExplicitCastExpr>(expr)) {
+            clang::Expr* subExpr = Cast->getSubExpr();
+            clang::Expr* subStripped = subExpr ? subExpr->IgnoreUnlessSpelledInSource() : nullptr; //剥离外部的壳，如果没有构造那就cast
+            if (subStripped && (llvm::isa<clang::CXXConstructExpr>(subStripped) ||
+                                llvm::isa<clang::InitListExpr>(subStripped))) {
+                return ProcessClangExpr(subStripped);
+            }
+            auto sub = ProcessClangExpr(subExpr);
+            if (!sub || !sub->expr) return {};
+            for (auto& f : sub->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            auto castExpr = std::make_unique<GLSL::Expr>();
+            castExpr->text = SignatureFlattener::FlattenType(Cast->getTypeAsWritten()) + "(" + sub->expr->text + ")";
+            lowering->expr = std::move(castExpr);
+            return lowering;
+        }
+
+        //构造函数
+        if (auto* Cstr = llvm::dyn_cast<clang::CXXConstructExpr>(expr)) {
+            if (Cstr->getConstructor() && Cstr->getConstructor()->isCopyOrMoveConstructor() &&
+                Cstr->getNumArgs() >= 1) {
+                return ProcessClangExpr(Cstr->getArg(0));
+            }
+            auto cstrExpr = std::make_unique<GLSL::Expr>();
+            cstrExpr->text = SignatureFlattener::FlattenType(Cstr->getType()) + "(";
+            for (uint32_t i = 0; i < Cstr->getNumArgs(); ++i) {
+                auto arg = ProcessClangExpr(Cstr->getArg(i));
+                if (!arg || !arg->expr) continue;
+                for (auto& f : arg->fields) {
+                    lowering->fields.push_back(std::move(f));
+                }
+                cstrExpr->text += (i ? "," : "") + arg->expr->text;
+            }
+            cstrExpr->text += ")";
+            lowering->expr = std::move(cstrExpr);
+            return lowering;
+        }
+
+        //初始化列表表达式 (如 {1, 2, 3} 或聚合初始化 Particle{pos, 1})
+        if (auto* ILE = llvm::dyn_cast<clang::InitListExpr>(expr)) {
+            if (auto* semantic = ILE->getSemanticForm()) {
+                ILE = semantic;
+            }
+            std::string elems;
+            bool first = true;
+            for (clang::Expr* init : ILE->inits()) {
+                if (!init || llvm::isa<clang::ImplicitValueInitExpr>(init)) continue;
+                auto elemLowering = ProcessClangExpr(init);
+                if (!elemLowering || !elemLowering->expr) continue;
+                for (auto& f : elemLowering->fields) {
+                    lowering->fields.push_back(std::move(f));
+                }
+                if (!first) elems += ",";
+                elems += elemLowering->expr->text;
+                first = false;
+            }
+            auto initExpr = std::make_unique<GLSL::Expr>();
+            if (ILE->getType()->isRecordType()) {
+                initExpr->text = SignatureFlattener::FlattenType(ILE->getType()) + "(" + elems + ")";
+            } else {
+                initExpr->text = "{" + elems + "}";
+            }
+            lowering->expr = std::move(initExpr);
+            return lowering;
+        }
+
+        llvm::errs() << "Error: Unsupported Expr in ASTGenerator: " << expr->getStmtClassName() << "\n";
+        return {};
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessOperatorCallExpr(clang::CXXOperatorCallExpr* expr) {
+        if (!expr) return {};
+
+        auto lowering = std::make_unique<GLSL::LoweringStmt>();
+        std::string op = clang::getOperatorSpelling(expr->getOperator());
+
+        if (expr->getOperator() == clang::OO_Subscript && expr->getNumArgs() == 2) {
+            auto base = ProcessClangExpr(expr->getArg(0));
+            auto idx = ProcessClangExpr(expr->getArg(1));
+            if (!base || !base->expr || !idx || !idx->expr) return {};
+            for (auto& f : idx->fields) {
+                base->fields.push_back(std::move(f));
+            }
+            base->expr->text += "[" + idx->expr->text + "]";
+            return base;
+        }
+
+        if ((expr->getOperator() == clang::OO_PlusPlus || expr->getOperator() == clang::OO_MinusMinus) &&
+            expr->getNumArgs() >= 1) {
+            auto operand = ProcessClangExpr(expr->getArg(0));
+            if (!operand || !operand->expr) return {};
+            for (auto& f : operand->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            auto opExpr = std::make_unique<GLSL::Expr>();
+            opExpr->text = (expr->getNumArgs() == 2)
+                               ? "(" + operand->expr->text + op + ")"
+                               : "(" + op + operand->expr->text + ")";
+            lowering->expr = std::move(opExpr);
+            return lowering;
+        }
+
+        if (expr->isInfixBinaryOp() && expr->getNumArgs() == 2) {
+            auto lhs = ProcessClangExpr(expr->getArg(0));
+            auto rhs = ProcessClangExpr(expr->getArg(1));
+            if (!lhs || !lhs->expr || !rhs || !rhs->expr) return {};
+            for (auto& f : lhs->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            for (auto& f : rhs->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            auto opExpr = std::make_unique<GLSL::Expr>();
+            opExpr->text = "(" + lhs->expr->text + " " + op + " " + rhs->expr->text + ")";
+            lowering->expr = std::move(opExpr);
+            return lowering;
+        }
+
+        if (expr->getNumArgs() == 1) {
+            auto sub = ProcessClangExpr(expr->getArg(0));
+            if (!sub || !sub->expr) return {};
+            for (auto& f : sub->fields) {
+                lowering->fields.push_back(std::move(f));
+            }
+            auto opExpr = std::make_unique<GLSL::Expr>();
+            opExpr->text = "(" + op + sub->expr->text + ")";
+            lowering->expr = std::move(opExpr);
+            return lowering;
+        }
+
+        return {};
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessCallExpr(clang::CallExpr* expr) {
+        if (!expr) return nullptr;
+        if (auto* FD = expr->getDirectCallee()) {
+            std::string funcName = SignatureFlattener::FlattenFunction(FD);
+            std::string rawName = FD->getNameAsString();
+            std::string lowerName = rawName;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+
+            std::string camelName = rawName;
+            if (!camelName.empty()) {
+                camelName[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(camelName[0])));
+            }
+
+            if (GLSLBuiltinFuncSet.contains(lowerName)) {
+                funcName = std::move(lowerName);
+            } else if (GLSLBuiltinFuncSet.contains(camelName)) {
+                funcName = std::move(camelName);
+            }
+
+            auto returnStmt = std::make_unique<GLSL::LoweringStmt>();
+            returnStmt->expr = std::make_unique<GLSL::Expr>();
+            returnStmt->expr->text = funcName + "(";
+            for (unsigned i = 0; i < expr->getNumArgs(); ++i) {
+                auto argStmt = ProcessClangExpr(expr->getArg(i));
+                if (!argStmt || !argStmt->expr) continue;
+                for (auto& field : argStmt->fields) {
+                    returnStmt->fields.push_back(std::move(field));
+                }
+                returnStmt->expr->text += (i ? "," : "") + argStmt->expr->text;
+            }
+
+            returnStmt->expr->text += ")";
+            return returnStmt;
+        }
+        return nullptr;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessMemberCallExpr(clang::CXXMemberCallExpr* expr) {
+        if (!expr) return {};
+
+        clang::CXXMethodDecl* method = expr->getMethodDecl();
+        if (!method) return {};   // 比如通过成员函数指针 .* / ->* 调用
+
+        auto lowering = std::make_unique<GLSL::LoweringStmt>();
+
+        //对象部分：obj / this / 隐式 this
+        std::string selfText;
+        clang::Expr* obj = expr->getImplicitObjectArgument();
+        clang::Expr* objStripped = obj ? obj->IgnoreParenImpCasts() : nullptr;
+
+        if (!objStripped || llvm::isa<clang::CXXThisExpr>(objStripped)) {
+            // foo() 或 this->foo()
+            selfText = "self";
+        } else {
+            //a.b[i].foo()
+            auto objLowering = ProcessClangExpr(obj);
+            if (objLowering) {
+                for (auto& f : objLowering->fields)
+                    lowering->fields.push_back(std::move(f));
+                if (objLowering->expr) selfText = objLowering->expr->text;
+            }
+        }
+
+        //函数名：Namespace_ClassName_method_ParamTypes
+        std::string funcName = SignatureFlattener::FlattenFunction(method, true);
+
+        //参数
+        std::string args = selfText;
+        for (clang::Expr* arg : expr->arguments()) {
+            auto argLowering = ProcessClangExpr(arg);
+            if (!argLowering || !argLowering->expr) continue;
+            for (auto& f : argLowering->fields)
+                lowering->fields.push_back(std::move(f));
+            if (!args.empty()) args += ", ";
+            args += argLowering->expr->text;
+        }
+
+        auto callExpr = std::make_unique<GLSL::Expr>();
+        callExpr->text = funcName + "(" + args + ")";
+        lowering->expr = std::move(callExpr);
+        return lowering;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessMemberExpr(clang::MemberExpr* expr) {
+        if (!expr) return {};
+
+        auto lowering = std::make_unique<GLSL::LoweringStmt>();
+
+        auto returnExpr = std::make_unique<GLSL::Expr>();
+        auto name = expr->getMemberDecl()->getNameAsString();
+
+        if (name.empty()) {
+            return ProcessClangExpr(expr->getBase());
+        }
+        //这个需要处理下如果current指针在，那代表不是lambda
+        if (expr->isImplicitAccess()) {
+            if (m_currentStructDecl) {
+                returnExpr->text = "self." + name;
+                lowering->expr = std::move(returnExpr);
+            } else {
+                returnExpr->text = "pc.uniformData." + name;
+                lowering->expr = std::move(returnExpr);
+            }
+            return lowering;
+        }
+
+        auto baseLowering = ProcessClangExpr(expr->getBase());
+        if (!baseLowering || !baseLowering->expr) return {};
+        lowering->fields = std::move(baseLowering->fields); //处理展开
+        returnExpr->text = baseLowering->expr->text + "." + name;
+        lowering->expr = std::move(returnExpr);
+        return lowering;
+    }
+}
