@@ -1,6 +1,6 @@
 #pragma once
 #include "CodeGenerator/GLSLAST.h"
-#include <clang/AST/Stmt.h>
+#include <memory>
 #include <unordered_set>
 
 namespace clang {
@@ -13,8 +13,18 @@ namespace clang {
     class Expr;
     class MemberExpr;
     class CallExpr;
+    class IntegerLiteral;
+    class CXXBoolLiteralExpr;
+    class BinaryOperator;
+    class UnaryOperator;
+    class ConditionalOperator;
+    class FloatingLiteral;
+    class ExplicitCastExpr;
+    class CXXConstructExpr;
+    class InitListExpr;
     class CXXMemberCallExpr;
     class CXXOperatorCallExpr;
+    class ExplicitCastExpr;
     class CXXRecordDecl;
 }
 
@@ -41,6 +51,15 @@ namespace Ccino {
         std::unique_ptr<GLSL::LoweringStmt> ProcessMemberCallExpr(clang::CXXMemberCallExpr* expr);
         std::unique_ptr<GLSL::LoweringStmt> ProcessOperatorCallExpr(clang::CXXOperatorCallExpr* expr);
         std::unique_ptr<GLSL::LoweringStmt> ProcessMemberExpr(clang::MemberExpr* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessILExpr(clang::IntegerLiteral* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessBinaryLiteral(clang::CXXBoolLiteralExpr* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessBinaryOp(clang::BinaryOperator* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessUnaryOp(clang::UnaryOperator* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessCondOp(clang::ConditionalOperator* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessFloatLiteral(clang::FloatingLiteral* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessExplicitCast(clang::ExplicitCastExpr* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessConstruct(clang::CXXConstructExpr* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessInitList(clang::InitListExpr* expr);
 
 
         //Tool

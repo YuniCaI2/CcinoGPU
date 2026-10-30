@@ -149,18 +149,7 @@ namespace Ccino {
 
         //浮点数字面量
         if (auto* FL = llvm::dyn_cast<clang::FloatingLiteral>(expr)) {
-            llvm::SmallString<16> S;
-            FL->getValue().toString(S);
-            std::string str = S.str().str();
-            if (str.find('.') == std::string::npos &&
-                str.find('e') == std::string::npos &&
-                str.find('E') == std::string::npos) {
-                str += ".0";
-            }
-            auto litExpr = std::make_unique<GLSL::Expr>();
-            litExpr->text = std::move(str);
-            lowering->expr = std::move(litExpr);
-            return lowering;
+            return ProcessFloatLiteral(FL);
         }
 
         //整数字面量
@@ -183,70 +172,17 @@ namespace Ccino {
 
         //显式类型转换 (如 float(x), (float)x, static_cast<float>(x))
         if (auto* Cast = llvm::dyn_cast<clang::ExplicitCastExpr>(expr)) {
-            clang::Expr* subExpr = Cast->getSubExpr();
-            clang::Expr* subStripped = subExpr ? subExpr->IgnoreUnlessSpelledInSource() : nullptr; //剥离外部的壳，如果没有构造那就cast
-            if (subStripped && (llvm::isa<clang::CXXConstructExpr>(subStripped) ||
-                                llvm::isa<clang::InitListExpr>(subStripped))) {
-                return ProcessClangExpr(subStripped);
-            }
-            auto sub = ProcessClangExpr(subExpr);
-            if (!sub || !sub->expr) return {};
-            for (auto& f : sub->fields) {
-                lowering->fields.push_back(std::move(f));
-            }
-            auto castExpr = std::make_unique<GLSL::Expr>();
-            castExpr->text = SignatureFlattener::FlattenType(Cast->getTypeAsWritten()) + "(" + sub->expr->text + ")";
-            lowering->expr = std::move(castExpr);
-            return lowering;
+            return ProcessExplicitCast(Cast);
         }
 
         //构造函数
         if (auto* Cstr = llvm::dyn_cast<clang::CXXConstructExpr>(expr)) {
-            if (Cstr->getConstructor() && Cstr->getConstructor()->isCopyOrMoveConstructor() &&
-                Cstr->getNumArgs() >= 1) {
-                return ProcessClangExpr(Cstr->getArg(0));
-            }
-            auto cstrExpr = std::make_unique<GLSL::Expr>();
-            cstrExpr->text = SignatureFlattener::FlattenType(Cstr->getType()) + "(";
-            for (uint32_t i = 0; i < Cstr->getNumArgs(); ++i) {
-                auto arg = ProcessClangExpr(Cstr->getArg(i));
-                if (!arg || !arg->expr) continue;
-                for (auto& f : arg->fields) {
-                    lowering->fields.push_back(std::move(f));
-                }
-                cstrExpr->text += (i ? "," : "") + arg->expr->text;
-            }
-            cstrExpr->text += ")";
-            lowering->expr = std::move(cstrExpr);
-            return lowering;
+            return ProcessConstruct(Cstr);
         }
 
         //初始化列表表达式 (如 {1, 2, 3} 或聚合初始化 Particle{pos, 1})
         if (auto* ILE = llvm::dyn_cast<clang::InitListExpr>(expr)) {
-            if (auto* semantic = ILE->getSemanticForm()) {
-                ILE = semantic;
-            }
-            std::string elems;
-            bool first = true;
-            for (clang::Expr* init : ILE->inits()) {
-                if (!init || llvm::isa<clang::ImplicitValueInitExpr>(init)) continue;
-                auto elemLowering = ProcessClangExpr(init);
-                if (!elemLowering || !elemLowering->expr) continue;
-                for (auto& f : elemLowering->fields) {
-                    lowering->fields.push_back(std::move(f));
-                }
-                if (!first) elems += ",";
-                elems += elemLowering->expr->text;
-                first = false;
-            }
-            auto initExpr = std::make_unique<GLSL::Expr>();
-            if (ILE->getType()->isRecordType()) {
-                initExpr->text = SignatureFlattener::FlattenType(ILE->getType()) + "(" + elems + ")";
-            } else {
-                initExpr->text = "{" + elems + "}";
-            }
-            lowering->expr = std::move(initExpr);
-            return lowering;
+            return ProcessInitList(ILE);
         }
 
         llvm::errs() << "Error: Unsupported Expr in ASTGenerator: " << expr->getStmtClassName() << "\n";
@@ -418,6 +354,7 @@ namespace Ccino {
                 returnExpr->text = "self." + name;
                 lowering->expr = std::move(returnExpr);
             } else {
+                //这里是不会走到的，因为不会出现Func嵌套Lambda的情况
                 returnExpr->text = "pc.uniformData." + name;
                 lowering->expr = std::move(returnExpr);
             }
@@ -431,4 +368,177 @@ namespace Ccino {
         lowering->expr = std::move(returnExpr);
         return lowering;
     }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessILExpr(clang::IntegerLiteral* expr) {
+        if (!expr) return {};
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        result->expr = std::make_unique<GLSL::Expr>();
+
+        llvm::SmallString<32> S;
+        expr->getValue().toString(S, 10, expr->getType()->isSignedIntegerType()); //使用十进制
+        result->expr->text = S.str().str();
+        return result;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessBinaryLiteral(clang::CXXBoolLiteralExpr* expr) {
+        if (!expr) return {};
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        result->expr = std::make_unique<GLSL::Expr>();
+
+    }
+
+    //内置二元运算符
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessBinaryOp(clang::BinaryOperator* expr) {
+        if (!expr) return {};
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        result->expr = std::make_unique<GLSL::Expr>();
+
+        auto lhs = ProcessClangExpr(expr->getLHS());
+        auto rhs = ProcessClangExpr(expr->getRHS());
+        if (!lhs || !lhs->expr || !rhs || !rhs->expr) return {};
+        for (auto& f : lhs->fields) {
+            result->fields.push_back(std::move(f));
+        }
+        for (auto& f : rhs->fields) {
+            result->fields.push_back(std::move(f));
+        }
+        std::string op = expr->getOpcodeStr().str();
+        auto binExpr = std::make_unique<GLSL::Expr>();
+        binExpr->text = "(" + lhs->expr->text + " " + op + " " + rhs->expr->text + ")";
+        result->expr = std::move(binExpr);
+        return result;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessUnaryOp(clang::UnaryOperator* expr) {
+        if (!expr) return {};
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        result->expr = std::make_unique<GLSL::Expr>();
+
+        auto sub = ProcessClangExpr(expr->getSubExpr());
+        if (!sub || !sub->expr) return {};
+        for (auto& f : sub->fields) {
+            result->fields.push_back(std::move(f));
+        }
+        std::string op = clang::UnaryOperator::getOpcodeStr(expr->getOpcode()).str();
+        auto unaryExpr = std::make_unique<GLSL::Expr>();
+        unaryExpr->text = expr->isPostfix() //是否是后置
+                                ? "(" + sub->expr->text + op + ")"
+                                : "(" + op + sub->expr->text + ")";
+        result->expr = std::move(unaryExpr);
+        return result;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessCondOp(clang::ConditionalOperator* expr) {
+        if (!expr) return {};
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        result->expr = std::make_unique<GLSL::Expr>();
+
+        auto cond = ProcessClangExpr(expr->getCond());
+        auto trueExpr = ProcessClangExpr(expr->getTrueExpr());
+        auto falseExpr = ProcessClangExpr(expr->getFalseExpr());
+        if (!cond || !cond->expr || !trueExpr || !trueExpr->expr || !falseExpr || !falseExpr->expr) {
+            return {};
+        }
+        for (auto& f : cond->fields) result->fields.push_back(std::move(f));
+        for (auto& f : trueExpr->fields) result->fields.push_back(std::move(f));
+        for (auto& f : falseExpr->fields) result->fields.push_back(std::move(f));
+        auto condOpExpr = std::make_unique<GLSL::Expr>();
+        condOpExpr->text = "(" + cond->expr->text + " ? " + trueExpr->expr->text + " : " + falseExpr->expr->text + ")";
+        result->expr = std::move(condOpExpr);
+        return result;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessFloatLiteral(clang::FloatingLiteral* expr) {
+        if (!expr) return {};
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        result->expr = std::make_unique<GLSL::Expr>();
+
+        llvm::SmallString<16> S;
+        expr->getValue().toString(S);
+        std::string str = S.str().str();
+        if (str.find('.') == std::string::npos &&
+            str.find('e') == std::string::npos &&
+            str.find('E') == std::string::npos) {
+            str += ".0";
+        }
+        result->expr->text = std::move(str);
+        return result;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessExplicitCast(clang::ExplicitCastExpr* expr) {
+        if (!expr) return {};
+
+        clang::Expr* subExpr = expr->getSubExpr();
+        clang::Expr* subStripped = subExpr ? subExpr->IgnoreUnlessSpelledInSource() : nullptr; //剥离外部的壳，如果没有构造那就cast
+        if (subStripped && (llvm::isa<clang::CXXConstructExpr>(subStripped) ||
+                            llvm::isa<clang::InitListExpr>(subStripped))) {
+            return ProcessClangExpr(subStripped);
+        }
+
+        auto sub = ProcessClangExpr(subExpr);
+        if (!sub || !sub->expr) return {};
+
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        for (auto& f : sub->fields) {
+            result->fields.push_back(std::move(f));
+        }
+        auto castExpr = std::make_unique<GLSL::Expr>();
+        castExpr->text = SignatureFlattener::FlattenType(expr->getTypeAsWritten()) + "(" + sub->expr->text + ")";
+        result->expr = std::move(castExpr);
+        return result;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessConstruct(clang::CXXConstructExpr* expr) {
+        if (!expr) return {};
+        if (expr->getConstructor() && expr->getConstructor()->isCopyOrMoveConstructor() &&
+            expr->getNumArgs() >= 1) {
+            return ProcessClangExpr(expr->getArg(0));
+        }
+
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        auto cstrExpr = std::make_unique<GLSL::Expr>();
+        cstrExpr->text = SignatureFlattener::FlattenType(expr->getType()) + "(";
+        for (uint32_t i = 0; i < expr->getNumArgs(); ++i) {
+            auto arg = ProcessClangExpr(expr->getArg(i));
+            if (!arg || !arg->expr) continue;
+            for (auto& f : arg->fields) {
+                result->fields.push_back(std::move(f));
+            }
+            cstrExpr->text += (i ? "," : "") + arg->expr->text;
+        }
+        cstrExpr->text += ")";
+        result->expr = std::move(cstrExpr);
+        return result;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessInitList(clang::InitListExpr* expr) {
+        if (!expr) return {};
+        if (auto* semantic = expr->getSemanticForm()) {
+            expr = semantic;
+        }
+
+        auto result = std::make_unique<GLSL::LoweringStmt>();
+        std::string elems;
+        bool first = true;
+        for (clang::Expr* init : expr->inits()) {
+            if (!init || llvm::isa<clang::ImplicitValueInitExpr>(init)) continue;
+            auto elemLowering = ProcessClangExpr(init);
+            if (!elemLowering || !elemLowering->expr) continue;
+            for (auto& f : elemLowering->fields) {
+                result->fields.push_back(std::move(f));
+            }
+            if (!first) elems += ",";
+            elems += elemLowering->expr->text;
+            first = false;
+        }
+        auto initExpr = std::make_unique<GLSL::Expr>();
+        if (expr->getType()->isRecordType()) {
+            initExpr->text = SignatureFlattener::FlattenType(expr->getType()) + "(" + elems + ")";
+        } else {
+            initExpr->text = "{" + elems + "}";
+        }
+        result->expr = std::move(initExpr);
+        return result;
+    }
+
 }
