@@ -26,6 +26,7 @@ namespace clang {
     class CXXOperatorCallExpr;
     class ExplicitCastExpr;
     class CXXRecordDecl;
+    class FunctionDecl;
 }
 
 //这个代码处理clangAST生成GLSL AST， GLSL的代码
@@ -34,6 +35,9 @@ namespace Ccino {
     public:
         std::unique_ptr<GLSL::LoweringStmt> ProcessClangStmt(clang::Stmt* stmt);
         std::unique_ptr<GLSL::LoweringStmt> ProcessClangExpr(clang::Expr* expr);
+
+        void InsertFunctionDeclToGraph(clang::FunctionDecl* functionDecl); //这里包括普通函数和成员函数
+        void InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl);
 
         void SetCurrentStructDecl(clang::CXXRecordDecl* decl) { m_currentStructDecl = decl; }
         clang::CXXRecordDecl* GetCurrentStructDecl() const { return m_currentStructDecl; }
@@ -64,6 +68,7 @@ namespace Ccino {
 
         //Tool
         std::unordered_set<std::string> GetStructMember(clang::CXXRecordDecl* decl);
+        static std::string GenerateNumString();
 
         GLSL::DeclGraph m_declGraph;
         std::unique_ptr<GLSL::Stmt> m_root;

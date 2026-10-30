@@ -240,6 +240,7 @@ namespace Ccino {
             return SanitizeGLSLIdentifier(ownName);
         }
 
+        //区分模板类型，这里很重要
         ownName = decl->getNameAsString();
         if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(decl)) {
             AppendTemplateArgs(spec->getTemplateArgs(), ownName);

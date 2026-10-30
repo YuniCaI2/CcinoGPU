@@ -24,6 +24,8 @@ namespace
         std::vector<std::string> ExprTexts;
         std::vector<std::string> EmittedStmts;
         std::unordered_map<std::string, std::string> VarInitExprTexts;
+        std::unordered_map<std::string, std::string> VarInitEmittedStmts;
+        std::unordered_map<std::string, std::unique_ptr<Ccino::GLSL::LoweringStmt>> VarInitLowerings;
 
         void run(const MatchFinder::MatchResult& Result) override {
             const auto* Func = Result.Nodes.getNodeAs<FunctionDecl>("func");
@@ -47,7 +49,10 @@ namespace
                         if (!varDecl || !varDecl->hasInit()) continue;
                         auto lowering = generator.ProcessClangExpr(varDecl->getInit());
                         if (lowering && lowering->expr) {
-                            VarInitExprTexts[varDecl->getNameAsString()] = lowering->expr->text;
+                            const std::string varName = varDecl->getNameAsString();
+                            VarInitExprTexts[varName] = lowering->expr->text;
+                            VarInitEmittedStmts[varName] = lowering->EmitGLSL();
+                            VarInitLowerings[varName] = std::move(lowering);
                         }
                     }
                     continue;
@@ -395,8 +400,16 @@ TEST(ProcessClangExprTest, CastsConstructorsAndInitLists) {
     EXPECT_EQ(result.VarInitExprTexts.at("f_cstyle"), "float(x)");
     EXPECT_EQ(result.VarInitExprTexts.at("f_func"), "float((x + 1))");
     EXPECT_EQ(result.VarInitExprTexts.at("f_static"), "float(x)");
-    EXPECT_EQ(result.VarInitExprTexts.at("v_ctor"), "vec3(1,2,3)");
-    EXPECT_EQ(result.VarInitExprTexts.at("p1"), "Sim_Particle(vec3(1,2,3),7)");
+    EXPECT_EQ(result.VarInitExprTexts.at("v_ctor"), "vec3(1, 2, 3)");
+
+    const std::string& p1Temp = result.VarInitExprTexts.at("p1");
+    EXPECT_TRUE(p1Temp.starts_with("_temp_"));
+    EXPECT_EQ(
+        result.VarInitEmittedStmts.at("p1"),
+        "Sim_Particle " + p1Temp + ";\n"
+        "Sim_Particle_ctor_vec3_int( " + p1Temp + ",vec3(1, 2, 3),7);\n" +
+        p1Temp + ";\n");
+
     // 拷贝构造应直接穿透为 p1，不生成非法的 Sim_Particle(p1)
     EXPECT_EQ(result.VarInitExprTexts.at("p2"), "p1");
     EXPECT_EQ(result.VarInitExprTexts.at("sample"), "Sim_LightSample(v_ctor,0.5)");
@@ -404,6 +417,126 @@ TEST(ProcessClangExprTest, CastsConstructorsAndInitLists) {
 
     ASSERT_EQ(result.ExprTexts.size(), 1u);
     EXPECT_EQ(result.ExprTexts[0], "(rawArr[2] = (rawArr[0] + int(f_static)))");
+}
+
+TEST(ProcessClangExprTest, ProcessConstructBuiltinUserStructTrivialAndNested) {
+    const auto result = RunProcessClangExprOnCode(kExprTestPreamble + R"(
+        namespace Sim {
+            struct TrivialBox {
+                int width;
+                int height;
+            };
+
+            struct Inner {
+                int v;
+                Inner(int val) : v(val) {}
+            };
+
+            struct Particle {
+                Ccino::Vec3 pos;
+                int id;
+                Particle() = default;
+                Particle(int i) : pos(Ccino::Vec3(0, 0, 0)), id(i) {}
+                Particle(Ccino::Vec3 p, int i = 99) : pos(p), id(i) {}
+            };
+
+            struct Outer {
+                Inner inner;
+                float scale;
+                Outer(Inner in, float s) : inner(in), scale(s) {}
+            };
+        }
+
+        void TestEntry() {
+            // 1. 内置类型构造：不产生临时变量，直接拼装 GLSL 构造器
+            Ccino::Vec3 v = Ccino::Vec3(1, 2, 3);
+            Ccino::IVec3 iv = Ccino::IVec3(4, 5, 6);
+
+            // 2. 非平凡构造函数（含重载与默认实参）
+            Sim::Particle p_single(42);
+            Sim::Particle p_default_arg(Ccino::Vec3(1, 2, 3));
+
+            // 3. 拷贝构造：直接穿透源变量，不产生临时变量或 ctor 调用
+            Sim::Particle p_copy = p_single;
+
+            // 4. 平凡默认构造 (isTrivial() == true)：仅声明临时变量，不调用 ctor 函数
+            Sim::TrivialBox box = Sim::TrivialBox();
+            Sim::Particle p_default_trivial = Sim::Particle();
+
+            // 5. 嵌套自定义结构体构造：外层与内层临时变量及 ctor 调用按序展开
+            Sim::Outer nested(Sim::Inner(7), 2.5f);
+
+            // 6. 赋值表达式中的临时结构体构造
+            p_single = Sim::Particle(100);
+        }
+    )");
+
+    // 1. 验证内置类型构造无 Lowering fields
+    ASSERT_NE(result.VarInitLowerings.at("v"), nullptr);
+    EXPECT_TRUE(result.VarInitLowerings.at("v")->fields.empty());
+    EXPECT_EQ(result.VarInitExprTexts.at("v"), "vec3(1, 2, 3)");
+
+    ASSERT_NE(result.VarInitLowerings.at("iv"), nullptr);
+    EXPECT_TRUE(result.VarInitLowerings.at("iv")->fields.empty());
+    EXPECT_EQ(result.VarInitExprTexts.at("iv"), "ivec3(4, 5, 6)");
+
+    // 2. 验证非平凡构造（单参数重载 & 默认参数补全）
+    const std::string& singleTemp = result.VarInitExprTexts.at("p_single");
+    EXPECT_TRUE(singleTemp.starts_with("_temp_"));
+    ASSERT_EQ(result.VarInitLowerings.at("p_single")->fields.size(), 2u);
+    EXPECT_EQ(
+        result.VarInitEmittedStmts.at("p_single"),
+        "Sim_Particle " + singleTemp + ";\n"
+        "Sim_Particle_ctor_int( " + singleTemp + ",42);\n" +
+        singleTemp + ";\n");
+
+    const std::string& defArgTemp = result.VarInitExprTexts.at("p_default_arg");
+    EXPECT_TRUE(defArgTemp.starts_with("_temp_"));
+    ASSERT_EQ(result.VarInitLowerings.at("p_default_arg")->fields.size(), 2u);
+    EXPECT_EQ(
+        result.VarInitEmittedStmts.at("p_default_arg"),
+        "Sim_Particle " + defArgTemp + ";\n"
+        "Sim_Particle_ctor_vec3_int( " + defArgTemp + ",vec3(1, 2, 3),99);\n" +
+        defArgTemp + ";\n");
+
+    // 3. 验证拷贝构造穿透
+    ASSERT_NE(result.VarInitLowerings.at("p_copy"), nullptr);
+    EXPECT_TRUE(result.VarInitLowerings.at("p_copy")->fields.empty());
+    EXPECT_EQ(result.VarInitExprTexts.at("p_copy"), "p_single");
+
+    // 4. 验证平凡默认构造：fields 只有 1 条临时变量声明，无 ctor 调用
+    const std::string& boxTemp = result.VarInitExprTexts.at("box");
+    EXPECT_TRUE(boxTemp.starts_with("_temp_"));
+    ASSERT_EQ(result.VarInitLowerings.at("box")->fields.size(), 1u);
+    EXPECT_EQ(
+        result.VarInitEmittedStmts.at("box"),
+        "Sim_TrivialBox " + boxTemp + ";\n" +
+        boxTemp + ";\n");
+
+    const std::string& trivialParticleTemp = result.VarInitExprTexts.at("p_default_trivial");
+    EXPECT_TRUE(trivialParticleTemp.starts_with("_temp_"));
+    ASSERT_EQ(result.VarInitLowerings.at("p_default_trivial")->fields.size(), 1u);
+    EXPECT_EQ(
+        result.VarInitEmittedStmts.at("p_default_trivial"),
+        "Sim_Particle " + trivialParticleTemp + ";\n" +
+        trivialParticleTemp + ";\n");
+
+    // 5. 验证嵌套结构体构造：fields 包含 4 条语句 (Outer 声明 -> Inner 声明 -> Inner ctor -> Outer ctor)
+    const auto& nestedLowering = result.VarInitLowerings.at("nested");
+    ASSERT_NE(nestedLowering, nullptr);
+    ASSERT_EQ(nestedLowering->fields.size(), 4u);
+    const std::string& outerTemp = result.VarInitExprTexts.at("nested");
+    EXPECT_TRUE(outerTemp.starts_with("_temp_"));
+    EXPECT_EQ(nestedLowering->fields[0]->EmitGLSL(), "Sim_Outer " + outerTemp + ";\n");
+    EXPECT_TRUE(nestedLowering->fields[1]->EmitGLSL().starts_with("Sim_Inner _temp_"));
+    EXPECT_TRUE(nestedLowering->fields[2]->EmitGLSL().starts_with("Sim_Inner_ctor_int( _temp_"));
+    EXPECT_TRUE(
+        nestedLowering->fields[3]->EmitGLSL().starts_with("Sim_Outer_ctor_Sim_Inner_float( " + outerTemp + ",_temp_"));
+
+    // 6. 验证赋值表达式语句中的构造展开
+    ASSERT_EQ(result.EmittedStmts.size(), 1u);
+    EXPECT_TRUE(result.ExprTexts[0].starts_with("(p_single = _temp_"));
+    EXPECT_NE(result.EmittedStmts[0].find("Sim_Particle_ctor_int( _temp_"), std::string::npos);
 }
 
 // ============================================================================
@@ -505,7 +638,7 @@ TEST(ProcessClangExprTest, StructMemberCallsAndImplicitExplicitSelfAccess) {
     const auto callerResult = RunProcessClangExprOnCode(code, "TestEntry");
     ASSERT_EQ(callerResult.ExprTexts.size(), 3u);
     EXPECT_EQ(callerResult.ExprTexts[0], "Physics_RigidBody_Step_float(body, dt)");
-    EXPECT_EQ(callerResult.ExprTexts[1], "Physics_RigidBody_AddImpulse_vec3(bodies[0], vec3(1,2,3))");
+    EXPECT_EQ(callerResult.ExprTexts[1], "Physics_RigidBody_AddImpulse_vec3(bodies[0], vec3(1, 2, 3))");
     EXPECT_EQ(
         callerResult.ExprTexts[2],
         "(energy = ((Physics_RigidBody_KineticEnergy_const(body) + Physics_RigidBody_Eval_int(body, 1)) + "
@@ -514,8 +647,8 @@ TEST(ProcessClangExprTest, StructMemberCallsAndImplicitExplicitSelfAccess) {
     // 2. 验证结构体成员函数内部：m_currentStructDecl 生效，隐式/显式 this 转为 self
     const auto methodResult = RunProcessClangExprOnCode(code, "Step");
     ASSERT_EQ(methodResult.ExprTexts.size(), 3u);
-    EXPECT_EQ(methodResult.ExprTexts[0], "Physics_RigidBody_AddImpulse_vec3(self, vec3(0,(-9),0))");
-    EXPECT_EQ(methodResult.ExprTexts[1], "Physics_RigidBody_AddImpulse_vec3(self, vec3(1,0,0))");
+    EXPECT_EQ(methodResult.ExprTexts[0], "Physics_RigidBody_AddImpulse_vec3(self, vec3(0, (-9), 0))");
+    EXPECT_EQ(methodResult.ExprTexts[1], "Physics_RigidBody_AddImpulse_vec3(self, vec3(1, 0, 0))");
     EXPECT_EQ(methodResult.ExprTexts[2], "(self.pos = (self.pos + (self.vel * dt)))");
 }
 

@@ -321,13 +321,30 @@ TEST(ProcessClangStmtTest, DeclStmt_VectorsArraysStructsAndInvalidAccessor) {
 
     ASSERT_EQ(result.TopLevelStmtGlsls.size(), 11u);
     EXPECT_EQ(result.TopLevelStmtGlsls[0], "vec3 uninitVec;\n");
-    EXPECT_EQ(result.TopLevelStmtGlsls[1], "ivec3 iv = ivec3(1,2,3);\n");
+    EXPECT_EQ(result.TopLevelStmtGlsls[1], "ivec3 iv = ivec3(1, 2, 3);\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[2], "int cArr[3] = {10,20,30};\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[3], "float matArr[2][4];\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[4], "int stdArr[2];\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[5], "Sim_Particle pDefault;\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[6], "Sim_Particle pBraceEmpty;\n");
-    EXPECT_EQ(result.TopLevelStmtGlsls[7], "Sim_Particle p1 = Sim_Particle(vec3(1,2,3),7);\n");
+
+    ASSERT_NE(result.TopLevelLowerings[7], nullptr);
+    ASSERT_EQ(result.TopLevelLowerings[7]->fields.size(), 1u);
+    ASSERT_EQ(result.TopLevelLowerings[7]->fields[0]->GetKind(), Ccino::GLSL::Kind::DeclStmt);
+    const auto* p1DeclStmt = static_cast<const Ccino::GLSL::DeclStmt*>(result.TopLevelLowerings[7]->fields[0].get());
+    ASSERT_EQ(p1DeclStmt->decls.size(), 1u);
+    ASSERT_NE(p1DeclStmt->decls[0].initStmt, nullptr);
+    ASSERT_EQ(p1DeclStmt->decls[0].initStmt->GetKind(), Ccino::GLSL::Kind::LoweringStmt);
+    const auto* p1InitLowering = static_cast<const Ccino::GLSL::LoweringStmt*>(p1DeclStmt->decls[0].initStmt.get());
+    ASSERT_NE(p1InitLowering->expr, nullptr);
+    const std::string& p1Temp = p1InitLowering->expr->text;
+    EXPECT_TRUE(p1Temp.starts_with("_temp_"));
+    EXPECT_EQ(
+        result.TopLevelStmtGlsls[7],
+        "Sim_Particle " + p1Temp + ";\n"
+        "Sim_Particle_ctor_vec3_int( " + p1Temp + ",vec3(1, 2, 3),7);\n"
+        "Sim_Particle p1 = " + p1Temp + ";\n");
+
     EXPECT_EQ(result.TopLevelStmtGlsls[8], "Sim_Particle p2 = p1;\n");
     EXPECT_EQ(result.TopLevelStmtGlsls[9], "Sim_LightSample sample = Sim_LightSample(uninitVec,0.5);\n");
     // 函数体内不允许声明 Accessor，应返回 nullptr
@@ -706,8 +723,8 @@ TEST(ProcessClangStmtTest, ComprehensiveShaderKernelAndStructMethodBody) {
     // 1. 验证全局入口函数体转换
     const auto entryResult = RunProcessClangStmtOnCode(code, "TestEntry");
     const std::string expectedEntryBody =
-        "vec3 pos = vec3(1,2,3);\n"
-        "vec3 vel = vec3(4,5,6);\n"
+        "vec3 pos = vec3(1, 2, 3);\n"
+        "vec3 vel = vec3(4, 5, 6);\n"
         "int acc = 0;\n"
         "for (int step = 0;(step < 8);(step += 1)) {\n"
         "(pos = (pos + vel));\n"

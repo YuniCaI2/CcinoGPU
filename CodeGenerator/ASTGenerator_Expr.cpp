@@ -2,6 +2,7 @@
 #include "CodeGenerator/SignatureFlattener.h"
 #include "Core/CcinoType.h"
 #include "GLSLAST.h"
+#include "SignatureFlattener.h"
 #include <algorithm>
 #include <cctype>
 #include <clang/AST/ASTContext.h>
@@ -489,25 +490,70 @@ namespace Ccino {
     }
 
     std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessConstruct(clang::CXXConstructExpr* expr) {
+        /*
+        构造：
+        auto a = A(b);
+
+        GLSL:
+        A _temp;
+        A a = ctor_A(_temp, b); //这里的_temp 输入是inout ,所有这里的Decl 构造和析构可以直接一样处理即可
+        */
         if (!expr) return {};
         if (expr->getConstructor() && expr->getConstructor()->isCopyOrMoveConstructor() &&
             expr->getNumArgs() >= 1) {
             return ProcessClangExpr(expr->getArg(0));
         }
-
         auto result = std::make_unique<GLSL::LoweringStmt>();
-        auto cstrExpr = std::make_unique<GLSL::Expr>();
-        cstrExpr->text = SignatureFlattener::FlattenType(expr->getType()) + "(";
-        for (uint32_t i = 0; i < expr->getNumArgs(); ++i) {
-            auto arg = ProcessClangExpr(expr->getArg(i));
-            if (!arg || !arg->expr) continue;
-            for (auto& f : arg->fields) {
-                result->fields.push_back(std::move(f));
+
+        auto typeName = SignatureFlattener::FlattenType(expr->getType());
+        bool isBuiltin = typeName != SignatureFlattener::FlattenRecord(expr->getType().getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
+
+        //这里代表是内建变量
+        if (isBuiltin) {
+            auto callExpr = std::make_unique<GLSL::Expr>();
+            callExpr->text = typeName + "(";
+            bool first = true;
+            for (uint32_t i = 0; i < expr->getNumArgs(); ++i) {
+                auto arg = ProcessClangExpr(expr->getArg(i));
+                if (!arg || !arg->expr) continue;
+                for (auto& f : arg->fields) {
+                    result->fields.push_back(std::move(f));
+                }
+                if (!first) callExpr->text += ", ";
+                callExpr->text += arg->expr->text;
+                first = false;
             }
-            cstrExpr->text += (i ? "," : "") + arg->expr->text;
+            callExpr->text += ")";
+            result->expr = std::move(callExpr);
+            return result;
         }
-        cstrExpr->text += ")";
-        result->expr = std::move(cstrExpr);
+
+        //这里需要生成一个临时对象
+        auto tempObject = std::make_unique<GLSL::LoweringStmt>();
+        auto tempName = "_temp_" + GenerateNumString();
+        tempObject->expr = std::make_unique<GLSL::Expr>();
+        tempObject->expr->text = typeName + " " + tempName;
+        result->fields.push_back(std::move(tempObject));
+
+        if (expr->getConstructor() && ! expr->getConstructor()->isTrivial()) {
+            auto cstrExpr = std::make_unique<GLSL::Expr>();
+            cstrExpr->text = SignatureFlattener::FlattenFunction(expr->getConstructor()) + "( " + tempName;
+            for (uint32_t i = 0; i < expr->getNumArgs(); ++i) {
+                auto arg = ProcessClangExpr(expr->getArg(i));
+                if (!arg || !arg->expr) continue;
+                for (auto& f : arg->fields) {
+                    result->fields.push_back(std::move(f));
+                }
+                cstrExpr->text += "," + arg->expr->text;
+            }
+            cstrExpr->text += ")";
+            auto lastField = std::make_unique<GLSL::LoweringStmt>();
+            lastField->expr = std::move(cstrExpr);
+            result->fields.push_back(std::move(lastField));
+        }
+
+        result->expr = std::make_unique<GLSL::Expr>();
+        result->expr->text = tempName;
         return result;
     }
 
@@ -539,6 +585,12 @@ namespace Ccino {
         }
         result->expr = std::move(initExpr);
         return result;
+    }
+
+    std::string ASTGenerator::GenerateNumString() {
+        static int num = 0;
+        num++;
+        return std::to_string(num);
     }
 
 }

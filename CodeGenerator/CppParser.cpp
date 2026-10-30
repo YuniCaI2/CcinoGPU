@@ -533,7 +533,7 @@ namespace Ccino
 
     std::string CppParser::ChangeCppExprToGLSLExpr(clang::Expr* expr) {
         if (!expr) return {};
-        expr = expr->IgnoreUnlessSpelledInSource();  // 剔除重复的代码
+        expr = expr->IgnoreUnlessSpelledInSource();  // 剔除隐藏的节点
         if (auto* DRE = llvm::dyn_cast<clang::DeclRefExpr>(expr)) {
             // 只有一个值时走,引用表达式
             return DRE->getDecl()->getNameAsString();
