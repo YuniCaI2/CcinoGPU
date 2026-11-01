@@ -1,5 +1,6 @@
 #pragma once
 #include "CodeGenerator/GLSLAST.h"
+#include <clang/AST/Decl.h>
 #include <memory>
 #include <unordered_set>
 
@@ -69,6 +70,8 @@ namespace Ccino {
         //Tool
         std::unordered_set<std::string> GetStructMember(clang::CXXRecordDecl* decl);
         static std::string GenerateNumString();
+        void InsertGLSLFunc(GLSL::FunctionDecl* funcDecl);
+        void InsertGLSLStruct(GLSL::StructDecl* structDecl);
 
         GLSL::DeclGraph m_declGraph;
         std::unique_ptr<GLSL::Stmt> m_root;

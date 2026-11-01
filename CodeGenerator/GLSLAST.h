@@ -124,6 +124,7 @@ namespace Ccino::GLSL {
     struct DeclField {
         std::string type;
         std::string name;
+        std::string dimensions; //这个是扩展值
     };
 
     struct FunctionDecl : Decl {
