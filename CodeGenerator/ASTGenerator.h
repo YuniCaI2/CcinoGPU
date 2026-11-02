@@ -1,6 +1,11 @@
 #pragma once
 #include "CodeGenerator/GLSLAST.h"
+#include "ShaderStruct/ShaderIR.h"
+#include "ShaderStruct/UniformData.h"
+#include <clang/AST/ASTContext.h>
 #include <clang/AST/Decl.h>
+#include <clang/AST/ExprCXX.h>
+#include <clang/AST/TypeBase.h>
 #include <memory>
 #include <unordered_set>
 
@@ -37,8 +42,14 @@ namespace Ccino {
         std::unique_ptr<GLSL::LoweringStmt> ProcessClangStmt(clang::Stmt* stmt);
         std::unique_ptr<GLSL::LoweringStmt> ProcessClangExpr(clang::Expr* expr);
 
+        //Decl
         void InsertFunctionDeclToGraph(clang::FunctionDecl* functionDecl); //这里包括普通函数和成员函数
         void InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl);
+
+        //IR Gen
+        DescriptorSlotLayout GetDescriptorSlotLayout(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
+        std::vector<ShaderUniformDataBinding> GetUniformDataBindings(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
+
 
         void SetCurrentStructDecl(clang::CXXRecordDecl* decl) { m_currentStructDecl = decl; }
         clang::CXXRecordDecl* GetCurrentStructDecl() const { return m_currentStructDecl; }
@@ -71,6 +82,9 @@ namespace Ccino {
         std::unordered_set<std::string> GetStructMember(clang::CXXRecordDecl* decl);
         void InsertGLSLFunc(std::unique_ptr<GLSL::FunctionDecl>&& funcDecl);
         void InsertGLSLStruct(std::unique_ptr<GLSL::StructDecl>&& structDecl);
+
+        //IR Gen
+        UniformDataType GetUniformDataType(clang::QualType type);
 
         static std::string GenerateNumString();
 

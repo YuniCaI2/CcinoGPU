@@ -165,10 +165,7 @@ namespace Ccino {
 
         //布尔字面量
         if (auto* BL = llvm::dyn_cast<clang::CXXBoolLiteralExpr>(expr)) {
-            auto litExpr = std::make_unique<GLSL::Expr>();
-            litExpr->text = BL->getValue() ? "true" : "false";
-            lowering->expr = std::move(litExpr);
-            return lowering;
+            return ProcessBinaryLiteral(BL);
         }
 
         //显式类型转换 (如 float(x), (float)x, static_cast<float>(x))
@@ -386,6 +383,8 @@ namespace Ccino {
         auto result = std::make_unique<GLSL::LoweringStmt>();
         result->expr = std::make_unique<GLSL::Expr>();
 
+        result->expr->text = expr->getValue() ? "true" : "false";
+        return result;
     }
 
     //内置二元运算符

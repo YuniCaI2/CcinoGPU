@@ -1,7 +1,6 @@
 #include "CppParser.h"
 #include "ShaderStruct/ShaderIR.h"
 #include "Core/CcinoType.h"
-#include "RG/AccessorEnums.h"
 #include <algorithm>
 #include <cctype>
 #include <clang/AST/APValue.h>
@@ -21,7 +20,6 @@
 #include <clang/Tooling/CompilationDatabase.h>
 #include <clang/Tooling/JSONCompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
-#include <format>
 #include <fstream>
 #include <iterator>
 #include <llvm/Support/Casting.h>
@@ -33,18 +31,6 @@
 #include <unordered_set>
 
 namespace {
-    std::string ChangeCppOperatorToGLSLOperator(clang::BinaryOperatorKind op) {
-        // 仅仅支持简单的操作
-        return clang::BinaryOperator::getOpcodeStr(op).str();  // 这里把OP_Plus -> + 这种形式
-    }
-
-    std::string ChangeCppOperatorToGLSLOperator(clang::OverloadedOperatorKind op) {
-        if (auto spelling = clang::getOperatorSpelling(op)) {
-            return std::string(spelling);
-        }
-        return {};  // 空则不支持此操作
-    }
-
     class PassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
     public:
         void run(const clang::ast_matchers::MatchFinder::MatchResult& result) override {
