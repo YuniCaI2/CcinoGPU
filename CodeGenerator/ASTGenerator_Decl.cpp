@@ -10,8 +10,10 @@
 #include <clang/AST/ASTContext.h>
 #include <llvm/Support/Casting.h>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
+#include <queue>
 
 namespace {
     bool IsBuiltinType(clang::QualType type) {
@@ -168,6 +170,57 @@ namespace Ccino {
             glslStruct->fields.push_back(std::move(glslField));
         } 
         InsertGLSLStruct(std::move(glslStruct));
+    }
+
+    //Kahn 排序
+    std::vector<std::vector<std::string>> ASTGenerator::SortDeclGraph() {
+        std::vector<std::vector<std::string>> result;
+        std::unordered_map<std::string, uint32_t> inDegree;
+        std::unordered_map<std::string, std::vector<std::string>> dependents; // dep -> 依赖它的节点
+
+        // 初始化所有图内节点的入度为 0
+        for (const auto& [name, _] : m_declGraph.nodes) {
+            inDegree[name] = 0;
+        }
+
+        //只统计在 nodes 中真实存在的自定义类型/函数依赖
+        for (const auto& [name, deps] : m_declGraph.edges) {
+            if (!m_declGraph.nodes.contains(name)) continue;
+            for (std::string dep : deps) {
+                if (dep.starts_with("inout ")) {
+                    dep.erase(0, 6);
+                }
+                if (dep == name || !m_declGraph.nodes.contains(dep)) {
+                    continue; // 跳过 float/vec3 等内置类型及自环
+                }
+                dependents[dep].push_back(name);
+                inDegree[name]++;
+            }
+        }
+
+        //收集第 0 层（无任何自定义依赖的节点）
+        std::vector<std::string> currentLayer;
+        for (const auto& [name, deg] : inDegree) {
+            if (deg == 0) {
+                currentLayer.push_back(name);
+            }
+        }
+
+        //按层拓扑推进
+        while (!currentLayer.empty()) {
+            std::vector<std::string> nextLayer;
+            for (const auto& readyNode : currentLayer) {
+                for (const auto& userNode : dependents[readyNode]) {
+                    if (--inDegree[userNode] == 0) {
+                        nextLayer.push_back(userNode);
+                    }
+                }
+            }
+            result.push_back(std::move(currentLayer));
+            currentLayer = std::move(nextLayer);
+        }
+
+        return result;
     }
 
     void ASTGenerator::InsertGLSLFunc(std::unique_ptr<GLSL::FunctionDecl>&& funcDecl) {
