@@ -69,9 +69,10 @@ namespace Ccino {
 
         //Tool
         std::unordered_set<std::string> GetStructMember(clang::CXXRecordDecl* decl);
+        void InsertGLSLFunc(std::unique_ptr<GLSL::FunctionDecl>&& funcDecl);
+        void InsertGLSLStruct(std::unique_ptr<GLSL::StructDecl>&& structDecl);
+
         static std::string GenerateNumString();
-        void InsertGLSLFunc(GLSL::FunctionDecl* funcDecl);
-        void InsertGLSLStruct(GLSL::StructDecl* structDecl);
 
         GLSL::DeclGraph m_declGraph;
         std::unique_ptr<GLSL::Stmt> m_root;

@@ -149,34 +149,11 @@ namespace Ccino {
                 }
             }
 
-            clang::QualType elemType = canonical;
-            std::string dimensions;
-            while (true) {
-                if (const auto* arr = llvm::dyn_cast<clang::ConstantArrayType>(elemType.getTypePtr())) {
-                    dimensions += "[" + std::to_string(arr->getSize().getZExtValue()) + "]";
-                    elemType = arr->getElementType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
-                    continue;
-                }
-                if (const auto* record = elemType->getAsCXXRecordDecl()) {
-                    if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
-                        const auto& args = spec->getTemplateArgs();
-                        if (spec->getName() == "array" && args.size() >= 2 &&
-                            args[0].getKind() == clang::TemplateArgument::Type &&
-                            args[1].getKind() == clang::TemplateArgument::Integral) {
-                            dimensions += "[" + std::to_string(args[1].getAsIntegral().getExtValue()) + "]";
-                            elemType = args[0].getAsType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
-                            continue;
-                        }
-                    }
-                }
-                break;
-            }
-
-            const std::string typeName = SignatureFlattener::FlattenType(elemType);
+            auto [typeName, dimensions] = SignatureFlattener::FlattenType(canonical);
             if (typeName.empty()) return {};
 
             GLSL::VarDecl glslVar;
-            glslVar.type = typeName;
+            glslVar.type = std::move(typeName);
             glslVar.name = name;
             glslVar.dimensions = std::move(dimensions);
 

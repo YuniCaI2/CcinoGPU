@@ -132,6 +132,7 @@ namespace Ccino::GLSL {
         std::string returnType;
         std::vector<std::unique_ptr<DeclField>> fields;
         std::unique_ptr<Stmt> body;
+        std::vector<std::string> depDeclNames; //body 内部的对象
     };
 
 

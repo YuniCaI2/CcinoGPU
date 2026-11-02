@@ -118,7 +118,7 @@ namespace Ccino {
 
         for (const clang::ParmVarDecl* param : func->parameters()) {
             if (!param) continue;
-            AppendSegment(result, FlattenType(param->getType()));
+            AppendSegment(result, FlattenTypeAsIdentifier(param->getType()));
         }
 
         if (const auto* method = llvm::dyn_cast<clang::CXXMethodDecl>(func)) {
@@ -133,39 +133,56 @@ namespace Ccino {
         return Flatten(record);
     }
 
-    std::string SignatureFlattener::FlattenType(clang::QualType type) {
+    FlattenedType SignatureFlattener::FlattenType(clang::QualType type) {
         if (type.isNull()) return {};
 
         clang::QualType canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
 
-        // 1. 基础内置标量类型
-        if (const auto* builtin = canonical->getAs<clang::BuiltinType>()) {
+        // 1. 剥离外层 C 原生定长数组 T[N] 与 std::array<T, N> / Ccino::Array<T, N> 的维度
+        clang::QualType elemType = canonical;
+        std::string dimensions;
+        while (true) {
+            if (const auto* arr = llvm::dyn_cast<clang::ConstantArrayType>(elemType.getTypePtr())) {
+                dimensions += "[" + std::to_string(arr->getSize().getZExtValue()) + "]";
+                elemType = arr->getElementType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+                continue;
+            }
+            if (const auto* record = elemType->getAsCXXRecordDecl()) {
+                if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
+                    const clang::TemplateArgumentList& args = spec->getTemplateArgs();
+                    if (spec->getName() == "array" && IsInNamespace(spec, "std") && args.size() >= 2 &&
+                        args[0].getKind() == clang::TemplateArgument::Type &&
+                        args[1].getKind() == clang::TemplateArgument::Integral) {
+                        dimensions += "[" + std::to_string(args[1].getAsIntegral().getExtValue()) + "]";
+                        elemType = args[0].getAsType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+
+        // 2. 基础内置标量类型
+        if (const auto* builtin = elemType->getAs<clang::BuiltinType>()) {
             switch (builtin->getKind()) {
-                case clang::BuiltinType::Void:      return "void";
-                case clang::BuiltinType::Bool:      return "bool";
+                case clang::BuiltinType::Void:      return {"void", std::move(dimensions)};
+                case clang::BuiltinType::Bool:      return {"bool", std::move(dimensions)};
                 case clang::BuiltinType::Short:
                 case clang::BuiltinType::Int:
-                case clang::BuiltinType::Long:      return "int";
+                case clang::BuiltinType::Long:      return {"int", std::move(dimensions)};
                 case clang::BuiltinType::UShort:
                 case clang::BuiltinType::UInt:
-                case clang::BuiltinType::ULong:     return "uint";
-                case clang::BuiltinType::LongLong:  return "int64_t";
-                case clang::BuiltinType::ULongLong: return "uint64_t";
-                case clang::BuiltinType::Float:     return "float";
-                case clang::BuiltinType::Double:    return "double";
+                case clang::BuiltinType::ULong:     return {"uint", std::move(dimensions)};
+                case clang::BuiltinType::LongLong:  return {"int64_t", std::move(dimensions)};
+                case clang::BuiltinType::ULongLong: return {"uint64_t", std::move(dimensions)};
+                case clang::BuiltinType::Float:     return {"float", std::move(dimensions)};
+                case clang::BuiltinType::Double:    return {"double", std::move(dimensions)};
                 default: break;
             }
         }
 
-        // 2. C 原生定长数组 T[N]
-        if (const auto* arr = llvm::dyn_cast<clang::ConstantArrayType>(canonical.getTypePtr())) {
-            std::string out = FlattenType(arr->getElementType());
-            AppendSegment(out, std::to_string(arr->getSize().getZExtValue()));
-            return out;
-        }
-
         // 3. 结构体与模板特化（内置数学类型 / 容器 / 用户自定义 struct）
-        if (const auto* record = canonical->getAsCXXRecordDecl()) {
+        if (const auto* record = elemType->getAsCXXRecordDecl()) {
             if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
                 llvm::StringRef tmplName = spec->getName();
                 const clang::TemplateArgumentList& args = spec->getTemplateArgs();
@@ -175,13 +192,13 @@ namespace Ccino {
                     args[0].getKind() == clang::TemplateArgument::Integral &&
                     args[1].getKind() == clang::TemplateArgument::Type) {
                     int64_t len = args[0].getAsIntegral().getExtValue();
-                    clang::QualType elemType = args[1].getAsType();
+                    clang::QualType vecElemType = args[1].getAsType();
                     std::string prefix;
-                    if (elemType->isBooleanType()) prefix = "b";
-                    else if (elemType->isSignedIntegerType()) prefix = "i";
-                    else if (elemType->isUnsignedIntegerType()) prefix = "u";
-                    else if (elemType->isSpecificBuiltinType(clang::BuiltinType::Double)) prefix = "d";
-                    return prefix + "vec" + std::to_string(len);
+                    if (vecElemType->isBooleanType()) prefix = "b";
+                    else if (vecElemType->isSignedIntegerType()) prefix = "i";
+                    else if (vecElemType->isUnsignedIntegerType()) prefix = "u";
+                    else if (vecElemType->isSpecificBuiltinType(clang::BuiltinType::Double)) prefix = "d";
+                    return {prefix + "vec" + std::to_string(len), std::move(dimensions)};
                 }
 
                 // glm::mat<C, R, T, Q> -> mat4 / mat3x4 / dmat4
@@ -191,34 +208,35 @@ namespace Ccino {
                     args[2].getKind() == clang::TemplateArgument::Type) {
                     int64_t cols = args[0].getAsIntegral().getExtValue();
                     int64_t rows = args[1].getAsIntegral().getExtValue();
-                    clang::QualType elemType = args[2].getAsType();
-                    std::string prefix = elemType->isSpecificBuiltinType(clang::BuiltinType::Double) ? "d" : "";
+                    clang::QualType matElemType = args[2].getAsType();
+                    std::string prefix = matElemType->isSpecificBuiltinType(clang::BuiltinType::Double) ? "d" : "";
                     if (cols == rows) {
-                        return prefix + "mat" + std::to_string(cols);
+                        return {prefix + "mat" + std::to_string(cols), std::move(dimensions)};
                     }
-                    return prefix + "mat" + std::to_string(cols) + "x" + std::to_string(rows);
-                }
-
-                // std::array<T, N> / Ccino::Array<T, N>
-                if (tmplName == "array" && IsInNamespace(spec, "std") && args.size() >= 2 &&
-                    args[0].getKind() == clang::TemplateArgument::Type &&
-                    args[1].getKind() == clang::TemplateArgument::Integral) {
-                    std::string out = FlattenType(args[0].getAsType());
-                    AppendSegment(out, std::to_string(args[1].getAsIntegral().getExtValue()));
-                    return out;
+                    return {prefix + "mat" + std::to_string(cols) + "x" + std::to_string(rows), std::move(dimensions)};
                 }
 
                 // Ccino::Accessor<T, Flags>
                 if (tmplName == "Accessor" && IsInNamespace(spec, "Ccino") && args.size() >= 1 &&
                     args[0].getKind() == clang::TemplateArgument::Type) {
-                    return FlattenType(args[0].getAsType());
+                    auto inner = FlattenType(args[0].getAsType());
+                    inner.dimensions = dimensions + inner.dimensions;
+                    return inner;
                 }
             }
 
-            return FlattenRecord(record);
+            return {FlattenRecord(record), std::move(dimensions)};
         }
 
-        return SanitizeGLSLIdentifier(canonical.getAsString());
+        return {SanitizeGLSLIdentifier(elemType.getAsString()), std::move(dimensions)};
+    }
+
+    std::string SignatureFlattener::FlattenTypeAsIdentifier(clang::QualType type) {
+        auto [name, dimensions] = FlattenType(type);
+        if (!dimensions.empty()) {
+            AppendSegment(name, dimensions);
+        }
+        return name;
     }
 
     std::string SignatureFlattener::FormatDeclOwnName(const clang::NamedDecl* decl) {
@@ -257,7 +275,7 @@ namespace Ccino {
     void SignatureFlattener::AppendTemplateArg(const clang::TemplateArgument& arg, std::string& out) {
         switch (arg.getKind()) {
             case clang::TemplateArgument::Type:
-                AppendSegment(out, FlattenType(arg.getAsType()));
+                AppendSegment(out, FlattenTypeAsIdentifier(arg.getAsType()));
                 break;
             case clang::TemplateArgument::Integral: {
                 llvm::SmallString<32> intStr;

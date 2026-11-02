@@ -484,7 +484,8 @@ namespace Ccino {
             result->fields.push_back(std::move(f));
         }
         auto castExpr = std::make_unique<GLSL::Expr>();
-        castExpr->text = SignatureFlattener::FlattenType(expr->getTypeAsWritten()) + "(" + sub->expr->text + ")";
+        auto [castTypeName, castDims] = SignatureFlattener::FlattenType(expr->getTypeAsWritten());
+        castExpr->text = castTypeName + castDims + "(" + sub->expr->text + ")";
         result->expr = std::move(castExpr);
         return result;
     }
@@ -505,8 +506,8 @@ namespace Ccino {
         }
         auto result = std::make_unique<GLSL::LoweringStmt>();
 
-        auto typeName = SignatureFlattener::FlattenType(expr->getType());
-        bool isBuiltin = typeName != SignatureFlattener::FlattenRecord(expr->getType().getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
+        auto [typeName, dimensions] = SignatureFlattener::FlattenType(expr->getType());
+        bool isBuiltin = !dimensions.empty() || typeName != SignatureFlattener::FlattenRecord(expr->getType().getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl());
 
         //这里代表是内建变量
         if (isBuiltin) {
@@ -579,7 +580,8 @@ namespace Ccino {
         }
         auto initExpr = std::make_unique<GLSL::Expr>();
         if (expr->getType()->isRecordType()) {
-            initExpr->text = SignatureFlattener::FlattenType(expr->getType()) + "(" + elems + ")";
+            auto [typeName, dims] = SignatureFlattener::FlattenType(expr->getType());
+            initExpr->text = typeName + dims + "(" + elems + ")";
         } else {
             initExpr->text = "{" + elems + "}";
         }
