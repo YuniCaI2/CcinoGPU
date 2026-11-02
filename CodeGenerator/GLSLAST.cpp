@@ -269,4 +269,41 @@ namespace Ccino::GLSL {
         out += "}\n";
         return out;
     }
+
+    std::string DeclField::EmitGLSL() {
+        return type + " " + name + dimensions; //这里的dimension默认有[]  
+    }
+
+    std::string FunctionDecl::EmitGLSL() {
+        std::string out = {};
+        out += returnType;
+        out += " ";
+        out += name + " (";
+        out += ") { \n";
+        for (int i = 0; i < fields.size(); i++) {
+            out += i ? fields[i]->EmitGLSL() : ", " + fields[i]->EmitGLSL();
+        }
+        out += body->EmitGLSL();
+        out += "}\n";
+
+        return out;        
+    }
+
+    std::string StructDecl::EmitGLSL() {
+        std::string out = {};
+        if (isBufferReference) {
+            out += "layout(buffer_reference, std430) buffer " + name + "{ \n";
+            for (int i = 0; i < fields.size(); i++) {
+                out += fields[i]->EmitGLSL() + ";\n";
+            }
+            out += "};\n";
+        } else {
+            out += "struct " + name + "{\n";
+            for (int i = 0; i < fields.size(); i++) {
+                out += fields[i]->EmitGLSL() + ";\n";
+            }
+            out += "};\n";
+        }
+        return out;
+    }
 }

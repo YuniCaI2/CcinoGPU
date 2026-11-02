@@ -118,6 +118,7 @@ namespace Ccino::GLSL {
     struct Decl {
         virtual ~Decl() = default;
         virtual Kind GetKind() = 0;
+        virtual std::string EmitGLSL() = 0;
         std::string name;
     };
 
@@ -125,10 +126,12 @@ namespace Ccino::GLSL {
         std::string type;
         std::string name;
         std::string dimensions; //这个是扩展值
+        std::string EmitGLSL();
     };
 
     struct FunctionDecl : Decl {
         virtual Kind GetKind() override;
+        virtual std::string EmitGLSL() override;
         std::string returnType;
         std::vector<std::unique_ptr<DeclField>> fields;
         std::unique_ptr<Stmt> body;
@@ -138,7 +141,9 @@ namespace Ccino::GLSL {
 
     struct StructDecl : Decl {
         virtual Kind GetKind() override;
+        virtual std::string EmitGLSL() override;
         std::vector<std::unique_ptr<DeclField>> fields;
+        bool isBufferReference = false; //是否是SSBO的BufferReference
     };
 
     struct BufferRefDecl : StructDecl {
