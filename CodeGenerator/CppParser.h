@@ -5,6 +5,7 @@
 #include <string>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ExprCXX.h>
+#include "ASTGenerator.h"
 #include "ShaderStruct/ShaderIR.h"
 
 namespace Ccino
@@ -56,6 +57,8 @@ namespace Ccino
 
         //特殊处理CalLExpr,处理Texture的访问
         static std::string ChangeTextureViewerToGLSL(clang::Stmt* stmt);
+
+        static ASTGenerator m_astGenerator;
     };
 
 }

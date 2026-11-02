@@ -159,6 +159,10 @@ namespace Ccino {
         if (!recordDecl) return;
         const clang::CXXRecordDecl* def = recordDecl->getDefinition();
         if (!def) return;
+
+        auto& astCtx = def->getASTContext();
+        if (IsBuiltinType(astCtx.getCanonicalTagType(def))) return;
+
         auto glslStruct = std::make_unique<GLSL::StructDecl>();
         glslStruct->name = SignatureFlattener::FlattenRecord(recordDecl);
         for (const clang::FieldDecl* field : def->fields()) {
@@ -170,6 +174,20 @@ namespace Ccino {
             glslStruct->fields.push_back(std::move(glslField));
         } 
         InsertGLSLStruct(std::move(glslStruct));
+    }
+
+    std::string ASTGenerator::EmitDeclGraph() {
+        std::string result;
+        auto timeline = SortDeclGraph();
+        for (const auto& layer : timeline) {
+            for (const auto& nodeName : layer) {
+                auto it = m_declGraph.nodes.find(nodeName);
+                if (it != m_declGraph.nodes.end() && it->second) {
+                    result += it->second->EmitGLSL() + "\n";
+                }
+            }
+        }
+        return result;
     }
 
     //Kahn 排序

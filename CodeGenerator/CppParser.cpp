@@ -1,4 +1,6 @@
 #include "CppParser.h"
+#include "ASTGenerator.h"
+#include "GLSLAST.h"
 #include "ShaderStruct/ShaderIR.h"
 #include "Core/CcinoType.h"
 #include <algorithm>
@@ -10,6 +12,7 @@
 #include <clang/AST/DeclTemplate.h>
 #include <clang/AST/ExprCXX.h>
 #include <clang/AST/RecordLayout.h>
+#include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
 #include <clang/AST/TemplateBase.h>
 #include <clang/AST/Type.h>
@@ -24,6 +27,7 @@
 #include <iterator>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
+#include <memory>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -157,10 +161,39 @@ namespace {
         std::unordered_set<const clang::FunctionDecl*> visitedFunctions;
         std::unordered_set<const clang::CXXRecordDecl*> visitedStructs;
     };
+
+
+    class LambdaInnerCollector : public clang::RecursiveASTVisitor<LambdaInnerCollector> {
+    public:
+        LambdaInnerCollector(Ccino::ASTGenerator* astGen) : m_astGenerator(astGen){}
+
+        bool VisitCallExpr(clang::CallExpr* expr) {
+            if (auto* funcDecl = expr->getDirectCallee()) {
+                m_astGenerator->InsertFunctionDeclToGraph(funcDecl);
+            }
+
+            return true;
+        }
+
+        bool VisitDeclStmt(clang::DeclStmt* stmt) {
+            for (auto* decl : stmt->decls()) {
+                if (auto* var = llvm::dyn_cast<clang::VarDecl>(decl)) {
+                    auto canonical = var->getType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+                    if (auto* recordDecl = canonical->getAsCXXRecordDecl()) {
+                        m_astGenerator->InsertCXXRecordDeclToGraph(recordDecl);
+                    }
+                }
+            }
+            return true;
+        }
+
+        Ccino::ASTGenerator* m_astGenerator;
+    };
 }
 
 namespace Ccino
 {
+    ASTGenerator CppParser::m_astGenerator;
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
     std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath, std::string* globalFunctions) {
         using namespace clang::ast_matchers;
@@ -375,6 +408,34 @@ namespace Ccino
 
 
         //ASTGenerator
+        //1. 生成头
+        std::string astGlsl = "#version 460\n"
+                              "#extension GL_EXT_buffer_reference2 : require\n"
+                              "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
+        astGlsl += "layout(" + localSizeArgs + ") in;\n";
+        astGlsl += GenerateSSBOBinding(lambda, context);
+
+        //2. 生成Struct Decl 和Function Decl ，使用RecursiveASTVisitor 并且Emit
+        LambdaInnerCollector innerCollector(&m_astGenerator);
+        innerCollector.TraverseStmt(lambda->getBody());
+        astGlsl += m_astGenerator.EmitDeclGraph();
+
+        //3. 生成Uniform Binding 并Emit
+        if (auto uniformBinding = m_astGenerator.GenerateUniformDataReference(lambda, context)) {
+            astGlsl += uniformBinding->EmitGLSL();
+        }
+        GLSL::PushConstantBinding pushConstantBinding;
+        astGlsl += pushConstantBinding.EmitGLSL();
+
+        //4. 生成void main主体
+        if (auto mainBody = m_astGenerator.ProcessClangStmt(lambda->getBody())) {
+            astGlsl += "void main() { \n";
+            astGlsl += mainBody->EmitGLSL();
+            astGlsl += "}\n";
+        }
+
+        // 测试可用性
+        shaderIR.glsl = astGlsl;
 
         return shaderIR;
     }
