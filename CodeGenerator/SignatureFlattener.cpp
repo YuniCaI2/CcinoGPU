@@ -1,4 +1,5 @@
 #include "CodeGenerator/SignatureFlattener.h"
+#include "Core/CcinoType.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
@@ -112,7 +113,6 @@ namespace Ccino {
 
     std::string SignatureFlattener::FlattenFunction(const clang::FunctionDecl* func, bool includeParams) {
         if (!func) return {};
-
         std::string result = Flatten(func);
         if (!includeParams) return result;
 

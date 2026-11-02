@@ -962,35 +962,34 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "    uint flags;\n"
         "};\n"
         "layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer UniformData { \n"
-        "Particle inParticles; \n"
-        "Particle outParticles; \n"
-        "DebugInfo debugOut; \n"
-        "float dt; \n"
-        "vec3 gravity; \n"
-        "int maxSteps; \n"
-        "mat4 worldMat; \n"
-        "}; \n"
+        "Particle inParticles;\n"
+        "Particle outParticles;\n"
+        "DebugInfo debugOut;\n"
+        "float dt;\n"
+        "vec3 gravity;\n"
+        "int maxSteps;\n"
+        "mat4 worldMat;\n"
+        "};\n"
         "layout(push_constant) uniform PC {\n"
         "    UniformData uniformData;\n"
         "} pc;\n"
         "void main() { \n"
-        "uvec3 globalID = uvec3(gl_GlobalInvocationID);\n"
+        "uvec3 globalID = gl_GlobalInvocationID;\n"
         "uint idx = globalID.x;\n"
         "vec3 vel = (pc.uniformData.inParticles[idx].pos + pc.uniformData.gravity);\n"
         "int step = 0;\n"
-        "for (int i = 0;\n(i < pc.uniformData.maxSteps);(++i)) { \n"
+        "for (int i = 0;(i < pc.uniformData.maxSteps);(++i)) {\n"
         "(vel = (vel + pc.uniformData.gravity));\n"
-        "if ((i == 2)) \n"
-        "{ \n"
+        "if ((i == 2)) {\n"
         "continue;\n"
         "}\n"
         "else {\n"
         "(step += 1);\n"
         "}\n"
-        "}"
+        "}\n"
         "while ((step > 10)) {\n"
         "(step -= 1);\n"
-        "}"
+        "}\n"
         "(pc.uniformData.outParticles[idx].pos = vel);\n"
         "(pc.uniformData.debugOut[0].stepCount = step);\n"
         "barrier();\n"
@@ -1034,7 +1033,7 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
     EXPECT_EQ(ir.glsl.find(particleBlock, firstPos + 1), std::string::npos);
 
     // 但 UniformData 和 DescriptorSlotLayout 中必须保留全部 3 个字段
-    EXPECT_NE(ir.glsl.find("Particle inA; \nParticle inB; \nParticle outC; \n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("Particle inA;\nParticle inB;\nParticle outC;\n"), std::string::npos);
     ASSERT_EQ(ir.descriptorSlotLayout.size(), 3u);
     EXPECT_EQ(ir.descriptorSlotLayout[0].name, "inA");
     EXPECT_EQ(ir.descriptorSlotLayout[1].name, "inB");
@@ -1171,8 +1170,8 @@ TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
 
     ASSERT_EQ(withParamShaders.size(), 1u);
     const std::string& glsl = withParamShaders[0].glsl;
-    EXPECT_NE(glsl.find("uvec3 tid_copy = uvec3(gl_GlobalInvocationID);\n"), std::string::npos);
-    EXPECT_NE(glsl.find("uvec3 lid_copy = uvec3(gl_LocalInvocationID);\n"), std::string::npos);
+    EXPECT_NE(glsl.find("uvec3 tid_copy = gl_GlobalInvocationID;\n"), std::string::npos);
+    EXPECT_NE(glsl.find("uvec3 lid_copy = gl_LocalInvocationID;\n"), std::string::npos);
     EXPECT_NE(glsl.find("uint lidx = gl_LocalInvocationIndex;\n"), std::string::npos);
     EXPECT_NE(glsl.find("int ComputeGlobalID_local = (secondParam + 1);\n"), std::string::npos);
     EXPECT_NE(glsl.find("int my_ComputeGlobalID = (ComputeGlobalID_local * 2);\n"), std::string::npos);
@@ -1223,10 +1222,10 @@ TEST(ProcessComputeShaderTest, ImplicitCaptureAndInitCapture) {
     // unusedDir 未在 Lambda 体内使用，不应出现在捕获布局中；scale / usedDir / baseCount 均应正确提取名称
     ASSERT_EQ(ir.descriptorSlotLayout.size(), 3u);
     EXPECT_EQ(ir.glsl.find("unusedDir"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("float scale; \n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("vec3 usedDir; \n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("int baseCount; \n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("vec3 d = vec3(pc.uniformData.usedDir);\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("float scale;\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("vec3 usedDir;\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("int baseCount;\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("vec3 d = pc.uniformData.usedDir;\n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("int total = (pc.uniformData.baseCount + 1);\n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("float s = pc.uniformData.scale;\n"), std::string::npos);
 }

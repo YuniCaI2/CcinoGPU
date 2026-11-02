@@ -161,55 +161,57 @@ TEST(GlobalFuncAndStructSpvTest, ParseFromProjectCompileCommandsAndCompileToSpv)
         Ccino::CppParser::ParseFilePassShaders(filteredCompileCommandsPath, &globalFunctions);
 
     ASSERT_EQ(shaderIRs.size(), 3u);
-    ASSERT_FALSE(globalFunctions.empty());
 
-    // 1. 验证全局结构体定义已生成且无重复
+    const std::string& deferredGlsl = shaderIRs[0].glsl;
+    const std::string& combineOneGlsl = shaderIRs[1].glsl;
+
+    // 1. 验证结构体定义已在对应 Pass 中按需生成且无重复
     const std::string expectedLightSampleStruct =
-        "struct LightSample {\n"
-        "    vec3 radiance;\n"
-        "    float weight;\n"
+        "struct LightSample{\n"
+        "vec3 radiance;\n"
+        "float weight;\n"
         "};\n";
     const std::string expectedMaterialParamStruct =
-        "struct MaterialParam {\n"
-        "    int roughnessLevel;\n"
-        "    float metallic;\n"
+        "struct MaterialParam{\n"
+        "int roughnessLevel;\n"
+        "float metallic;\n"
         "};\n";
     const std::string expectedWorkItemStruct =
-        "struct WorkItem {\n"
-        "    int a;\n"
-        "    int b;\n"
+        "struct WorkItem{\n"
+        "int a;\n"
+        "int b;\n"
         "};\n";
 
-    const size_t lightStructPos = globalFunctions.find(expectedLightSampleStruct);
-    const size_t matStructPos   = globalFunctions.find(expectedMaterialParamStruct);
-    const size_t workStructPos  = globalFunctions.find(expectedWorkItemStruct);
-    ASSERT_NE(lightStructPos, std::string::npos) << "globalFunctions:\n" << globalFunctions;
-    ASSERT_NE(matStructPos, std::string::npos) << "globalFunctions:\n" << globalFunctions;
-    ASSERT_NE(workStructPos, std::string::npos) << "globalFunctions:\n" << globalFunctions;
-    EXPECT_EQ(globalFunctions.find("struct WorkItem {", workStructPos + 1), std::string::npos)
-        << "Duplicate struct WorkItem definition in globalFunctions:\n" << globalFunctions;
+    const size_t lightStructPos = deferredGlsl.find(expectedLightSampleStruct);
+    const size_t matStructPos   = deferredGlsl.find(expectedMaterialParamStruct);
+    const size_t workStructPos  = combineOneGlsl.find(expectedWorkItemStruct);
+    ASSERT_NE(lightStructPos, std::string::npos) << "deferredGlsl:\n" << deferredGlsl;
+    ASSERT_NE(matStructPos, std::string::npos) << "deferredGlsl:\n" << deferredGlsl;
+    ASSERT_NE(workStructPos, std::string::npos) << "combineOneGlsl:\n" << combineOneGlsl;
+    EXPECT_EQ(combineOneGlsl.find("struct WorkItem{", workStructPos + 1), std::string::npos)
+        << "Duplicate struct WorkItem definition in combineOneGlsl:\n" << combineOneGlsl;
 
-    // 2. 验证全局函数定义已生成且无重复，内置函数包装 Clamp 已转为 clamp
-    const size_t attenFuncPos   = globalFunctions.find("float ComputeAttenuation(int level, float baseWeight)");
-    const size_t evalFuncPos    = globalFunctions.find("vec3 EvaluateLighting(LightSample lightSample, MaterialParam mat)");
-    const size_t combineFuncPos = globalFunctions.find("int CombineWorkItem(WorkItem item, int scale)");
-    ASSERT_NE(attenFuncPos, std::string::npos) << "globalFunctions:\n" << globalFunctions;
-    ASSERT_NE(evalFuncPos, std::string::npos) << "globalFunctions:\n" << globalFunctions;
-    ASSERT_NE(combineFuncPos, std::string::npos) << "globalFunctions:\n" << globalFunctions;
-    EXPECT_EQ(globalFunctions.find("int CombineWorkItem(", combineFuncPos + 1), std::string::npos)
-        << "Duplicate CombineWorkItem definition in globalFunctions:\n" << globalFunctions;
-    EXPECT_EQ(globalFunctions.find("Clamp("), std::string::npos);
+    // 2. 验证全局函数定义已展平生成且无重复，内置函数包装 Clamp 已转为 clamp
+    const size_t attenFuncPos   = deferredGlsl.find("float ComputeAttenuation_int_float (int level, float baseWeight)");
+    const size_t evalFuncPos    = deferredGlsl.find("vec3 EvaluateLighting_LightSample_MaterialParam (LightSample lightSample, MaterialParam mat)");
+    const size_t combineFuncPos = combineOneGlsl.find("int CombineWorkItem_WorkItem_int (WorkItem item, int scale)");
+    ASSERT_NE(attenFuncPos, std::string::npos) << "deferredGlsl:\n" << deferredGlsl;
+    ASSERT_NE(evalFuncPos, std::string::npos) << "deferredGlsl:\n" << deferredGlsl;
+    ASSERT_NE(combineFuncPos, std::string::npos) << "combineOneGlsl:\n" << combineOneGlsl;
+    EXPECT_EQ(combineOneGlsl.find("int CombineWorkItem_WorkItem_int (", combineFuncPos + 1), std::string::npos)
+        << "Duplicate CombineWorkItem definition in combineOneGlsl:\n" << combineOneGlsl;
+    EXPECT_EQ(deferredGlsl.find("Clamp("), std::string::npos);
 
-    // 3. 验证全局结构体排在全局函数之前
+    // 3. 验证拓扑排序：结构体和被依赖子函数排在调用者之前
     EXPECT_LT(lightStructPos, evalFuncPos);
     EXPECT_LT(matStructPos, evalFuncPos);
+    EXPECT_LT(attenFuncPos, evalFuncPos);
     EXPECT_LT(workStructPos, combineFuncPos);
 
-    // 4. 注入 globalFunctions 到每个 Pass 的 GLSL 中并编译为 SPIR-V
+    // 4. 验证每个 Pass 自包含生成的 GLSL 可以直接编译为 SPIR-V
     for (auto& shaderIR : shaderIRs) {
         const auto it = shaderIR.glsl.find("in;");
         ASSERT_NE(it, std::string::npos);
-        shaderIR.glsl.insert(it + 3, "\n" + globalFunctions);
 
         std::vector<uint32_t> spv;
         EXPECT_NO_THROW({

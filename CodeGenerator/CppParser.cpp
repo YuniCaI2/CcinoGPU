@@ -193,7 +193,6 @@ namespace {
 
 namespace Ccino
 {
-    ASTGenerator CppParser::m_astGenerator;
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
     std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath, std::string* globalFunctions) {
         using namespace clang::ast_matchers;
@@ -352,7 +351,8 @@ namespace Ccino
         }
 
         if (globalFunctions)
-            *globalFunctions = collector.globalStructs + collector.globalFunctions;
+            // *globalFunctions = collector.globalStructs + collector.globalFunctions;
+            *globalFunctions = {}; //在生成代码的时候已经生成了依赖
 
         // 5. 返回收集好的所有 ShaderIR
         return std::move(collector.shaderIRs);
@@ -364,6 +364,7 @@ namespace Ccino
     }
 
     ShaderIR CppParser::ProcessComputeShader(const clang::LambdaExpr* lambda, clang::ASTContext& context, const std::string& passName, ThreadGroupSize threadGroupSize) {
+        ASTGenerator m_astGenerator;
         ShaderIR shaderIR;
         shaderIR.shaderType = ShaderType::Compute;
         shaderIR.descriptorSlotLayout = GetDescriptorSlotLayout(lambda, context);

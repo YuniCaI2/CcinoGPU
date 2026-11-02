@@ -48,9 +48,6 @@ int main() {
                 std::cerr << "Error: the compute shader doesn't have thread group size: " << shaderIR.passName << "\n";
                 return 1;
             }
-            if (!globalFunctions.empty()) {
-                shaderIR.glsl.insert(it + 3, "\n" + globalFunctions);
-            }
         }
 
         const std::filesystem::path outputPath = shaderDir / (shaderIR.passName + ".json");

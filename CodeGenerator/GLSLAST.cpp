@@ -280,7 +280,7 @@ namespace Ccino::GLSL {
         out += " ";
         out += name + " (";
         for (int i = 0; i < fields.size(); i++) {
-            out += i ? fields[i]->EmitGLSL() : ", " + fields[i]->EmitGLSL();
+            out += !i ? fields[i]->EmitGLSL() : ", " + fields[i]->EmitGLSL();
         }
         out += ") { \n";
         out += body->EmitGLSL();

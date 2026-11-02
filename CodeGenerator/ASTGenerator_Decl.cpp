@@ -1,6 +1,7 @@
 #include "CodeGenerator/ASTGenerator.h"
 #include "CodeGenerator/GLSLAST.h"
 #include "CodeGenerator/SignatureFlattener.h"
+#include "Core/CcinoType.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
@@ -89,6 +90,13 @@ namespace {
             return true;
         }
 
+        bool VisitCallExpr(clang::CallExpr* callExpr) {
+            if (auto* callee = callExpr->getDirectCallee()) {
+                depDeclNames.push_back(Ccino::SignatureFlattener::FlattenFunction(callee));
+            }
+            return true;
+        }
+
         std::vector<std::string> depDeclNames;
     };
 
@@ -111,6 +119,20 @@ namespace Ccino {
         if (!definition->hasBody()) {
             llvm::errs() << "Can't Find Function Body : " << functionDecl->getNameAsString() << "\n";
             return ;
+        }
+        std::string rawName = functionDecl->getNameAsString();
+        std::string lowerName = rawName;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        std::string camelName = rawName;
+        if (!camelName.empty()) {
+            camelName[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(camelName[0])));
+        }
+        if (GLSLBuiltinFuncSet.contains(rawName) ||
+            GLSLBuiltinFuncSet.contains(lowerName) ||
+            GLSLBuiltinFuncSet.contains(camelName)) {
+            return; //直接返回
         }
 
         auto glslFunc = std::make_unique<GLSL::FunctionDecl>();
@@ -136,6 +158,8 @@ namespace Ccino {
             std::string name = SignatureFlattener::FlattenFunction(memberFuncDecl, true);
             auto* parent = memberFuncDecl->getParent()->getCanonicalDecl(); //这里是实例化的结果
             if (!parent) return; //这里没有父类直接撤回
+            if (IsBuiltinType(parent->getASTContext().getCanonicalTagType(parent))) return; //内建变量的函数通通不实现
+
 
             m_currentStructDecl = parent; //这里记录下当前的函数是
             auto* stmt = memberFuncDecl->getBody();

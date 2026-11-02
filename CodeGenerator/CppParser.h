@@ -58,7 +58,6 @@ namespace Ccino
         //特殊处理CalLExpr,处理Texture的访问
         static std::string ChangeTextureViewerToGLSL(clang::Stmt* stmt);
 
-        static ASTGenerator m_astGenerator;
     };
 
 }
