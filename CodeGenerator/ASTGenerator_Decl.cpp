@@ -181,7 +181,7 @@ namespace Ccino {
 
     void ASTGenerator::InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl) {
         if (!recordDecl) return;
-        const clang::CXXRecordDecl* def = recordDecl->getDefinition();
+        const clang::CXXRecordDecl* def = recordDecl->getDefinition(); //得到定义
         if (!def) return;
 
         auto& astCtx = def->getASTContext();
@@ -199,6 +199,22 @@ namespace Ccino {
         } 
         InsertGLSLStruct(std::move(glslStruct));
     }
+
+    void InsertCXXRecordDeclToGraph(clang::DeclRefExpr* declExpr) {
+        if (!declExpr) return;
+
+        auto* decl = declExpr->getDecl();
+        auto name = decl->getNameAsString();
+        const auto* varDecl = llvm::dyn_cast<clang::VarDecl>(decl);
+        if (!varDecl) return;
+        auto* def = varDecl->getType().getNonReferenceType().getCanonicalType().getUnqualifiedType()->getAsCXXRecordDecl();
+        def = def->getDefinition();
+        auto& astCtx = def->getASTContext();
+
+        //这里Accessor 的 信息可以直接在lambda的fields中全部获得,所以这里不获取
+        if (IsBuiltinType(astCtx.getCanonicalTagType(def))) return;
+    }
+
 
     std::string ASTGenerator::EmitDeclGraph() {
         std::string result;
