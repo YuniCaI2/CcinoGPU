@@ -157,4 +157,16 @@ namespace Ccino::GLSL {
         std::unordered_map<std::string, std::vector<std::string>> edges;
     };
 
+    //Binding
+    struct UniformBinding {
+        std::vector<std::unique_ptr<DeclField>> fields;
+        std::string EmitGLSL();
+    };
+
+    struct PushConstantBinding {
+        std::string EmitGLSL();
+    };
+
+    //TODO: 全局的Texture 的descriptor indexing 绑定
+
 }

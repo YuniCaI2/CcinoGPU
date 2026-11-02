@@ -306,4 +306,21 @@ namespace Ccino::GLSL {
         }
         return out;
     }
+
+    std::string UniformBinding::EmitGLSL() {
+        std::string out =
+            "layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer UniformData { \n";
+        for (int i = 0; i < fields.size(); i++) {
+            out += fields[i]->EmitGLSL() + ";\n";
+        }
+        out += "};\n";
+
+        return out;
+    }
+
+    std::string PushConstantBinding::EmitGLSL() {
+        return "layout(push_constant) uniform PC {\n"
+               "    UniformData uniformData;\n"
+               "} pc;\n";
+    }
 }

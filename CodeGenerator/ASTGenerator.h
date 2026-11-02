@@ -51,6 +51,8 @@ namespace Ccino {
         DescriptorSlotLayout GetDescriptorSlotLayout(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
         std::vector<ShaderUniformDataBinding> GetUniformDataBindings(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
 
+        //Binding
+        std::unique_ptr<GLSL::UniformBinding> GenerateUniformDataReference(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context); 
 
         void SetCurrentStructDecl(clang::CXXRecordDecl* decl) { m_currentStructDecl = decl; }
         clang::CXXRecordDecl* GetCurrentStructDecl() const { return m_currentStructDecl; }

@@ -1,5 +1,9 @@
 #include "CodeGenerator/ASTGenerator.h"
+#include "CodeGenerator/SignatureFlattener.h"
+#include "GLSLAST.h"
 #include <clang/AST/RecordLayout.h>
+#include <memory>
+#include <utility>
 
 namespace Ccino {
     DescriptorSlotLayout ASTGenerator::GetDescriptorSlotLayout(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
@@ -48,6 +52,7 @@ namespace Ccino {
 
         return uniformDataBindings;
     }
+
 
     UniformDataType ASTGenerator::GetUniformDataType(clang::QualType type) {
         if (type.isNull()) {
