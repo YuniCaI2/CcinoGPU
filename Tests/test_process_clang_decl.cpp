@@ -654,3 +654,148 @@ TEST_F(ProcessClangDeclTest, Integration_FullDeclGraphNodesAndDAGEdges) {
     EXPECT_FALSE(HasEdge("Ray_AccumulateScene_Ray_SceneSlice_float", "slice"));
     EXPECT_FALSE(HasEdge("Ray_AccumulateScene_Ray_SceneSlice_float", "gain"));
 }
+
+// ============================================================================
+// 7. 单测：递归结构体声明收集与 BufferReference 生成
+// ============================================================================
+
+TEST_F(ProcessClangDeclTest, InsertCXXRecordDecl_RecursiveNestedStructsAndBufferReference) {
+    // 仅显式传入顶层结构体 SceneBuffer，验证内部嵌套结构体 Material、Sphere（定长数组）与 Light（Ccino::Array）自动递归入图
+    RunDeclCollection(
+        R"(
+            namespace Ray {
+                struct Material {
+                    Ccino::Vec3 albedo;
+                    float roughness;
+                };
+
+                struct Sphere {
+                    Material mat;
+                    float radius;
+                };
+
+                struct Light {
+                    Ccino::Vec3 radiance;
+                };
+
+                struct SceneBuffer {
+                    Sphere spheres[2];
+                    Ccino::Array<Light, 4> lights;
+                    int activeCount;
+                };
+            }
+        )",
+        {"SceneBuffer"},
+        {});
+
+    // 1. 验证未显式指定的嵌套子结构体均已自动递归加入 DeclGraph，且 isBufferReference 为 false
+    const auto* matNode    = FindStructNode("Ray_Material");
+    const auto* sphereNode = FindStructNode("Ray_Sphere");
+    const auto* lightNode  = FindStructNode("Ray_Light");
+    const auto* sceneNode  = FindStructNode("Ray_SceneBuffer");
+
+    ASSERT_NE(matNode, nullptr);
+    ASSERT_NE(sphereNode, nullptr);
+    ASSERT_NE(lightNode, nullptr);
+    ASSERT_NE(sceneNode, nullptr);
+
+    EXPECT_FALSE(matNode->isBufferReference);
+    EXPECT_FALSE(sphereNode->isBufferReference);
+    EXPECT_FALSE(lightNode->isBufferReference);
+    EXPECT_FALSE(sceneNode->isBufferReference);
+
+    EXPECT_TRUE(HasEdge("Ray_Sphere", "Ray_Material"));
+    EXPECT_TRUE(HasEdge("Ray_SceneBuffer", "Ray_Sphere"));
+    EXPECT_TRUE(HasEdge("Ray_SceneBuffer", "Ray_Light"));
+
+    // 2. 验证 EmitDeclGraph 严格按照被依赖子结构体在前、顶层结构体在后的拓扑顺序输出
+    const std::string emitted = generator.EmitDeclGraph();
+    const size_t matPos    = emitted.find("struct Ray_Material{\n");
+    const size_t spherePos = emitted.find("struct Ray_Sphere{\n");
+    const size_t lightPos  = emitted.find("struct Ray_Light{\n");
+    const size_t scenePos  = emitted.find("struct Ray_SceneBuffer{\n");
+
+    ASSERT_NE(matPos, std::string::npos) << emitted;
+    ASSERT_NE(spherePos, std::string::npos) << emitted;
+    ASSERT_NE(lightPos, std::string::npos) << emitted;
+    ASSERT_NE(scenePos, std::string::npos) << emitted;
+
+    EXPECT_LT(matPos, spherePos);
+    EXPECT_LT(spherePos, scenePos);
+    EXPECT_LT(lightPos, scenePos);
+}
+
+TEST_F(ProcessClangDeclTest, GenerateUniformDataReference_BufferRefAndRecursiveStructInsertion) {
+    class LambdaBindingCollector : public MatchFinder::MatchCallback {
+    public:
+        explicit LambdaBindingCollector(Ccino::ASTGenerator& gen) : generator(gen) {}
+
+        void run(const MatchFinder::MatchResult& result) override {
+            const auto* lambda = result.Nodes.getNodeAs<LambdaExpr>("lambda");
+            if (!lambda || !result.Context) return;
+            uniformBinding = generator.GenerateUniformDataReference(lambda, *result.Context);
+        }
+
+        Ccino::ASTGenerator& generator;
+        std::unique_ptr<Ccino::GLSL::UniformBinding> uniformBinding;
+    };
+
+    LambdaBindingCollector callback(generator);
+    MatchFinder finder;
+    finder.addMatcher(lambdaExpr(hasAncestor(functionDecl(hasName("TestEntry")))).bind("lambda"), &callback);
+
+    ASSERT_TRUE(tooling::runToolOnCodeWithArgs(
+        tooling::newFrontendActionFactory(&finder)->create(),
+        kDeclTestPreamble + R"(
+            struct SubMeta {
+                int version;
+            };
+
+            struct BufferPayload {
+                SubMeta meta;
+                Ccino::Vec3 value;
+            };
+
+            struct CapturedConfig {
+                float exposure;
+                int mode;
+            };
+
+            void TestEntry() {
+                Ccino::Accessor<BufferPayload, BufferAccessFlagBits::ReadWrite> payloadBuf;
+                CapturedConfig cfg{1.5f, 2};
+                float dt = 0.016f;
+
+                auto cs = [payloadBuf, cfg, dt]() {};
+            }
+        )",
+        {"-std=c++20"}));
+
+    ASSERT_NE(callback.uniformBinding, nullptr);
+    ASSERT_EQ(callback.uniformBinding->fields.size(), 3u);
+
+    // 1. Accessor<BufferPayload> 顶层结构体的 isBufferReference 应为 true，其内部嵌套的 SubMeta 应递归入图且 isBufferReference 为 false
+    const auto* payloadNode = FindStructNode("BufferPayload");
+    const auto* subMetaNode = FindStructNode("SubMeta");
+    const auto* cfgNode     = FindStructNode("CapturedConfig");
+
+    ASSERT_NE(payloadNode, nullptr);
+    ASSERT_NE(subMetaNode, nullptr);
+    ASSERT_NE(cfgNode, nullptr);
+
+    EXPECT_TRUE(payloadNode->isBufferReference);
+    EXPECT_FALSE(subMetaNode->isBufferReference);
+    EXPECT_FALSE(cfgNode->isBufferReference);
+
+    // 2. 验证 EmitDeclGraph 中 SubMeta 排在 buffer BufferPayload 之前，且 BufferPayload 生成为 buffer_reference
+    const std::string emittedDecls = generator.EmitDeclGraph();
+    const size_t subMetaPos = emittedDecls.find("struct SubMeta{\n");
+    const size_t payloadPos = emittedDecls.find("layout(buffer_reference, scalar) buffer BufferPayload{ \n");
+    const size_t cfgPos     = emittedDecls.find("struct CapturedConfig{\n");
+
+    ASSERT_NE(subMetaPos, std::string::npos) << emittedDecls;
+    ASSERT_NE(payloadPos, std::string::npos) << emittedDecls;
+    ASSERT_NE(cfgPos, std::string::npos) << emittedDecls;
+    EXPECT_LT(subMetaPos, payloadPos);
+}
+

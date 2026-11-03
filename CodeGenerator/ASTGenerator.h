@@ -44,8 +44,7 @@ namespace Ccino {
 
         //Decl
         void InsertFunctionDeclToGraph(clang::FunctionDecl* functionDecl); //这里包括普通函数和成员函数
-        void InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl);
-        void InsertCXXRecordDeclToGraph(clang::DeclRefExpr* declExpr); //处理Accessor
+        void InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl, bool isbufferRef = false);
         std::vector<std::vector<std::string>> SortDeclGraph(); //这里的输出类似RenderGraph的Timeline
         std::string EmitDeclGraph();
 

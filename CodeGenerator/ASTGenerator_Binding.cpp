@@ -1,5 +1,7 @@
 #include "CodeGenerator/ASTGenerator.h"
 #include "CodeGenerator/SignatureFlattener.h"
+#include <clang/AST/DeclTemplate.h>
+#include <clang/AST/TypeBase.h>
 
 namespace Ccino {
     std::unique_ptr<GLSL::UniformBinding> ASTGenerator::GenerateUniformDataReference(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
@@ -23,6 +25,34 @@ namespace Ccino {
                     declField->name = capture->getCapturedVar()->getNameAsString();
                 }
             }
+
+            auto type = field->getType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+            //处理包装器
+            if (auto* tmp = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(type->getAsCXXRecordDecl())) {
+                //Accessor
+                if (tmp->getName() == "Accessor" || tmp->getName() == "accessor") {
+                    //得到第一个模板参数     
+                    auto& args = tmp->getTemplateArgs();
+                    if (args[1].getKind() == clang::TemplateArgument::Declaration) {
+                        if (llvm::isa<clang::TemplateParamObjectDecl>(args[1].getAsDecl())) {
+                            InsertCXXRecordDeclToGraph(args[0].getAsType().getNonReferenceType().getCanonicalType().getUnqualifiedType()->getAsCXXRecordDecl(), true);
+                        }
+                    } else {
+                        llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: "
+                                     << tmp->getName() << "\n";
+                        throw std::invalid_argument(
+                            "Error: Accessor template need BufferAccessFlags as second argument: " + tmp->getNameAsString());
+                        return {};
+                    }
+                    
+                } else {
+                    //TODO: Texture处理
+                    InsertCXXRecordDeclToGraph(type->getAsCXXRecordDecl(), false);
+                }
+            } else {
+                InsertCXXRecordDeclToGraph(type->getAsCXXRecordDecl(), false);
+            }
+            
             
             auto flattenType = SignatureFlattener::FlattenType(field->getType());
             declField->type = flattenType.name;

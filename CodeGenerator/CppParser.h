@@ -15,10 +15,5 @@ namespace Ccino
 
         // 内部 AST 处理函数（在 MatchFinder::MatchCallback::run 内部调用，此时 AST 存活）：
         static ShaderIR ProcessComputeShader(const clang::LambdaExpr* lambda, clang::ASTContext& context, const std::string& passName, ThreadGroupSize threadGroupSize);
-
-    private:
-        static std::string GenerateSSBOBinding(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
-        static std::string ChangeAccessorToSSBOReference(const clang::ValueDecl* value);
-        static std::string GetGLSLDefine(clang::QualType type, bool needStructHeader = false);
     };
 }

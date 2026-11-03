@@ -179,16 +179,18 @@ namespace Ccino {
         }
     }
 
-    void ASTGenerator::InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl) {
+    void ASTGenerator::InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl, bool isBufferRef) {
         if (!recordDecl) return;
         const clang::CXXRecordDecl* def = recordDecl->getDefinition(); //得到定义
         if (!def) return;
+
 
         auto& astCtx = def->getASTContext();
         if (IsBuiltinType(astCtx.getCanonicalTagType(def))) return;
 
         auto glslStruct = std::make_unique<GLSL::StructDecl>();
         glslStruct->name = SignatureFlattener::FlattenRecord(recordDecl);
+        glslStruct->isBufferReference = isBufferRef;
         for (const clang::FieldDecl* field : def->fields()) {
             auto glslField = std::make_unique<GLSL::DeclField>();
             auto [typeName, dimensions] = SignatureFlattener::FlattenType(field->getType());
@@ -196,25 +198,28 @@ namespace Ccino {
             glslField->type = std::move(typeName);
             glslField->dimensions = std::move(dimensions);
             glslStruct->fields.push_back(std::move(glslField));
+            //递归处理所有结构体（包含定长数组与 std::array 元素中的嵌套结构体）
+            clang::QualType elemType = field->getType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+
+            //找到嵌套数组最内部的数
+            while (const auto* arr = llvm::dyn_cast<clang::ConstantArrayType>(elemType.getTypePtr())) {
+                elemType = arr->getElementType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+            }
+            if (auto* record = elemType->getAsCXXRecordDecl()) {
+                if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
+                    const auto& args = spec->getTemplateArgs();
+
+                    //特殊处理array
+                    if (spec->getName() == "array" && args.size() >= 1 &&
+                        args[0].getKind() == clang::TemplateArgument::Type) {
+                        record = args[0].getAsType().getNonReferenceType().getCanonicalType().getUnqualifiedType()->getAsCXXRecordDecl();
+                    }
+                }
+                InsertCXXRecordDeclToGraph(record);
+            }
         } 
         InsertGLSLStruct(std::move(glslStruct));
     }
-
-    void InsertCXXRecordDeclToGraph(clang::DeclRefExpr* declExpr) {
-        if (!declExpr) return;
-
-        auto* decl = declExpr->getDecl();
-        auto name = decl->getNameAsString();
-        const auto* varDecl = llvm::dyn_cast<clang::VarDecl>(decl);
-        if (!varDecl) return;
-        auto* def = varDecl->getType().getNonReferenceType().getCanonicalType().getUnqualifiedType()->getAsCXXRecordDecl();
-        def = def->getDefinition();
-        auto& astCtx = def->getASTContext();
-
-        //这里Accessor 的 信息可以直接在lambda的fields中全部获得,所以这里不获取
-        if (IsBuiltinType(astCtx.getCanonicalTagType(def))) return;
-    }
-
 
     std::string ASTGenerator::EmitDeclGraph() {
         std::string result;
@@ -292,6 +297,7 @@ namespace Ccino {
             ms.insert(dep);
         }
 
+        m_declGraph.edges[rawPtr->name].clear();
         for (auto& dep : ms) {
             m_declGraph.edges[rawPtr->name].push_back(dep); //设置依赖
         }
@@ -304,6 +310,7 @@ namespace Ccino {
         for (auto& dep : rawPtr->fields) {
             ms.insert(dep->type);
         }
+        m_declGraph.edges[rawPtr->name].clear();
         for (auto& dep : ms) {
             m_declGraph.edges[rawPtr->name].push_back(dep); //设置依赖
         }

@@ -288,21 +288,25 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         EXPECT_EQ(ir.uniformDataBindings[i].uniformDataType, expectedLayout[i].dataType);
     }
 
-    // 5. 验证完整生成的 GLSL 文本
-    const std::string expectedGlsl =
+    // 5. 验证完整生成的 GLSL 文本（含 Header、BufferReference 声明、UniformData、PushConstant 与 main 函数体）
+    const std::string expectedHeader =
         "#version 460\n"
         "#extension GL_EXT_buffer_reference2 : require\n"
+        "#extension GL_EXT_scalar_block_layout : require\n"
         "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
-        "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"
-        "layout(buffer_reference, std430) buffer Particle {\n"
-        "    vec3 pos;\n"
-        "    float mass;\n"
-        "};\n"
-        "layout(buffer_reference, std430) buffer DebugInfo {\n"
-        "    int stepCount;\n"
-        "    uint flags;\n"
-        "};\n"
-        "layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer UniformData { \n"
+        "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n";
+    const std::string expectedParticleBuf =
+        "layout(buffer_reference, scalar) buffer Particle{ \n"
+        "vec3 pos;\n"
+        "float mass;\n"
+        "};\n";
+    const std::string expectedDebugBuf =
+        "layout(buffer_reference, scalar) buffer DebugInfo{ \n"
+        "int stepCount;\n"
+        "uint flags;\n"
+        "};\n";
+    const std::string expectedTail =
+        "layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer UniformData { \n"
         "Particle inParticles;\n"
         "Particle outParticles;\n"
         "DebugInfo debugOut;\n"
@@ -336,7 +340,15 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "barrier();\n"
         "}\n";
 
-    EXPECT_EQ(ir.glsl, expectedGlsl);
+    EXPECT_EQ(ir.glsl.find(expectedHeader), 0u) << ir.glsl;
+    const size_t particlePos = ir.glsl.find(expectedParticleBuf);
+    const size_t debugPos    = ir.glsl.find(expectedDebugBuf);
+    const size_t tailPos     = ir.glsl.find(expectedTail);
+    ASSERT_NE(particlePos, std::string::npos) << ir.glsl;
+    ASSERT_NE(debugPos, std::string::npos) << ir.glsl;
+    ASSERT_NE(tailPos, std::string::npos) << ir.glsl;
+    EXPECT_LT(particlePos, tailPos);
+    EXPECT_LT(debugPos, tailPos);
 }
 
 TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
@@ -365,9 +377,9 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
 
     // 多个相同底层结构体的 Accessor（无论读写权限是否相同）只应生成一次 buffer Particle 声明
     const std::string particleBlock =
-        "layout(buffer_reference, std430) buffer Particle {\n"
-        "    vec3 pos;\n"
-        "    float mass;\n"
+        "layout(buffer_reference, scalar) buffer Particle{ \n"
+        "vec3 pos;\n"
+        "float mass;\n"
         "};\n";
     const size_t firstPos = ir.glsl.find(particleBlock);
     ASSERT_NE(firstPos, std::string::npos);
@@ -380,6 +392,71 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
     EXPECT_EQ(ir.descriptorSlotLayout[1].name, "inB");
     EXPECT_EQ(ir.descriptorSlotLayout[2].name, "outC");
     ASSERT_EQ(ir.uniformDataBindings.size(), 3u);
+}
+
+TEST(ProcessComputeShaderTest, NestedStructAndBufferReferenceRecursiveEmission) {
+    const auto shaders = RunProcessComputeShaderOnCode(
+        kShaderTestPreamble + R"(
+            struct LeafPayload {
+                float weight;
+                int id;
+            };
+
+            struct InnerHeader {
+                LeafPayload leaf;
+                Ccino::Vec3 normal;
+            };
+
+            struct OuterBufferBlock {
+                InnerHeader header;
+                LeafPayload extraLeaves[2];
+            };
+
+            void TestEntry() {
+                Ccino::Accessor<OuterBufferBlock, BufferAccessFlagBits::ReadWrite> blocks;
+
+                auto cs = [blocks]() {
+                    uint32_t idx = Ccino::ComputeGlobalID.x;
+                    blocks[idx].header.leaf.weight = 1.0f;
+                };
+            }
+        )",
+        "NestedBufferRefPass",
+        Ccino::ThreadGroupSize{32, 1, 1});
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const std::string& glsl = shaders[0].glsl;
+
+    const std::string expectedLeafStruct =
+        "struct LeafPayload{\n"
+        "float weight;\n"
+        "int id;\n"
+        "};\n";
+    const std::string expectedInnerStruct =
+        "struct InnerHeader{\n"
+        "LeafPayload leaf;\n"
+        "vec3 normal;\n"
+        "};\n";
+    const std::string expectedOuterBuffer =
+        "layout(buffer_reference, scalar) buffer OuterBufferBlock{ \n"
+        "InnerHeader header;\n"
+        "LeafPayload extraLeaves[2];\n"
+        "};\n";
+
+    const size_t leafPos    = glsl.find(expectedLeafStruct);
+    const size_t innerPos   = glsl.find(expectedInnerStruct);
+    const size_t outerPos   = glsl.find(expectedOuterBuffer);
+    const size_t uniformPos = glsl.find("readonly buffer UniformData");
+
+    ASSERT_NE(leafPos, std::string::npos) << glsl;
+    ASSERT_NE(innerPos, std::string::npos) << glsl;
+    ASSERT_NE(outerPos, std::string::npos) << glsl;
+    ASSERT_NE(uniformPos, std::string::npos) << glsl;
+
+    // 拓扑序：LeafPayload -> InnerHeader -> OuterBufferBlock -> UniformData
+    EXPECT_LT(leafPos, innerPos);
+    EXPECT_LT(innerPos, outerPos);
+    EXPECT_LT(outerPos, uniformPos);
 }
 
 TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
@@ -743,7 +820,7 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
     ASSERT_EQ(ir.uniformDataBindings.size(), 3u);
 
     EXPECT_NE(ir.glsl.find("layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("layout(buffer_reference, std430) buffer Particle {\n"), std::string::npos);
+    EXPECT_NE(ir.glsl.find("layout(buffer_reference, scalar) buffer Particle{ \n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("uint idx = gl_GlobalInvocationID.x;\n"), std::string::npos);
     EXPECT_NE(ir.glsl.find("pc.uniformData.inOutParticles[idx].pos = (pc.uniformData.inOutParticles[idx].pos + (pc.uniformData.gravity * pc.uniformData.dt))"), std::string::npos);
 }

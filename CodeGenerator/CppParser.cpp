@@ -289,26 +289,30 @@ namespace Ccino
         appendLocalSize("local_size_y", threadGroupSize.y);
         appendLocalSize("local_size_z", threadGroupSize.z);
 
-        // 1. 生成头与 SSBO 声明
+        // 1. 生成头
+        //这里注意scalar不是万能的
         std::string astGlsl = "#version 460\n"
                               "#extension GL_EXT_buffer_reference2 : require\n"
+                              "#extension GL_EXT_scalar_block_layout : require\n"
                               "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
         astGlsl += "layout(" + localSizeArgs + ") in;\n";
-        astGlsl += GenerateSSBOBinding(lambda, context);
 
-        // 2. 生成 Struct Decl 和 Function Decl，使用 RecursiveASTVisitor 并且 Emit
+        // 2. 生成 Uniform Binding（同时将 Accessor 关联的 BufferReference 结构体及捕获结构体加入 DeclGraph）
+        auto uniformBinding = astGenerator.GenerateUniformDataReference(lambda, context);
+
+        // 3. 生成 Struct Decl 和 Function Decl，使用 RecursiveASTVisitor 并且 Emit
         LambdaInnerCollector innerCollector(&astGenerator);
         innerCollector.TraverseStmt(lambda->getBody());
         astGlsl += astGenerator.EmitDeclGraph();
 
-        // 3. 生成 Uniform Binding 并 Emit
-        if (auto uniformBinding = astGenerator.GenerateUniformDataReference(lambda, context)) {
+        // 4. Emit Uniform Binding 与 PushConstant
+        if (uniformBinding) {
             astGlsl += uniformBinding->EmitGLSL();
         }
         GLSL::PushConstantBinding pushConstantBinding;
         astGlsl += pushConstantBinding.EmitGLSL();
 
-        // 4. 生成 void main 主体
+        // 5. 生成 void main 主体
         if (auto mainBody = astGenerator.ProcessClangStmt(lambda->getBody())) {
             astGlsl += "void main() { \n";
             astGlsl += mainBody->EmitGLSL();
@@ -317,73 +321,5 @@ namespace Ccino
 
         shaderIR.glsl = std::move(astGlsl);
         return shaderIR;
-    }
-
-    // 单独处理 Accessor 生成 layout(buffer_reference) binding 信息
-    std::string CppParser::ChangeAccessorToSSBOReference(const clang::ValueDecl* value) {
-        if (!value) return {};
-        clang::QualType type = value->getType();
-        auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
-        if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
-            if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
-                llvm::StringRef tmplName = spec->getName();
-                const clang::TemplateArgumentList& args = spec->getTemplateArgs();
-                if (tmplName == "Accessor" && args.size() >= 2) {
-                    if (args[1].getKind() == clang::TemplateArgument::Declaration) {
-                        if (llvm::isa<clang::TemplateParamObjectDecl>(args[1].getAsDecl())) {
-                            return "layout(buffer_reference, std430) buffer " +
-                                   GetGLSLDefine(args[0].getAsType(), false);
-                        }
-                    } else {
-                        llvm::errs() << "Error: Accessor template need BufferAccessFlags as second argument: "
-                                     << tmplName << "\n";
-                        return {};
-                    }
-                }
-            }
-        }
-        return {};
-    }
-
-    std::string CppParser::GenerateSSBOBinding(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& /*context*/) {
-        if (!lambdaExpr) return {};
-
-        const clang::CXXRecordDecl* lambdaClass = lambdaExpr->getLambdaClass();
-        if (!lambdaClass) return {};
-
-        std::string result;
-        std::unordered_set<std::string> emittedSSBOs;
-
-        for (const auto* field : lambdaClass->fields()) {
-            std::string ssbo = ChangeAccessorToSSBOReference(field);
-            if (!ssbo.empty() && emittedSSBOs.insert(ssbo).second) {
-                result += ssbo;
-            }
-        }
-
-        return result;
-    }
-
-    std::string CppParser::GetGLSLDefine(clang::QualType type, bool needStructHeader) {
-        clang::QualType canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
-        std::string glslDefine;
-        if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
-            if (const auto* def = record->getDefinition()) {
-                if (needStructHeader) {
-                    glslDefine += "struct " + def->getNameAsString() + " {\n";
-                } else {
-                    glslDefine += def->getNameAsString() + " {\n";
-                }
-
-                for (const auto* field : def->fields()) {
-                    llvm::StringRef fieldName = field->getName();
-                    auto [typeName, dimensions] = SignatureFlattener::FlattenType(field->getType());
-                    glslDefine += "    " + typeName + " " + fieldName.str() + dimensions + ";\n";
-                }
-                glslDefine += "};\n";
-                return glslDefine;
-            }
-        }
-        return glslDefine;
     }
 }  // namespace Ccino
