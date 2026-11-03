@@ -5,7 +5,7 @@
 DescriptorSlot 是 Ccino 绑定层的消费端。它只依赖 Vulkan 1.2 核心的 `bufferDeviceAddress` 和 `descriptor_indexing`，不需要额外的设备扩展。
 
 - **Buffer**：全部通过 BDA（Buffer Device Address）访问，不占用 Descriptor。
-- **Texture / Sampler**：放在一个全局 DescriptorSet 的 `descriptor_indexing` 数组里，Shader 用数组索引访问。目前只实现了 Sampler，Texture 先留空。
+- **Texture / Sampler**：放在一个全局 DescriptorSet 的 `descriptor_indexing` 数组里，Shader 用数组索引访问。Sampler 在 `Init` 时整表写入；2D 的 SampledImage / StorageImage 在 `BindTexture2DSRV` / `BindTexture2DUAV` 时分配索引并写入。
 - **Binding**：一次 Dispatch 要用的资源和常量由一个 `DescriptorSlotBinding` 描述。它有一组 UniformBuffer，数量和飞行帧一致，按 std140 存放 Buffer 的 BDA、Sampler / Texture 的数组索引和常量参数。
 - **PushConstant**：只推送当前飞行帧那份 UniformBuffer 的 BDA（8 字节）。
 
@@ -17,7 +17,9 @@ Binding 的 UniformBuffer（std140）
   params     : uint64_t BDA  ──►  Params Buffer
   data       : uint64_t BDA  ──►  Data Buffer
   multiplier : uint           常量直接存值
-  sampler    : uint           ──►  globalSamplers[sampler]（全局 DescriptorSet）
+  sampler    : uint           ──►  globalSamplers[sampler]（binding 0）
+  albedo     : uint           ──►  globalTextures[index]（binding 1，SampledImage）
+  storage    : uint           ──►  globalImages[index]（binding 2，StorageImage）
 ```
 
 
@@ -58,10 +60,14 @@ using DescriptorSlotLayout = std::vector<std::pair<std::string, UniformDataType>
 #version 460
 #extension GL_EXT_buffer_reference : require
 
-//全局DescriptorSet (set 0), 用到时再声明, binding 和DESCRIPTOR_BINDING_* 一致
+//全局DescriptorSet (set 0)。CodeGenerator 的 TextureBinding::EmitGLSL 会输出这些声明。
 //layout(set = 0, binding = 0) uniform sampler globalSamplers[];
-//layout(set = 0, binding = 1) uniform texture2D globalSampledImages[];
-//layout(set = 0, binding = 2, r32f) uniform image2D globalStorageImages[];
+//layout(set = 0, binding = 1) uniform texture2D globalTextures[];
+//layout(set = 0, binding = 1) uniform itexture2D globalITextures[];
+//layout(set = 0, binding = 1) uniform utexture2D globalUTextures[];
+//layout(set = 0, binding = 2) uniform image2D globalImages[];
+//layout(set = 0, binding = 2) uniform iimage2D globalIImages[];
+//layout(set = 0, binding = 2) uniform uimage2D globalUImages[];
 
 layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer Params {
     uint multiplier;
@@ -134,11 +140,11 @@ descriptorSlot.Destroy();
 
 
 ### 生命周期与同步
-- **Bind 只改 CPU 副本**：`BindBuffer` / `BindSampler` / `BindParam` 只修改 Binding 的 CPU 副本，并把所有飞行帧标记为需要上传。
+- **Bind 只改 CPU 副本**：`BindBuffer` / `BindSampler` / `BindParam` 只修改 Binding 的 CPU 副本，并把所有飞行帧标记为需要上传。`BindTexture2DSRV` / `BindTexture2DUAV` 还会立刻创建 ImageView 并写入描述符数组；Uniform 里的索引同样等到 `Push` 再上传。
 - **Push 才上传**：`Push` 时如果当前飞行帧的 UniformBuffer 落后于 CPU 副本，就先拷贝过去（非 coherent 内存会 flush），再推送它的 BDA。已经录制的命令不受之后 `Bind*` 的影响。
 - **同一帧多次 Push 的限制**：同一飞行帧内的多次 `Push` 共用这一帧的 UniformBuffer，GPU 读到的是这一帧最后一次 `Push` 时的内容。需要不同的值，请用多个 Binding。
 - **飞行帧轮换**：第 F 帧的 UniformBuffer 只在第 F 帧被改写。前提是 `Context::Tick` 推进帧序号之前，已经等完这一帧的 fence。
-- **析构**：Binding 析构时，UniformBuffer 交给 `Context::DeleteResource` 按飞行帧延迟释放。
+- **析构**：Binding 析构时，UniformBuffer 交给 `Context::DeleteResource` 按飞行帧延迟释放。已绑定的 ImageView 交给 `DescriptorSlot` 按飞行帧回收。
 - **Buffer 不需要登记**：Buffer 通过 BDA 访问，DescriptorSlot 不登记 Buffer。资源销毁后，不能再 Push 还引用它的 Binding。
 - **只能移动**：Binding 只能移动不能拷贝。`DescriptorSlot::Destroy` 时如果还有 Binding 存活，会抛出异常。
 
@@ -153,4 +159,27 @@ descriptorSlot.Destroy();
 ### 容量与限制
 - Sampler 数组 16 个，SampledImage / StorageImage 数组各 1024 个，最多 8 个 DescriptorSlot。`InitGlobal` 会检查设备的 update-after-bind 上限，不够时抛异常。
 - 全局对象只支持一个 Context。
-- Texture 的绑定还是 TODO，要等 Context 支持创建纹理。到时在 `DescriptorSlot` 中分配 SampledImage / StorageImage 数组索引，并在 `Update` 中按飞行帧回收。
+- 纹理绑定目前是 2D。`BindTexture2D` 会用纹理自身的 format 覆盖 `VkImageViewCreateInfo::format`，多 format 视图还没做。
+
+
+### 纹理绑定与回收
+`BindTexture2DSRV` 对应布局里的 `SampledImage`，`BindTexture2DUAV` 对应 `StorageImage`。两者都接收纹理 RID 和 `VkImageViewCreateInfo`：`image` 从 `Context::GetVkImage` 填入，`format` 从 `Context::GetFormat` 填入，然后 `Context::CreateImageView` 创建 View。
+
+```cpp
+VkImageViewCreateInfo viewInfo{};
+viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+viewInfo.subresourceRange.baseMipLevel = 0;
+viewInfo.subresourceRange.levelCount = 1;
+viewInfo.subresourceRange.baseArrayLayer = 0;
+viewInfo.subresourceRange.layerCount = 1;
+
+binding.BindTexture2DSRV("albedo", albedoRID, viewInfo)
+       .BindTexture2DUAV("storage", storageRID, viewInfo);
+```
+
+- **分配索引**：`DescriptorSlot::WriteTextureDescriptor` 先复用数组里的空位，没有空位就追加。SampledImage 写入 binding 1，layout 为 `VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL`；StorageImage 写入 binding 2，layout 为 `VK_IMAGE_LAYOUT_GENERAL`。数组满时抛异常。返回的索引写入该字段的 Uniform 副本。
+- **描述符立即更新**：数组带 `UPDATE_AFTER_BIND`，`Bind*` 里直接 `vkUpdateDescriptorSets`。Shader 要读到新索引，仍要等这次 `Push` 把 UniformBuffer 上传。
+- **重绑**：同一字段再次绑定时，旧 View 进入当前飞行帧的回收桶。飞行中的命令仍可通过旧索引访问它。
+- **回收**：`DescriptorSlot::Update` 在这一帧的 fence 已经等到之后调用，清掉当前飞行帧桶里的槽位，索引可以立刻复用，View 再交给 `Context::DeleteResource`。Binding 释放时，名下还绑着的 View 同样进桶。`Destroy` 时数组里仍占用的 View 也交给 `Context::DeleteResource`。

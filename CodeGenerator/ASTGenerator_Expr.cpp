@@ -409,7 +409,7 @@ namespace Ccino {
             const char* samplerCtor = (viewTypeVal == 1) ? "isampler2D"
                                     : (viewTypeVal == 2) ? "usampler2D"
                                                          : "sampler2D";
-            callExpr->text = std::string("textureLod(") + samplerCtor + "(" + texArr + "[nonuniformEXT(" + selfText + ")], globalSamplers[" + argTexts[1] + "]), " + argTexts[0] + ", " + argTexts[2] + ")";
+            callExpr->text = std::string("textureLod(") + samplerCtor + "(" + texArr + "[nonuniformEXT(" + selfText + ")], globalSamplers[nonuniformEXT(" + argTexts[1] + ")]), " + argTexts[0] + ", " + argTexts[2] + ")";
             lowering->expr = std::move(callExpr);
             return lowering;
         }
