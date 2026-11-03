@@ -28,6 +28,7 @@ int main() {
 
     std::string globalFunctions = {};
 
+    std:: cout << "Generating GLSL Code..." << std::endl;
     std::vector<Ccino::ShaderIR> shaderIRs = Ccino::CppParser::ParseFilePassShaders(compileCommands.string(), &globalFunctions);
     if (!globalFunctions.empty()) {
         std::filesystem::path globalHeaderPath = CCINO_GLOBAL_HEADER_FILE;
@@ -70,6 +71,7 @@ int main() {
                 std::cerr << "Failed to write SPV file: " << spvPath << "\n";
                 return 1;
             }
+            std::cout << " GLSL Compiling : " << shaderIR.passName << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "Failed to compile GLSL to SPV for pass '" << shaderIR.passName << "':\n" << e.what() << "\n";
             return 1;

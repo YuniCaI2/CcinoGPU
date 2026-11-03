@@ -189,7 +189,7 @@ namespace Ccino {
         void BuildGraph();
         void Run(); //这里传入一个分配的池
 
-        //需要实现循环运行，这个和游戏渲染循环一致,并且注入一个lambda用来处理当前是否需要退出
+        //需要实现循环运行，这个和游戏渲染循环一致,并且注入一个lambda用来处理当前是否需要退出, 必须使用交换链
         template<typename Exit>
         requires std::is_same_v<bool, std::invoke_result<std::remove_cvref_t<Exit>>>
         void LoopRun(Exit&& exitFunc) {
