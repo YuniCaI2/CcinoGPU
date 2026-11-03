@@ -38,6 +38,10 @@ namespace Ccino::RHI {
         deviceFeatures.samplerAnisotropy = VK_TRUE;
         deviceFeatures.shaderInt64 = VK_TRUE;  // Shader 里使用uint64_t 参数 (GL_EXT_shader_explicit_arithmetic_types_int64)
 
+        //Texutre在GLSL不需要处理format ，简化模板参数导致的组合
+        deviceFeatures.shaderStorageImageReadWithoutFormat = VK_TRUE;
+        deviceFeatures.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+
         VkPhysicalDeviceVulkan11Features features11{};
         features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
         features11.shaderDrawParameters = VK_TRUE;

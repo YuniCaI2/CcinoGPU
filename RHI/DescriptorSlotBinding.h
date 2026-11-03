@@ -20,12 +20,9 @@ namespace Ccino::RHI {
     using Ccino::UniformTypeInfo;
     using Ccino::GetUniformTypeInfo;
     using Ccino::UniformTypeOf;
-    using Ccino::UniformTypeOfBase;
-    using Ccino::UniformCppType;
-    using Ccino::UniformCppTypeBase;
-    using Ccino::UniformCppType_t;
-    using Ccino::VisitUniformDataType;
-    namespace Std140 = Ccino::Std140;
+    using Ccino::AlignUp;
+    using Ccino::IsParamCompatible;
+    using Ccino::WriteParam;
 
     //一个Binding 对应一次PushConstant, 只能移动不能拷贝, 同一时间只能被一个线程使用
     //Bind* 只修改CPU 端的副本, Push 时才拷贝到当前飞行帧的UniformBuffer, 已经录制的命令不受之后Bind* 的影响
@@ -43,14 +40,14 @@ namespace Ccino::RHI {
         DescriptorSlotBinding& BindTexture2DUAV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo); //StorageTexture StorageImage
         DescriptorSlotBinding& BindTexture2DSRV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo); //SampledTexture
 
-        //常量绑定, 按layout 中声明的类型检查, 矩阵按std140 逐列写入
+        //常量绑定, 按layout 中声明的类型检查
         template<typename T>
         DescriptorSlotBinding& BindParam(const std::string& name, const T& param) {
             const UniformOffset& field = FindField(name);
-            if (!Std140::IsParamCompatible(UniformTypeOf<T>::value, field.uniformDataType)) {
+            if (!IsParamCompatible(UniformTypeOf<T>::value, field.uniformDataType)) {
                 throw std::runtime_error("Uniform param type does not match descriptor slot layout: " + name);
             }
-            Std140::WriteParam(m_uniformData.data() + field.offset, param);
+            WriteParam(m_uniformData.data() + field.offset, param);
             MarkDirty();
             return *this;
         }
@@ -61,10 +58,10 @@ namespace Ccino::RHI {
                 throw std::invalid_argument("Uniform param data pointer is null: " + name);
             }
             const UniformOffset& field = FindField(name);
-            if (!Std140::IsParamCompatible(paramType, field.uniformDataType)) {
+            if (!IsParamCompatible(paramType, field.uniformDataType)) {
                 throw std::runtime_error("Uniform param type does not match descriptor slot layout: " + name);
             }
-            Std140::WriteParam(m_uniformData.data() + field.offset, paramType, paramData);
+            WriteParam(m_uniformData.data() + field.offset, paramType, paramData);
             MarkDirty();
             return *this;
         }

@@ -58,6 +58,9 @@ namespace Ccino {
         void SetCurrentStructDecl(clang::CXXRecordDecl* decl) { m_currentStructDecl = decl; }
         clang::CXXRecordDecl* GetCurrentStructDecl() const { return m_currentStructDecl; }
 
+        //Tool
+        static const clang::APValue* ExtractStructuralAPValue(const clang::TemplateArgument& arg);
+
     private:
         //Stmt
         std::unique_ptr<GLSL::DeclStmt> ProcessDeclStmt(clang::DeclStmt* stmt);
@@ -69,6 +72,7 @@ namespace Ccino {
         //Expr
         std::unique_ptr<GLSL::LoweringStmt> ProcessCallExpr(clang::CallExpr* expr);
         std::unique_ptr<GLSL::LoweringStmt> ProcessMemberCallExpr(clang::CXXMemberCallExpr* expr);
+        std::unique_ptr<GLSL::LoweringStmt> ProcessViewerCallExpr(clang::CXXMemberCallExpr* expr);
         std::unique_ptr<GLSL::LoweringStmt> ProcessOperatorCallExpr(clang::CXXOperatorCallExpr* expr);
         std::unique_ptr<GLSL::LoweringStmt> ProcessMemberExpr(clang::MemberExpr* expr);
         std::unique_ptr<GLSL::LoweringStmt> ProcessILExpr(clang::IntegerLiteral* expr);

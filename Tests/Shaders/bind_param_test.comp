@@ -1,15 +1,16 @@
 #version 460
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_scalar_block_layout : require
 
 layout(local_size_x = 1) in;
 
-//把Slot 中的每个常量按分量写成32 位整数, CPU 端逐个比对, 用来验证BindParam 的std140 布局
+//把Slot 中的每个常量按分量写成32 位整数, CPU 端逐个比对, 用来验证BindParam 的scalar 布局
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer Result {
     uint values[];
 };
 
-//和测试中的DescriptorSlotLayout 顺序一致, 按std140 排布
-layout(buffer_reference, std140, buffer_reference_align = 16) readonly buffer Slot {
+//和测试中的DescriptorSlotLayout 顺序一致, 按scalar 排布
+layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer Slot {
     Result result;  //Buffer
     float f;        //Float
     int i;          //Int

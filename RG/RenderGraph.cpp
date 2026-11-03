@@ -62,6 +62,81 @@ namespace {
         bufferBarrier.size = context->GetBufferSize(bufferID);
         return bufferBarrier;
     }
+
+    VkAccessFlags2 ToVkTextureAccessFlags2(TextureAccessFlags flags) {
+        VkAccessFlags2 access = VK_ACCESS_2_NONE;
+        if (HasTextureAccess(flags, TextureAccessFlagBits::Sampled)) {
+            access |= VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+        }
+        if (HasTextureAccess(flags, TextureAccessFlagBits::StorageRead)) {
+            access |= VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+        }
+        if (HasTextureAccess(flags, TextureAccessFlagBits::StorageWrite)) {
+            access |= VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        }
+        if (HasTextureAccess(flags, TextureAccessFlagBits::RenderTarget)) {
+            access |= VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        }
+        return access;
+    }
+
+    VkImageLayout ToVkImageLayout(TextureAccessFlags flags) {
+        if (HasTextureAccess(flags, TextureAccessFlagBits::StorageRead) ||
+            HasTextureAccess(flags, TextureAccessFlagBits::StorageWrite)) {
+            return VK_IMAGE_LAYOUT_GENERAL;
+        }
+        if (HasTextureAccess(flags, TextureAccessFlagBits::Sampled)) {
+            return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+        if (HasTextureAccess(flags, TextureAccessFlagBits::RenderTarget)) {
+            return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+        return VK_IMAGE_LAYOUT_GENERAL;
+    }
+
+    VkImageAspectFlags ImageAspectFromVkFormat(VkFormat format) {
+        if (format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM) {
+            return VK_IMAGE_ASPECT_DEPTH_BIT;
+        }
+        return VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+
+    VkImageMemoryBarrier2 GenerateVkTextureBarrier(
+        TextureAccessFlags srcFlags,
+        TextureAccessFlags dstFlags,
+        Ccino::RHI::Context* context,
+        RID textureID,
+        Ccino::RGPassTypeFlags srcPassType = Ccino::RGPassTypeFlagBits::Compute,
+        Ccino::RGPassTypeFlags dstPassType = Ccino::RGPassTypeFlagBits::Compute) {
+        const VkImageLayout oldLayout = context->GetTextureLayout(textureID);
+        const VkImageLayout newLayout = ToVkImageLayout(dstFlags);
+        const VkFormat format = context->GetFormat(textureID);
+
+        VkImageMemoryBarrier2 imageBarrier{};
+        imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        imageBarrier.pNext = nullptr;
+        imageBarrier.srcStageMask = (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+                                        ? VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT
+                                        : ToVkPipelineStageFlags2(srcPassType);
+        imageBarrier.srcAccessMask = (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED)
+                                         ? VK_ACCESS_2_NONE
+                                         : ToVkTextureAccessFlags2(srcFlags);
+        imageBarrier.dstStageMask = ToVkPipelineStageFlags2(dstPassType);
+        imageBarrier.dstAccessMask = ToVkTextureAccessFlags2(dstFlags);
+        imageBarrier.oldLayout = oldLayout;
+        imageBarrier.newLayout = newLayout;
+        imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imageBarrier.image = context->GetVkImage(textureID);
+        imageBarrier.subresourceRange.aspectMask = ImageAspectFromVkFormat(format);
+        imageBarrier.subresourceRange.baseMipLevel = 0;
+        imageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+        imageBarrier.subresourceRange.baseArrayLayer = 0;
+        imageBarrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+        context->SetTextureLayout(textureID, newLayout);
+        return imageBarrier;
+    }
 }
 
 namespace Ccino {
@@ -172,8 +247,9 @@ namespace Ccino {
             }
         }        
         
-        //Buffer Barrier
+        //Buffer & Texture Barrier
         std::unordered_map<RID, std::vector<RGBufferBarrier>> bufferBarrierMap; 
+        std::unordered_map<RID, std::vector<RGTextureBarrier>> textureBarrierMap;
 
         // 初始化所有的Pass的入度 
         for (const auto& dependency : passDependencies) {
@@ -201,6 +277,24 @@ namespace Ccino {
                     bufferBarrier.resourceRID = dependency.resourceRID;
 
                     bufferBarrierMap[dependency.dstPassRID].push_back(std::move(bufferBarrier));
+                } else if (resource != nullptr && resource->GetResourceType() == ResourceType::Texture) {
+                    RGTextureBarrier textureBarrier;
+                    std::visit([&](const auto& resourceFlags){
+                        if constexpr (std::is_same_v<TextureAccessFlags, std::decay_t<decltype(resourceFlags)>>) {
+                            textureBarrier.dstFlags = resourceFlags;
+                        }
+                    }, dependency.dstAccessFlags);
+
+                    std::visit([&](const auto& resourceFlags){
+                        if constexpr (std::is_same_v<TextureAccessFlags, std::decay_t<decltype(resourceFlags)>>) {
+                            textureBarrier.srcFlags = resourceFlags;
+                        }
+                    }, dependency.srcAccessFlags);
+                    textureBarrier.srcPassType = m_passes.Get(dependency.srcPassRID)->passType;
+                    textureBarrier.dstPassType = m_passes.Get(dependency.dstPassRID)->passType;
+                    textureBarrier.resourceRID = dependency.resourceRID;
+
+                    textureBarrierMap[dependency.dstPassRID].push_back(std::move(textureBarrier));
                 }
 
             }
@@ -209,6 +303,7 @@ namespace Ccino {
 
         m_timeline.clear();
         m_bufferBarriers.clear();
+        m_textureBarriers.clear();
         std::vector<RID> currentLayer;
 
         for (const auto& passRID : m_passes.GetAllRIDs()) {
@@ -226,6 +321,7 @@ namespace Ccino {
 
             std::vector<RID> nextLayer;
             std::unordered_map<RID, RGBufferBarrier> bufferBarrierLayer;
+            std::unordered_map<RID, RGTextureBarrier> textureBarrierLayer;
 
             for (const auto& passRID : currentLayer) {
                 for (const auto& dstPassRID : dependecyGraph[passRID]) {
@@ -241,6 +337,16 @@ namespace Ccino {
                                 bufferBarrierLayer[bufferBarrier.resourceRID] = bufferBarrier;
                             }
                         }
+                        for (auto& textureBarrier : textureBarrierMap[dstPassRID]) {
+                            if (textureBarrierLayer.contains(textureBarrier.resourceRID)) {
+                                textureBarrierLayer[textureBarrier.resourceRID].srcFlags |= textureBarrier.srcFlags;
+                                textureBarrierLayer[textureBarrier.resourceRID].dstFlags |= textureBarrier.dstFlags;
+                                textureBarrierLayer[textureBarrier.resourceRID].srcPassType |= textureBarrier.srcPassType;
+                                textureBarrierLayer[textureBarrier.resourceRID].dstPassType |= textureBarrier.dstPassType;
+                            } else {
+                                textureBarrierLayer[textureBarrier.resourceRID] = textureBarrier;
+                            }
+                        }
                         nextLayer.push_back(dstPassRID);
                     }
                 }
@@ -251,8 +357,13 @@ namespace Ccino {
                 for (auto& [_, barrier] : bufferBarrierLayer) {
                     currentBufferBarriers.push_back(std::move(barrier));
                 }
-                //Buffer
                 m_bufferBarriers.push_back(std::move(currentBufferBarriers));
+
+                std::vector<RGTextureBarrier> currentTextureBarriers;
+                for (auto& [_, barrier] : textureBarrierLayer) {
+                    currentTextureBarriers.push_back(std::move(barrier));
+                }
+                m_textureBarriers.push_back(std::move(currentTextureBarriers));
             }
             currentLayer = std::move(nextLayer);
 
@@ -321,18 +432,52 @@ namespace Ccino {
 
         //处理时间线，然后生成对应命令
         for (size_t i = 0; i < m_timeline.size(); ++i) {
-            if (i > 0 && (i - 1) < m_bufferBarriers.size() && !m_bufferBarriers[i - 1].empty()) {
-                //Barrier绑定    
+            std::vector<VkBufferMemoryBarrier2> bufferBarriers;
+            std::vector<VkImageMemoryBarrier2> imageBarriers;
+
+            if (i > 0) {
+                if ((i - 1) < m_bufferBarriers.size()) {
+                    for (auto& accessBarrier : m_bufferBarriers[i - 1]) {
+                        auto barrier = GenerateVkBufferBarrier(accessBarrier.srcFlags, accessBarrier.dstFlags, m_context,
+                            m_resources.Get(accessBarrier.resourceRID)->GetRHI(), accessBarrier.srcPassType, accessBarrier.dstPassType);
+                        bufferBarriers.push_back(std::move(barrier));
+                    }
+                }
+                if ((i - 1) < m_textureBarriers.size()) {
+                    for (auto& accessBarrier : m_textureBarriers[i - 1]) {
+                        auto barrier = GenerateVkTextureBarrier(accessBarrier.srcFlags, accessBarrier.dstFlags, m_context,
+                            m_resources.Get(accessBarrier.resourceRID)->GetRHI(), accessBarrier.srcPassType, accessBarrier.dstPassType);
+                        imageBarriers.push_back(std::move(barrier));
+                    }
+                }
+            }
+
+            // 首次使用的 Texture 若仍处于 VK_IMAGE_LAYOUT_UNDEFINED，在本层执行前转换至目标 Layout
+            for (const auto& passRID : m_timeline[i]) {
+                auto* pass = m_passes.Get(passRID);
+                for (const auto& edge : m_edges) {
+                    if (edge.passRID != passRID) continue;
+                    auto* res = m_resources.Get(edge.resourceRID);
+                    if (!res || res->GetResourceType() != ResourceType::Texture) continue;
+                    RID rhiTex = res->GetRHI();
+                    if (m_context->GetTextureLayout(rhiTex) == VK_IMAGE_LAYOUT_UNDEFINED) {
+                        std::visit([&](const auto& flags) {
+                            if constexpr (std::is_same_v<TextureAccessFlags, std::decay_t<decltype(flags)>>) {
+                                imageBarriers.push_back(GenerateVkTextureBarrier(
+                                    TextureAccessFlagBits::None, flags, m_context, rhiTex, pass->passType, pass->passType));
+                            }
+                        }, edge.resourceAccessFlags);
+                    }
+                }
+            }
+
+            if (!bufferBarriers.empty() || !imageBarriers.empty()) {
                 VkDependencyInfo dependecyInfo = {};
                 dependecyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-                std::vector<VkBufferMemoryBarrier2> bufferBarriers;
-                for (auto& accessBarrier : m_bufferBarriers[i - 1]) {
-                    auto barrier = GenerateVkBufferBarrier(accessBarrier.srcFlags, accessBarrier.dstFlags, m_context,
-                        m_resources.Get(accessBarrier.resourceRID)->GetRHI(), accessBarrier.srcPassType, accessBarrier.dstPassType);
-                    bufferBarriers.push_back(std::move(barrier));
-                }
                 dependecyInfo.bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size());
                 dependecyInfo.pBufferMemoryBarriers = bufferBarriers.data();
+                dependecyInfo.imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size());
+                dependecyInfo.pImageMemoryBarriers = imageBarriers.data();
                 vkCmdPipelineBarrier2(commandBuffer, &dependecyInfo);
             }
 

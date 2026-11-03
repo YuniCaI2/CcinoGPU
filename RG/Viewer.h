@@ -62,6 +62,19 @@ namespace Ccino {
         using Type = UVec4;
     };
 
+    //完全和RHI对齐即可
+    enum class SamplerType {
+        LINEAR_REPEAT = 0,
+        LINEAR_CLAMP_TO_EDGE = 1,
+        LINEAR_CLAMP_TO_BORDER = 2,
+        LINEAR_MIRRORED_REPEAT = 3,
+        NEAREST_REPEAT = 4,
+        NEAREST_CLAMP_TO_EDGE = 5,
+        NEAREST_CLAMP_TO_BORDER = 6,
+        NEAREST_MIRRORED_REPEAT = 7,
+        COUNT
+    };
+
 
 
     //先只考虑2D， 3D纹理后续再扩展，太复杂
@@ -74,19 +87,19 @@ namespace Ccino {
         }
         using Texel = typename ViewTypeToCppType<viewType>::Type;
         
-        Texel Load(IVec2 dummy) 
+        Texel Load(IVec2 dummy) const
             requires TextureAccessHas<textureAccessFlags, TextureAccessFlagBits::StorageRead>
         {
             return Texel{};
         }
 
-        void Store(IVec2 dummy, Texel tex) 
+        void Store(IVec2 dummy, Texel tex) const
             requires TextureAccessHas<textureAccessFlags, TextureAccessFlagBits::StorageWrite>
         {
 
         }
 
-        Texel Sample(Vec2 dummy) 
+        Texel Sample(Vec2 dummy, SamplerType samplerType = SamplerType::LINEAR_CLAMP_TO_BORDER, float lod = 0.0f) const
             requires TextureAccessHas<textureAccessFlags, TextureAccessFlagBits::Sampled>
         {
             return Texel{};

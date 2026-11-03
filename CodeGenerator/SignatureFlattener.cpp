@@ -223,6 +223,11 @@ namespace Ccino {
                     inner.dimensions = dimensions + inner.dimensions;
                     return inner;
                 }
+
+                //Ccino::Viewer<Flags, ViewType> 
+                if (tmplName == "Viewer" && IsInNamespace(spec, "Ccino") && args.size() >= 1) {
+                    return {"uint", dimensions};
+                }
             }
 
             return {FlattenRecord(record), std::move(dimensions)};

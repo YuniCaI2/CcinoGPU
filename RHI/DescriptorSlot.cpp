@@ -72,7 +72,7 @@ namespace Ccino::RHI {
         : m_slotContext(slotContext), m_context(slotContext->m_context) {
         uint32_t size = 0;
         m_uniformOffsets = GetOffsetsTable(layout, size);
-        m_uniformBufferSize = std::max(size, 16u); //空布局也分配一个最小的块, 保证推送的BDA 有效
+        m_uniformBufferSize = std::max(size, 8u); //空布局也分配一个最小的块, 保证推送的BDA 有效
         m_uniformData.assign(m_uniformBufferSize, 0);
 
         //每个Binding 有一组UniformBuffer, 数量和飞行帧一致
@@ -85,8 +85,8 @@ namespace Ccino::RHI {
                 const RID rid = m_context->CreateUniformBuffer(m_uniformBufferSize, nullptr);
                 m_uniformBuffers.push_back(rid);
                 const VkDeviceAddress address = m_context->GetBufferBDA(rid);
-                if (address % 16 != 0) { //和Shader 中Slot 的buffer_reference_align = 16 对应
-                    throw std::runtime_error("Descriptor slot uniform buffer address is not 16-byte aligned");
+                if (address % 8 != 0) { //和Shader 中Slot 的buffer_reference_align = 8 对应
+                    throw std::runtime_error("Descriptor slot uniform buffer address is not 8-byte aligned");
                 }
                 m_uniformBufferAddresses.push_back(address);
             }
@@ -172,15 +172,15 @@ namespace Ccino::RHI {
         //按声明顺序排布: 先对齐到成员的基础对齐, 再加上成员大小
         for (const auto& [name, uniformType] : layout) {
             const UniformTypeInfo info = GetUniformTypeInfo(uniformType);
-            currentOffset = Std140::AlignUp(currentOffset, info.alignment);
+            currentOffset = AlignUp(currentOffset, info.alignment);
             if (!offsets.emplace(name, UniformOffset{currentOffset, uniformType}).second) {
                 throw std::runtime_error("Duplicate field name in descriptor slot layout: " + name);
             }
             currentOffset += info.size;
         }
 
-        //std140 中块整体按16 字节对齐, 尾部补齐
-        size = Std140::AlignUp(currentOffset, 16);
+        //块整体按8 字节对齐, 尾部补齐
+        size = AlignUp(currentOffset, 8);
         return offsets;
     }
 
@@ -211,7 +211,7 @@ namespace Ccino::RHI {
         }
 
         const uint64_t address = m_context->GetBufferBDA(rid);
-        Std140::WriteParam(m_uniformData.data() + field.offset, address);
+        WriteParam(m_uniformData.data() + field.offset, address);
         MarkDirty();
         return *this;
     }
@@ -221,7 +221,7 @@ namespace Ccino::RHI {
         if (field.uniformDataType != UniformDataType::Sampler) {
             throw std::runtime_error("Field is not a sampler in descriptor slot layout: " + name);
         }
-        Std140::WriteParam(m_uniformData.data() + field.offset, m_slotContext->GetSamplerIndex(type));
+        WriteParam(m_uniformData.data() + field.offset, m_slotContext->GetSamplerIndex(type));
         MarkDirty();
         return *this;
     }
@@ -260,7 +260,7 @@ namespace Ccino::RHI {
         }
         m_boundTextures[name] = BoundTexture{storage, imageView};
 
-        Std140::WriteParam(m_uniformData.data() + field.offset, index);
+        WriteParam(m_uniformData.data() + field.offset, index);
         MarkDirty();
         return *this;
     }

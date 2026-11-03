@@ -1,6 +1,8 @@
 #include "CodeGenerator/ASTGenerator.h"
 #include "CodeGenerator/SignatureFlattener.h"
 #include "GLSLAST.h"
+#include "RG/AccessorEnums.h"
+#include <clang/AST/APValue.h>
 #include <clang/AST/RecordLayout.h>
 #include <memory>
 #include <utility>
@@ -75,7 +77,7 @@ namespace Ccino {
             }
         }
 
-        // 2. 模板特化类型 (Accessor / glm::vec / glm::mat)
+        // 2. 模板特化类型 (Accessor / Viewer / glm::vec / glm::mat)
         if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
             if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
                 llvm::StringRef tmplName = spec->getName();
@@ -84,6 +86,22 @@ namespace Ccino {
                 // Accessor<T, Flags> -> Buffer (BDA)
                 if (tmplName == "Accessor") {
                     return UniformDataType::Buffer;
+                }
+
+                // Viewer<TextureAccessFlags, ViewType>
+                if (tmplName == "Viewer" && args.size() >= 1) {
+                    const clang::APValue* structValPtr = ExtractStructuralAPValue(args[0]);
+                    if (structValPtr && structValPtr->isStruct() && structValPtr->getStructNumFields() >= 1) {
+                        uint32_t mask = static_cast<uint32_t>(structValPtr->getStructField(0).getInt().getZExtValue());
+                        TextureAccessFlags accessFlags(mask);
+                        if (HasTextureAccess(accessFlags, TextureAccessFlagBits::Sampled)) {
+                            return UniformDataType::SampledImage;
+                        }
+                        if (HasTextureAccess(accessFlags, TextureAccessFlagBits::StorageRead) ||
+                            HasTextureAccess(accessFlags, TextureAccessFlagBits::StorageWrite)) {
+                            return UniformDataType::StorageImage;
+                        }
+                    }
                 }
 
                 // glm::vec<L, T, Q>
@@ -151,5 +169,17 @@ namespace Ccino {
         }
 
         throw std::invalid_argument("Unsupported QualType for UniformDataType: " + canonical.getAsString());
+    }
+
+    const clang::APValue* ASTGenerator::ExtractStructuralAPValue(const clang::TemplateArgument& arg) {
+        if (arg.getKind() == clang::TemplateArgument::Declaration) {
+            if (const auto* paramObj = llvm::dyn_cast_or_null<clang::TemplateParamObjectDecl>(arg.getAsDecl())) {
+                return &paramObj->getValue();
+            }
+        }
+        if (arg.getKind() == clang::TemplateArgument::StructuralValue) {
+            return &arg.getAsStructuralValue();
+        }
+        return nullptr;
     }
 }

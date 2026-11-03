@@ -51,18 +51,6 @@ namespace {
                 csLambda, *result.Context, passName, threadGroupSize));
         }
 
-        const clang::APValue* ExtractStructuralAPValue(const clang::TemplateArgument& arg) {
-            if (arg.getKind() == clang::TemplateArgument::Declaration) {
-                if (const auto* paramObj = llvm::dyn_cast_or_null<clang::TemplateParamObjectDecl>(arg.getAsDecl())) { //临时构造出来的 FixedString 结构体塞进了模板参数 , 在全局只读数据段（.rodata）里隐式生成一个全局唯一的 constexpr 常量对象，所有传了 "P0" 的 AddPass<"P0"> 共享这同一个内存对象
-                    return &paramObj->getValue();
-                }
-            }
-            if (arg.getKind() == clang::TemplateArgument::StructuralValue) {
-                return &arg.getAsStructuralValue();
-            }
-            return nullptr;
-        }
-
         std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
             if (!passMethod) return {};
             std::string result = "";
@@ -70,7 +58,7 @@ namespace {
             if (!args || args->size() == 0) return {};
             const clang::TemplateArgument& arg0 = args->get(0);
 
-            const clang::APValue* structValPtr = ExtractStructuralAPValue(arg0);
+            const clang::APValue* structValPtr = Ccino::ASTGenerator::ExtractStructuralAPValue(arg0);
             if (!structValPtr) {
                 llvm::errs() << "Can't Find Lambda In AddPass! \n";
                 return {};
@@ -100,7 +88,7 @@ namespace {
             if (!args || args->size() == 0) return size;
             const clang::TemplateArgument& arg0 = args->get(0);
 
-            const clang::APValue* structValPtr = ExtractStructuralAPValue(arg0);
+            const clang::APValue* structValPtr = Ccino::ASTGenerator::ExtractStructuralAPValue(arg0);
             if (!structValPtr) {
                 llvm::errs() << "Can't Find Lambda In AddPass! \n";
                 return size;
@@ -294,6 +282,8 @@ namespace Ccino
         std::string astGlsl = "#version 460\n"
                               "#extension GL_EXT_buffer_reference2 : require\n"
                               "#extension GL_EXT_scalar_block_layout : require\n"
+                              "#extension GL_EXT_nonuniform_qualifier : require\n"
+                              "#extension GL_EXT_shader_image_load_formatted : require\n"
                               "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
         astGlsl += "layout(" + localSizeArgs + ") in;\n";
 
@@ -305,7 +295,9 @@ namespace Ccino
         innerCollector.TraverseStmt(lambda->getBody());
         astGlsl += astGenerator.EmitDeclGraph();
 
-        // 4. Emit Uniform Binding 与 PushConstant
+        // 4. Emit Texture / Uniform Binding 与 PushConstant
+        GLSL::TextureBinding textureBinding;
+        astGlsl += textureBinding.EmitGLSL();
         if (uniformBinding) {
             astGlsl += uniformBinding->EmitGLSL();
         }

@@ -167,6 +167,10 @@ namespace Ccino::GLSL {
         std::string EmitGLSL();
     };
 
+    struct TextureBinding {
+        std::string EmitGLSL();
+    };
+
     //TODO: 全局的Texture 的descriptor indexing 绑定
 
 }

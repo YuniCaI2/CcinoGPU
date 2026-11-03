@@ -81,21 +81,21 @@ namespace {
     }
 }
 
-//期望值来自glslang 编译bind_param_test.comp 后的反射结果 (spirv-cross --reflect)
+//期望值来自glslang 编译bind_param_test.comp (scalar 布局) 后的反射结果
 TEST(DescriptorSlot, Std140OffsetsMatchShader) {
     uint32_t size = 0;
     const auto offsets = Ccino::RHI::DescriptorSlotBinding::GetOffsetsTable(kLayout, size);
 
     const std::pair<const char*, uint32_t> expected[] = {
         {"result", 0}, {"f", 8}, {"i", 12}, {"u", 16}, {"b", 20}, {"v2", 24}, {"v3", 32}, {"afterV3", 44},
-        {"iv4", 48}, {"bv3", 64}, {"uv2", 80}, {"m3", 96}, {"m32", 144}, {"m23", 192}, {"m4", 224}, {"tail", 288},
+        {"iv4", 48}, {"bv3", 64}, {"uv2", 76}, {"m3", 84}, {"m32", 120}, {"m23", 144}, {"m4", 168}, {"tail", 232},
     };
     ASSERT_EQ(offsets.size(), std::size(expected));
     for (const auto& [name, offset] : expected) {
         ASSERT_TRUE(offsets.contains(name)) << name;
         EXPECT_EQ(offsets.at(name).offset, offset) << name;
     }
-    EXPECT_EQ(size, 304u); //最后一个成员结束于292, 按16 字节补齐
+    EXPECT_EQ(size, 240u); //最后一个成员结束于236, 按16 字节补齐
 
     const Ccino::RHI::DescriptorSlotLayout duplicated = {{"a", UniformDataType::Float}, {"a", UniformDataType::Int}};
     EXPECT_THROW(Ccino::RHI::DescriptorSlotBinding::GetOffsetsTable(duplicated, size), std::runtime_error);

@@ -145,10 +145,6 @@ TEST(UniformDataJson, UniformOffsetAndUniformTypeInfoRoundTrip) {
 
         EXPECT_EQ(j.at("size"), info.size) << name;
         EXPECT_EQ(j.at("alignment"), info.alignment) << name;
-        EXPECT_EQ(j.at("columns"), info.columns) << name;
-        EXPECT_EQ(j.at("rows"), info.rows) << name;
-        EXPECT_EQ(j.at("scalarSize"), info.scalarSize) << name;
-        EXPECT_EQ(j.at("columnStride"), info.columnStride) << name;
 
         const UniformTypeInfo restoredInfo = json::parse(j.dump()).get<UniformTypeInfo>();
         EXPECT_EQ(restoredInfo, info) << name;

@@ -101,6 +101,8 @@ namespace Ccino::RHI {
         VkImage GetVkImage(RID rid) { return m_textures.Get(rid)->image; }
         uint32_t GetTextureSize(RID rid);
         VkFormat GetFormat(RID textureRID) {return m_textures.Get(textureRID)->format;}
+        VkImageLayout GetTextureLayout(RID textureRID) { return m_textures.Get(textureRID)->layout; }
+        void SetTextureLayout(RID textureRID, VkImageLayout layout) { m_textures.Get(textureRID)->layout = layout; }
 
         //不支持多MipmapLevel TODO：完善对多格式和布局的TextureCopy的支持
         bool CopyTexFromBuffer(RID dstTex, RID srcBuffer); //先只支持全量copy

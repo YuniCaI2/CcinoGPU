@@ -270,9 +270,9 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
     EXPECT_EQ(gpuOffsets.at("outParticles").offset, 8u);
     EXPECT_EQ(gpuOffsets.at("debugOut").offset, 16u);
     EXPECT_EQ(gpuOffsets.at("dt").offset, 24u);
-    EXPECT_EQ(gpuOffsets.at("gravity").offset, 32u);
-    EXPECT_EQ(gpuOffsets.at("maxSteps").offset, 44u);
-    EXPECT_EQ(gpuOffsets.at("worldMat").offset, 48u);
+    EXPECT_EQ(gpuOffsets.at("gravity").offset, 28u);
+    EXPECT_EQ(gpuOffsets.at("maxSteps").offset, 40u);
+    EXPECT_EQ(gpuOffsets.at("worldMat").offset, 44u);
     EXPECT_EQ(totalSlotSize, 112u);
 
     const nlohmann::json layoutJson = ir.descriptorSlotLayout;
@@ -293,6 +293,8 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "#version 460\n"
         "#extension GL_EXT_buffer_reference2 : require\n"
         "#extension GL_EXT_scalar_block_layout : require\n"
+        "#extension GL_EXT_nonuniform_qualifier : require\n"
+        "#extension GL_EXT_shader_image_load_formatted : require\n"
         "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
         "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n";
     const std::string expectedParticleBuf =

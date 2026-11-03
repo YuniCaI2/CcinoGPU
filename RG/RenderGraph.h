@@ -44,10 +44,12 @@ namespace Ccino {
         RID resourceRID;
     };
 
-    //TODO:完善TextureBarrier这个结构体，其中还缺少很多对象
     struct RGTextureBarrier {
         TextureAccessFlags srcFlags;
         TextureAccessFlags dstFlags;
+        RGPassTypeFlags srcPassType;
+        RGPassTypeFlags dstPassType;
+        RID resourceRID;
     };
 
     class RGBuilder {
@@ -235,7 +237,7 @@ namespace Ccino {
 
         //类型粒度分开
         std::vector<std::vector<RGBufferBarrier>> m_bufferBarriers; //这个和timeline需要对齐 | timeline 0 || barrier 0 || timeline 1 || barrier 1 || timeline2
-        std::vector<RGTextureBarrier> m_textureBarriers; 
+        std::vector<std::vector<RGTextureBarrier>> m_textureBarriers; 
 
 
         RHI::Context* m_context = nullptr;

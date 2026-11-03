@@ -7,6 +7,7 @@
 #include <cctype>
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/DeclCXX.h>
+#include <clang/AST/DeclTemplate.h>
 #include <clang/AST/Expr.h>
 #include <clang/AST/ExprCXX.h>
 #include <clang/AST/OperationKinds.h>
@@ -55,6 +56,10 @@ namespace Ccino {
             if (DRE->refersToEnclosingVariableOrCapture() || (varDecl && varDecl->isInitCapture())) { //是被捕获的变量
                 // Lambda 捕获的外部变量 (Accessor / Uniform 标量 / 向量 / 矩阵 / 广义初始化捕获)
                 refExpr->text = "pc.uniformData." + name;
+            } else if (const auto* enumConstant = llvm::dyn_cast<clang::EnumConstantDecl>(decl)) {
+                llvm::SmallString<32> S;
+                enumConstant->getInitVal().toString(S, 10);
+                refExpr->text = S.str().str();
             } else if ((!varDecl || !varDecl->isLocalVarDeclOrParm()) && GLSLBuiltinVarMap.contains(name)) {
                 // C++ 内建全局变量 (如 Ccino::ComputeGlobalID -> gl_GlobalInvocationID)
                 refExpr->text = GLSLBuiltinVarMap.at(name); //全局变量羊二十DeclRefExpr 所以这里直接查表替换即可
@@ -295,14 +300,21 @@ namespace Ccino {
         clang::CXXMethodDecl* method = expr->getMethodDecl();
         if (!method) return {};   // 比如通过成员函数指针 .* / ->* 调用
 
+        // Viewer 特殊处理
+        if (const auto* spec = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(method->getParent())) {
+            if (spec->getName() == "Viewer") {
+                return ProcessViewerCallExpr(expr);
+            }
+        }
+
         auto lowering = std::make_unique<GLSL::LoweringStmt>();
 
         //对象部分：obj / this / 隐式 this
         std::string selfText;
-        clang::Expr* obj = expr->getImplicitObjectArgument();
+        clang::Expr* obj = expr->getImplicitObjectArgument(); //得到左边的对象
         clang::Expr* objStripped = obj ? obj->IgnoreParenImpCasts() : nullptr;
 
-        if (!objStripped || llvm::isa<clang::CXXThisExpr>(objStripped)) {
+        if (!objStripped || llvm::isa<clang::CXXThisExpr>(objStripped)) { //跳过this本身，也就是在类成员函数内部的情况
             // foo() 或 this->foo()
             selfText = "self";
         } else {
@@ -333,6 +345,76 @@ namespace Ccino {
         callExpr->text = funcName + "(" + args + ")";
         lowering->expr = std::move(callExpr);
         return lowering;
+    }
+
+    std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessViewerCallExpr(clang::CXXMemberCallExpr* expr) {
+        if (!expr) return {};
+
+        clang::CXXMethodDecl* method = expr->getMethodDecl();
+        if (!method) return {};
+
+        const auto* spec = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(method->getParent());
+        if (!spec || spec->getName() != "Viewer") return {};
+
+        auto lowering = std::make_unique<GLSL::LoweringStmt>();
+
+        std::string selfText;
+        clang::Expr* obj = expr->getImplicitObjectArgument(); //得到左边的类
+        if (auto objLowering = ProcessClangExpr(obj)) { //得到图像本身
+            for (auto& f : objLowering->fields)
+                lowering->fields.push_back(std::move(f)); //融合lowering
+            if (objLowering->expr) selfText = objLowering->expr->text;
+        }
+        if (selfText.empty()) return {};
+
+        const auto& tmplArgs = spec->getTemplateArgs();
+        int64_t viewTypeVal = (tmplArgs.size() >= 2 && tmplArgs[1].getKind() == clang::TemplateArgument::Integral)
+                                  ? tmplArgs[1].getAsIntegral().getExtValue()
+                                  : 0; // 0: Float, 1: Int, 2: UInt
+
+        std::vector<std::string> argTexts;
+        for (clang::Expr* arg : expr->arguments()) { //参数
+            auto argLowering = ProcessClangExpr(arg); //得到入参
+            if (!argLowering || !argLowering->expr) return {};
+            for (auto& f : argLowering->fields)
+                lowering->fields.push_back(std::move(f));
+            argTexts.push_back(std::move(argLowering->expr->text)); //得到第一个参数，也就是coord
+        }
+
+        llvm::StringRef methodName = method->getName();
+        auto callExpr = std::make_unique<GLSL::Expr>();
+
+        if (methodName == "Load" && argTexts.size() >= 1) {
+            const char* imgArr = (viewTypeVal == 1) ? "globalIImages"
+                               : (viewTypeVal == 2) ? "globalUImages"
+                                                    : "globalImages";
+            callExpr->text = std::string("imageLoad(") + imgArr + "[nonuniformEXT(" + selfText + ")], " + argTexts[0] + ")";
+            lowering->expr = std::move(callExpr);
+            return lowering;
+        }
+
+        if (methodName == "Store" && argTexts.size() >= 2) {
+            const char* imgArr = (viewTypeVal == 1) ? "globalIImages"
+                               : (viewTypeVal == 2) ? "globalUImages"
+                                                    : "globalImages";
+            callExpr->text = std::string("imageStore(") + imgArr + "[nonuniformEXT(" + selfText + ")], " + argTexts[0] + ", " + argTexts[1] + ")";
+            lowering->expr = std::move(callExpr);
+            return lowering;
+        }
+
+        if (methodName == "Sample" && argTexts.size() >= 3) {
+            const char* texArr = (viewTypeVal == 1) ? "globalITextures"
+                               : (viewTypeVal == 2) ? "globalUTextures"
+                                                    : "globalTextures";
+            const char* samplerCtor = (viewTypeVal == 1) ? "isampler2D"
+                                    : (viewTypeVal == 2) ? "usampler2D"
+                                                         : "sampler2D";
+            callExpr->text = std::string("textureLod(") + samplerCtor + "(" + texArr + "[nonuniformEXT(" + selfText + ")], globalSamplers[" + argTexts[1] + "]), " + argTexts[0] + ", " + argTexts[2] + ")";
+            lowering->expr = std::move(callExpr);
+            return lowering;
+        }
+
+        return {};
     }
 
     std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessMemberExpr(clang::MemberExpr* expr) {

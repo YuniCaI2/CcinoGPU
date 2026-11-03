@@ -323,4 +323,14 @@ namespace Ccino::GLSL {
                "    UniformData uniformData;\n"
                "} pc;\n";
     }
+
+    std::string TextureBinding::EmitGLSL() {
+        return "layout(set = 0, binding = 0) uniform sampler globalSamplers[];\n"
+        "layout(set = 0, binding = 1) uniform texture2D globalTextures[];\n"
+        "layout(set = 0, binding = 1) uniform itexture2D globalITextures[];\n"
+        "layout(set = 0, binding = 1) uniform utexture2D globalUTextures[];\n"
+        "layout(set = 0, binding = 2) uniform image2D globalImages[];\n"
+        "layout(set = 0, binding = 2) uniform iimage2D globalIImages[];\n"
+        "layout(set = 0, binding = 2) uniform uimage2D globalUImages[];\n";
+    }
 }

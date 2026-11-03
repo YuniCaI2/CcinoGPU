@@ -45,8 +45,7 @@ namespace Ccino {
                         return {};
                     }
                     
-                } else {
-                    //TODO: Texture处理
+                } else if (tmp->getName() != "Viewer") {
                     InsertCXXRecordDeclToGraph(type->getAsCXXRecordDecl(), false);
                 }
             } else {
