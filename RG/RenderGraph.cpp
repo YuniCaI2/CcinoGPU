@@ -489,7 +489,7 @@ namespace Ccino {
                 auto descriptorSlot = m_context->GetDescriptorSlotBinding(pass->m_descriptorSlotRID);
 
                 //偏移映射
-                for (auto& data : shaderIR.uniformDataBindings) {
+                for (auto& data : shaderIR.csUniformDataBindings) {
                     //TODO: Texture
                     if (data.uniformDataType == UniformDataType::Buffer) {
                         //直接得到Accessor第一个元素 rid , lambda实例化后相当于是一个struct

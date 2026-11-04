@@ -171,6 +171,13 @@ namespace Ccino::GLSL {
         std::string EmitGLSL();
     };
 
+
+    struct OutBinding {
+        std::vector<std::unique_ptr<DeclField>> fields;
+        std::string EmitGLSL();
+    };
+    //FSIn 即是VSOut，所以此处不需要再创建一个FSIn
+
     //TODO: 全局的Texture 的descriptor indexing 绑定
 
 }

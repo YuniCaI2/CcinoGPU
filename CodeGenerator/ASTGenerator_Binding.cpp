@@ -1,7 +1,12 @@
 #include "CodeGenerator/ASTGenerator.h"
 #include "CodeGenerator/SignatureFlattener.h"
+#include "GLSLAST.h"
+#include <clang/AST/Decl.h>
+#include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
 #include <clang/AST/TypeBase.h>
+#include <memory>
+#include <utility>
 
 namespace Ccino {
     std::unique_ptr<GLSL::UniformBinding> ASTGenerator::GenerateUniformDataReference(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
@@ -61,4 +66,22 @@ namespace Ccino {
         }
         return result;
     }
+    
+    std::unique_ptr<GLSL::OutBinding> ASTGenerator::GenerateOutBinding(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
+        auto result = std::make_unique<GLSL::OutBinding>();
+        const clang::CXXMethodDecl* callOp = lambdaExpr->getCallOperator(); //这个相当于Lambda是一个隐式的struct 其中有operator()这个对象
+        for (const clang::ParmVarDecl* param : callOp->parameters()) {
+            clang::QualType type = param->getType();
+            if(type->isLValueReferenceType() && !type.isConstQualified()) {
+                auto declField = std::make_unique<GLSL::DeclField>();
+                auto typePack = SignatureFlattener::FlattenType(type);
+                declField->type = std::move(typePack.name); 
+                declField->dimensions = std::move(typePack.dimensions); 
+                declField->name = param->getNameAsString();
+                result->fields.push_back(std::move(declField));
+            }
+        }
+        return result;
+    }
+
 }

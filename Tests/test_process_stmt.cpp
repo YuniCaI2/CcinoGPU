@@ -279,13 +279,13 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
     EXPECT_EQ(layoutJson.get<Ccino::DescriptorSlotLayout>(), expectedLayout);
 
     // 4. 验证 UniformDataBindings (Lambda 闭包字段偏移与类型)
-    ASSERT_EQ(ir.uniformDataBindings.size(), 7u);
-    EXPECT_EQ(ir.uniformDataBindings[0].name, "inParticles");
-    EXPECT_EQ(ir.uniformDataBindings[0].uniformDataType, Ccino::UniformDataType::Buffer);
-    EXPECT_EQ(ir.uniformDataBindings[0].offset, 0u);
-    for (size_t i = 0; i < ir.uniformDataBindings.size(); ++i) {
-        EXPECT_EQ(ir.uniformDataBindings[i].name, expectedLayout[i].name);
-        EXPECT_EQ(ir.uniformDataBindings[i].uniformDataType, expectedLayout[i].dataType);
+    ASSERT_EQ(ir.csUniformDataBindings.size(), 7u);
+    EXPECT_EQ(ir.csUniformDataBindings[0].name, "inParticles");
+    EXPECT_EQ(ir.csUniformDataBindings[0].uniformDataType, Ccino::UniformDataType::Buffer);
+    EXPECT_EQ(ir.csUniformDataBindings[0].offset, 0u);
+    for (size_t i = 0; i < ir.csUniformDataBindings.size(); ++i) {
+        EXPECT_EQ(ir.csUniformDataBindings[i].name, expectedLayout[i].name);
+        EXPECT_EQ(ir.csUniformDataBindings[i].uniformDataType, expectedLayout[i].dataType);
     }
 
     // 5. 验证完整生成的 GLSL 文本（含 Header、BufferReference 声明、UniformData、PushConstant 与 main 函数体）
@@ -393,7 +393,7 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
     EXPECT_EQ(ir.descriptorSlotLayout[0].name, "inA");
     EXPECT_EQ(ir.descriptorSlotLayout[1].name, "inB");
     EXPECT_EQ(ir.descriptorSlotLayout[2].name, "outC");
-    ASSERT_EQ(ir.uniformDataBindings.size(), 3u);
+    ASSERT_EQ(ir.csUniformDataBindings.size(), 3u);
 }
 
 TEST(ProcessComputeShaderTest, NestedStructAndBufferReferenceRecursiveEmission) {
@@ -552,7 +552,7 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
     };
 
     EXPECT_EQ(ir.descriptorSlotLayout, expectedLayout);
-    ASSERT_EQ(ir.uniformDataBindings.size(), expectedLayout.size());
+    ASSERT_EQ(ir.csUniformDataBindings.size(), expectedLayout.size());
 
     // 验证前 6 个基础标量字段在 C++ Lambda 结构体中的精确字节偏移
     struct ExpectedScalarCapturePrefix {
@@ -563,12 +563,12 @@ TEST(ProcessComputeShaderTest, AllSupportedUniformCaptureTypesAndCpuOffsets) {
         uint32_t u;
         bool b;
     };
-    EXPECT_EQ(ir.uniformDataBindings[0].offset, offsetof(ExpectedScalarCapturePrefix, u64));
-    EXPECT_EQ(ir.uniformDataBindings[1].offset, offsetof(ExpectedScalarCapturePrefix, d));
-    EXPECT_EQ(ir.uniformDataBindings[2].offset, offsetof(ExpectedScalarCapturePrefix, f));
-    EXPECT_EQ(ir.uniformDataBindings[3].offset, offsetof(ExpectedScalarCapturePrefix, i));
-    EXPECT_EQ(ir.uniformDataBindings[4].offset, offsetof(ExpectedScalarCapturePrefix, u));
-    EXPECT_EQ(ir.uniformDataBindings[5].offset, offsetof(ExpectedScalarCapturePrefix, b));
+    EXPECT_EQ(ir.csUniformDataBindings[0].offset, offsetof(ExpectedScalarCapturePrefix, u64));
+    EXPECT_EQ(ir.csUniformDataBindings[1].offset, offsetof(ExpectedScalarCapturePrefix, d));
+    EXPECT_EQ(ir.csUniformDataBindings[2].offset, offsetof(ExpectedScalarCapturePrefix, f));
+    EXPECT_EQ(ir.csUniformDataBindings[3].offset, offsetof(ExpectedScalarCapturePrefix, i));
+    EXPECT_EQ(ir.csUniformDataBindings[4].offset, offsetof(ExpectedScalarCapturePrefix, u));
+    EXPECT_EQ(ir.csUniformDataBindings[5].offset, offsetof(ExpectedScalarCapturePrefix, b));
 }
 
 TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
@@ -819,7 +819,7 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
         {"dt",             Ccino::UniformDataType::Float},
     };
     EXPECT_EQ(ir.descriptorSlotLayout, expectedLayout);
-    ASSERT_EQ(ir.uniformDataBindings.size(), 3u);
+    ASSERT_EQ(ir.csUniformDataBindings.size(), 3u);
 
     EXPECT_NE(ir.cs.find("layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"), std::string::npos);
     EXPECT_NE(ir.cs.find("layout(buffer_reference, scalar) buffer Particle{ \n"), std::string::npos);

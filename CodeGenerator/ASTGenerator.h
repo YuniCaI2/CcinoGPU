@@ -54,6 +54,8 @@ namespace Ccino {
 
         //Binding
         std::unique_ptr<GLSL::UniformBinding> GenerateUniformDataReference(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context); 
+        std::unique_ptr<GLSL::OutBinding> GenerateOutBinding(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context);
+
 
         void SetCurrentStructDecl(clang::CXXRecordDecl* decl) { m_currentStructDecl = decl; }
         clang::CXXRecordDecl* GetCurrentStructDecl() const { return m_currentStructDecl; }
@@ -101,5 +103,6 @@ namespace Ccino {
 
         //当前状态记录, 记录当前处理的指针是否属于成员
         clang::CXXRecordDecl* m_currentStructDecl = nullptr;
+        bool isFrag = false; //如果是frag 则部分索引需要处理成flat 防止被插值
     };
 }

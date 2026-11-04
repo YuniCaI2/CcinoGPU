@@ -1,6 +1,8 @@
 #include "CppParser.h"
 #include "ASTGenerator.h"
 #include "GLSLAST.h"
+#include "ShaderStruct/ShaderCommon.h"
+#include "ShaderStruct/UniformData.h"
 #include "SignatureFlattener.h"
 #include "ShaderStruct/ShaderIR.h"
 #include <algorithm>
@@ -29,7 +31,38 @@
 #include <unordered_set>
 
 namespace {
-    class PassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
+
+    inline std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
+        if (!passMethod) return {};
+        std::string result = "";
+        const auto* args = passMethod->getTemplateSpecializationArgs();
+        if (!args || args->size() == 0) return {};
+        const clang::TemplateArgument& arg0 = args->get(0);
+
+        const clang::APValue* structValPtr = Ccino::ASTGenerator::ExtractStructuralAPValue(arg0);
+        if (!structValPtr) {
+            llvm::errs() << "Can't Find Lambda In AddPass! \n";
+            return {};
+        }
+
+        //这里获取FixString
+        const clang::APValue& structVal = *structValPtr;
+        if (!structVal.isStruct() || structVal.getStructNumFields() == 0) return {};
+
+        const clang::APValue& charArray = structVal.getStructField(0);
+        if (!charArray.isArray()) return {};
+
+        uint32_t len = charArray.getArrayInitializedElts(); //得到真实传入的数组的长度，而不是整个char array的长度
+        for (unsigned i = 0; i < len; ++i) {
+            char c = static_cast<char>(charArray.getArrayInitializedElt(i).getInt().getZExtValue());
+            if (c == '\0') break; // 遇到末尾 '\0' 停止
+            result.push_back(c);
+        }
+
+        return result;
+    }
+
+    class ComputePassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
     public:
         void run(const clang::ast_matchers::MatchFinder::MatchResult& result) override {
             if (!result.Context) return;
@@ -49,36 +82,6 @@ namespace {
             // 趁 ASTContext 存活，直接生成 ShaderIR
             shaderIRs.push_back(Ccino::CppParser::ProcessComputeShader(
                 csLambda, *result.Context, passName, threadGroupSize));
-        }
-
-        std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
-            if (!passMethod) return {};
-            std::string result = "";
-            const auto* args = passMethod->getTemplateSpecializationArgs();
-            if (!args || args->size() == 0) return {};
-            const clang::TemplateArgument& arg0 = args->get(0);
-
-            const clang::APValue* structValPtr = Ccino::ASTGenerator::ExtractStructuralAPValue(arg0);
-            if (!structValPtr) {
-                llvm::errs() << "Can't Find Lambda In AddPass! \n";
-                return {};
-            }
-
-            //这里获取FixString
-            const clang::APValue& structVal = *structValPtr;
-            if (!structVal.isStruct() || structVal.getStructNumFields() == 0) return {};
-
-            const clang::APValue& charArray = structVal.getStructField(0);
-            if (!charArray.isArray()) return {};
-
-            uint32_t len = charArray.getArrayInitializedElts(); //得到真实传入的数组的长度，而不是整个char array的长度
-            for (unsigned i = 0; i < len; ++i) {
-                char c = static_cast<char>(charArray.getArrayInitializedElt(i).getInt().getZExtValue());
-                if (c == '\0') break; // 遇到末尾 '\0' 停止
-                result.push_back(c);
-            }
-
-            return result;
         }
 
         Ccino::ThreadGroupSize ExtractGroupSize(const clang::CXXMethodDecl* passMethod) { //成员函数声明
@@ -102,6 +105,31 @@ namespace {
             size.y = static_cast<uint32_t>(structVal.getStructField(1).getInt().getExtValue());
             size.z = static_cast<uint32_t>(structVal.getStructField(2).getInt().getExtValue());
             return size;
+        }
+
+        std::vector<Ccino::ShaderIR> shaderIRs;
+    };
+
+    class GraphicsPassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
+        void run(const clang::ast_matchers::MatchFinder::MatchResult& result) override {
+            if (!result.Context) return;
+
+            const auto* vsLambda      = result.Nodes.getNodeAs<clang::LambdaExpr>("vsLambda");
+            const auto* fsLambda      = result.Nodes.getNodeAs<clang::LambdaExpr>("fsLambda");
+            const auto* addPassMethod = result.Nodes.getNodeAs<clang::CXXMethodDecl>("addPassMethod");
+            const auto* addVSAndFSMethod   = result.Nodes.getNodeAs<clang::CXXMethodDecl>("addVSAndFSMethod");
+            if (!vsLambda || !fsLambda || !addPassMethod || !addVSAndFSMethod) return;
+
+            //需要保证Lambda定义的文件在主要文件中
+            if (!result.SourceManager->isWrittenInMainFile(vsLambda->getBeginLoc())) {
+                return;
+            }
+
+            if (!result.SourceManager->isWrittenInMainFile(fsLambda->getBeginLoc())) {
+                return;
+            }
+
+            std::string passName = ExtractPassName(addPassMethod);
         }
 
         std::vector<Ccino::ShaderIR> shaderIRs;
@@ -137,6 +165,13 @@ namespace {
 
 namespace Ccino
 {
+    static constexpr std::string_view kGLSLHeader ="#version 460\n"
+                              "#extension GL_EXT_buffer_reference2 : require\n"
+                              "#extension GL_EXT_scalar_block_layout : require\n"
+                              "#extension GL_EXT_nonuniform_qualifier : require\n"
+                              "#extension GL_EXT_shader_image_load_formatted : require\n"
+                              "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
+
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
     std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath, std::string* globalFunctions) {
         using namespace clang::ast_matchers;
@@ -229,7 +264,7 @@ namespace Ccino
                 return adjusted;
             });
 
-        PassShaderCollector collector;
+        ComputePassShaderCollector collector;
         MatchFinder finder;
         //这里 设置Matcher的对象，这里设置了它的调用者和参数绑定
         auto csCallMatcher = cxxMemberCallExpr(
@@ -240,6 +275,21 @@ namespace Ccino
             hasArgument(0, anyOf( //检查AddCS的第一个参数
                 ignoringImplicit(lambdaExpr().bind("csLambda")), //直接塞进来一个Lambda
                 ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("csLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
+            ))
+        );
+
+        auto vsAndFsMatcher = cxxMemberCallExpr(
+            callee(cxxMethodDecl(hasName("AddVSAndFS"), ofClass(hasName("RGBuilder"))).bind("addVSAndFSMethod")),
+            hasAncestor(cxxMemberCallExpr(
+                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod")) 
+            )),
+            hasArgument(0, anyOf( //检查AddCS的第一个参数
+                ignoringImplicit(lambdaExpr().bind("vsLambda")), //直接塞进来一个Lambda
+                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("vsLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
+            )),
+            hasArgument(1, anyOf( //检查AddCS的第一个参数
+                ignoringImplicit(lambdaExpr().bind("fsLambda")), //直接塞进来一个Lambda
+                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("fsLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
             ))
         );
 
@@ -265,7 +315,7 @@ namespace Ccino
         shaderIR.shaderType = ShaderType::Compute;
         shaderIR.descriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(lambda, context);
         shaderIR.passName = passName;
-        shaderIR.uniformDataBindings = astGenerator.GetUniformDataBindings(lambda, context);
+        shaderIR.csUniformDataBindings = astGenerator.GetUniformDataBindings(lambda, context);
 
         std::string localSizeArgs;
         auto appendLocalSize = [&](const char* name, uint32_t size) {
@@ -279,12 +329,7 @@ namespace Ccino
 
         // 1. 生成头
         //这里注意scalar不是万能的
-        std::string astGlsl = "#version 460\n"
-                              "#extension GL_EXT_buffer_reference2 : require\n"
-                              "#extension GL_EXT_scalar_block_layout : require\n"
-                              "#extension GL_EXT_nonuniform_qualifier : require\n"
-                              "#extension GL_EXT_shader_image_load_formatted : require\n"
-                              "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n";
+        std::string astGlsl = kGLSLHeader.data();
         astGlsl += "layout(" + localSizeArgs + ") in;\n";
 
         // 2. 生成 Uniform Binding（同时将 Accessor 关联的 BufferReference 结构体及捕获结构体加入 DeclGraph）
@@ -312,6 +357,38 @@ namespace Ccino
         }
 
         shaderIR.cs = std::move(astGlsl);
+        return shaderIR;
+    }
+
+
+    ShaderIR CppParser::ProcessGraphicsShader(const clang::LambdaExpr* vsLambda, clang::LambdaExpr* fsLambda,clang::ASTContext& context, const std::string& passName) {
+        ASTGenerator astGenerator;
+        ShaderIR shaderIR; 
+        auto vsDescriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(vsLambda, context);
+        auto fsDescriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(fsLambda, context);
+
+        //合并
+        //TODO:修复当前的DescriptorSlotLayout的布局和UniformReference 对齐后者是GLSL 生成的代码前者是CPU端和GPU通信的约定偏移
+        std::unordered_map<std::string, UniformData> uniformDataSet;
+        DescriptorSlotLayout descriptorSlotLayout{};
+        for (auto& data : vsDescriptorSlotLayout) {
+            uniformDataSet[data.name] = data; 
+        }
+        for (auto& data : fsDescriptorSlotLayout) {
+            uniformDataSet[data.name] = data; 
+        }
+        for (auto& [_, data] : uniformDataSet) {
+
+        }
+
+
+        shaderIR.passName = passName;
+        shaderIR.vsUniformDataBindings = astGenerator.GetUniformDataBindings(vsLambda, context);
+        shaderIR.fsUniformDataBindings = astGenerator.GetUniformDataBindings(fsLambda, context);
+        shaderIR.descriptorSlotLayout = descriptorSlotLayout;
+
+
+
         return shaderIR;
     }
 }  // namespace Ccino

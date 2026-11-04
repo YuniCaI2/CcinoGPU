@@ -41,9 +41,9 @@ namespace Ccino {
             }
             auto shaderIR = shaderJson.get<ShaderIR>();
 
-            const std::filesystem::path spvFilePath = shaderIR.spvPath.empty()
+            const std::filesystem::path spvFilePath = shaderIR.csSpvPath.empty()
                 ? (shaderDir / (shaderIR.passName + ".spv"))
-                : std::filesystem::path(shaderIR.spvPath);
+                : std::filesystem::path(shaderIR.csSpvPath);
             std::ifstream spvFile(spvFilePath, std::ios::binary | std::ios::ate);
             if (!spvFile.is_open()) {
                 std::cerr << "Error: failed to open precompiled SPV file: " << spvFilePath << std::endl;

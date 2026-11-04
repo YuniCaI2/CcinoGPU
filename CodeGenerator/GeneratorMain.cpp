@@ -53,7 +53,7 @@ int main() {
 
         const std::filesystem::path outputPath = shaderDir / (shaderIR.passName + ".json");
         const std::filesystem::path spvPath = shaderDir / (shaderIR.passName + ".spv");
-        shaderIR.spvPath = spvPath.generic_string();
+        shaderIR.csSpvPath = spvPath.generic_string();
 
         try {
             const std::vector<uint32_t> spv = Ccino::GLSLCompiler::CompileToSpv(

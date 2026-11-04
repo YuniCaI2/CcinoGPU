@@ -40,14 +40,14 @@ namespace {
         }
         if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.cs != rhs.cs ||
             lhs.vs != rhs.vs || lhs.fs != rhs.fs || lhs.csSize != rhs.csSize ||
-            lhs.vsSize != rhs.vsSize || lhs.fsSize != rhs.fsSize || lhs.spvPath != rhs.spvPath) {
+            lhs.vsSize != rhs.vsSize || lhs.fsSize != rhs.fsSize || lhs.csSpvPath != rhs.csSpvPath) {
             return false;
         }
-        if (lhs.uniformDataBindings.size() != rhs.uniformDataBindings.size()) {
+        if (lhs.csUniformDataBindings.size() != rhs.csUniformDataBindings.size()) {
             return false;
         }
-        for (std::size_t i = 0; i < lhs.uniformDataBindings.size(); ++i) {
-            if (!SameBinding(lhs.uniformDataBindings[i], rhs.uniformDataBindings[i])) {
+        for (std::size_t i = 0; i < lhs.csUniformDataBindings.size(); ++i) {
+            if (!SameBinding(lhs.csUniformDataBindings[i], rhs.csUniformDataBindings[i])) {
                 return false;
             }
         }
@@ -62,7 +62,7 @@ namespace {
             {"result", UniformDataType::Buffer},
             {"exposure", UniformDataType::Float},
         };
-        ir.uniformDataBindings = {
+        ir.csUniformDataBindings = {
             {"exposure", 16u, UniformDataType::Float},
             {"tint", 32u, UniformDataType::Vec4},
         };
@@ -70,7 +70,7 @@ namespace {
                 "void main() {\n"
                 "    // \"ClearBuffer\"\n"
                 "}\n";
-        ir.spvPath = ".CcinoGPU/Shaders/ClearBuffer.spv";
+        ir.csSpvPath = ".CcinoGPU/Shaders/ClearBuffer.spv";
         ir.csSize = static_cast<uint32_t>(ir.cs.size());
         return ir;
     }
@@ -179,9 +179,9 @@ TEST(ShaderIRJson, ShaderIRRoundTrip) {
     ASSERT_EQ(value.at("descriptorSlotLayout").size(), 2u);
     EXPECT_EQ(value.at("descriptorSlotLayout").at(0).at("name"), "result");
     EXPECT_EQ(value.at("descriptorSlotLayout").at(0).at("dataType"), "Buffer");
-    ASSERT_EQ(value.at("uniformDataBindings").size(), 2u);
-    EXPECT_EQ(value.at("uniformDataBindings").at(1).at("name"), "tint");
-    EXPECT_EQ(value.at("uniformDataBindings").at(1).at("uniformDataType"), "Vec4");
+    ASSERT_EQ(value.at("csUniformDataBindings").size(), 2u);
+    EXPECT_EQ(value.at("csUniformDataBindings").at(1).at("name"), "tint");
+    EXPECT_EQ(value.at("csUniformDataBindings").at(1).at("uniformDataType"), "Vec4");
     EXPECT_EQ(value.at("cs"), original.cs);
     EXPECT_TRUE(value.at("vs").get<std::string>().empty());
     EXPECT_TRUE(value.at("fs").get<std::string>().empty());
@@ -198,7 +198,7 @@ TEST(ShaderIRJson, ShaderIRRejectsIncompleteJson) {
         {"passName", "ClearBuffer"},
         {"shaderType", "Compute"},
         {"descriptorSlotLayout", json::array()},
-        {"uniformDataBindings", json::array()},
+        {"csUniformDataBindings", json::array()},
         {"csSize", 0},
     };
     EXPECT_THROW(missingGlsl.get<ShaderIR>(), json::out_of_range);

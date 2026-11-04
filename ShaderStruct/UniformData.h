@@ -148,6 +148,7 @@ namespace Ccino {
 
         bool operator==(const UniformData&) const = default;
     };
+
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(UniformData, name, dataType)
 
     //字段顺序就是UniformBuffer 中成员的顺序, 对应Shader 里 UniformData 结构体(scalar) 的成员声明顺序

@@ -19,6 +19,16 @@ namespace Ccino {
         {ShaderType::Fragment, "Fragment"},
     })
 
+    enum class PassType {
+        Compute,
+        Graphics
+    };
+
+    NLOHMANN_JSON_SERIALIZE_ENUM_STRICT(PassType, {
+        {PassType::Compute,  "Compute"},
+        {PassType::Graphics,   "Graphics"},
+    })
+
     struct ThreadGroupSize {
         uint32_t x = 1;
         uint32_t y = 1;
