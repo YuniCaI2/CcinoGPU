@@ -72,9 +72,33 @@ namespace Ccino {
 
 
         //TODO: 定义外部RenderTarget 隐藏RHI RID
-        template<typename VS, typename PS>
-        void AddVSAndPS(uint32_t vertexCount, RID renderTargetRID, VS&& vs, PS&& ps) {
+        template<typename VS, typename FS>
+        void AddVSAndPS(VS&& vs, FS&& fs ,const GraphicsSetting& setting) {
             //处理VS和PS的翻译和绑定
+            auto pass = m_passes.Get(m_currentPass);
+            pass->passType = RGPassTypeFlagBits::Graphics;
+            pass->graphicsSetting = setting;
+            
+
+            //此处直接短路即可
+            if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
+                auto& shaderIR = ShaderIRRegistry::Instance()[pass->passName];
+                if (pass->m_pipleineRID == RID::Invalid()) {
+                    pass->m_pipleineRID = m_context->CreateGraphicsShaderObject(pass->passName, reinterpret_cast<char*>(shaderIR.vs.data()), shaderIR.vs.size(), 
+                    reinterpret_cast<char*>(shaderIR.fs.data()), shaderIR.fs.size());
+                }
+                if (pass->m_descriptorSlotRID == RID::Invalid()) {
+                    pass->m_descriptorSlotRID = m_context->CreateDescriptorSlotBinding(shaderIR.descriptorSlotLayout);
+                }
+            }
+
+            using VSLambda = std::remove_cvref_t<VS>;
+            using FSLambda = std::remove_cvref_t<FS>;
+
+            pass->vsLambda.resize(sizeof(VSLambda));
+            pass->fsLambda.resize(sizeof(FSLambda));
+            std::memcpy(pass->vsLambda.data(), &vs, sizeof(VSLambda)); //持久映射这块内存,并且这里默认Lambda存储的对象都不需要严格调用析构
+            std::memcpy(pass->fsLambda.data(), &fs, sizeof(FSLambda));
         }
 
         template<ThreadGroupSize threadGroupSize, typename CS> //ThreadGraphSize一定要作为编译器的,这样可以被ClangAST看到
@@ -94,7 +118,7 @@ namespace Ccino {
             if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
                 auto& shaderIR = ShaderIRRegistry::Instance()[pass->passName];
                 if (pass->m_pipleineRID == RID::Invalid()) {
-                    pass->m_pipleineRID = m_context->CreateComputePipeline(pass->passName, reinterpret_cast<char*>(shaderIR.glsl.data()), shaderIR.glsl.size());
+                    pass->m_pipleineRID = m_context->CreateComputePipeline(pass->passName, reinterpret_cast<char*>(shaderIR.cs.data()), shaderIR.cs.size());
                 }
                 if (pass->m_descriptorSlotRID == RID::Invalid()) {
                     pass->m_descriptorSlotRID = m_context->CreateDescriptorSlotBinding(shaderIR.descriptorSlotLayout);
@@ -105,7 +129,6 @@ namespace Ccino {
             pass->lambda.resize(sizeof(LambdaType));
             std::memcpy(pass->lambda.data(), &cs, sizeof(LambdaType)); //持久映射这块内存,并且这里默认Lambda存储的对象都不需要严格调用析构
         }
-
 
         template<typename BufferResourceType>
         Accessor<BufferResourceType, BufferAccessFlagBits::Read> Read(RID& resource, RID& passRID) {

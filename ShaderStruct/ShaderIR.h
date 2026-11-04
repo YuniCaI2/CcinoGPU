@@ -53,15 +53,17 @@ namespace Ccino {
         //实际绑定，被Cpp消费. SSBO和Texture在声明Accessor时会被显式绑定
         std::vector<ShaderUniformDataBinding> uniformDataBindings; //这里负责的是常量
 
-        //代码部分
-        std::string glsl;
+        //代码部分. 计算 Pass 使用 cs, 图形 Pass 使用 vs 和 fs. 运行期会把对应的 SPIR-V 字节放进这些字符串
+        std::string cs;
+        std::string vs;
+        std::string fs;
+        uint32_t csSize = 0;
+        uint32_t vsSize = 0;
+        uint32_t fsSize = 0;
         std::string spvPath;//直接编译成SPV后续不用再运行期编译
-
-        //后续标志位
-        uint32_t size = 0; //记录代码字节数，因为后续glsl 可能spv 数据直接放到std::string中
     };
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderIR,
-        passName, shaderType, descriptorSlotLayout, uniformDataBindings, glsl, spvPath, size)
+        passName, shaderType, descriptorSlotLayout, uniformDataBindings, cs, vs, fs, csSize, vsSize, fsSize, spvPath)
 
     //这里统一丢到HugeHeader中，并且只需要处理下其中的类型
     struct ShaderFunction {

@@ -1,4 +1,5 @@
 #pragma once
+#include "GraphicsShaderObject.h"
 #include "RHI/RHIStruct.h"
 #include "RHI/Command.h"
 #include "RHI/TimelineSemaphore.h"
@@ -144,13 +145,18 @@ namespace Ccino::RHI {
         void DestroyComputePipeline(RID rid);
         VkPipeline GetComputePipeline(RID rid);
 
+        //Create GraphicsShaderObject,这里就VS和PS先绑死
+        RID CreateGraphicsShaderObject(const std::string& name, void* vertCode, uint32_t vertSize, void* fragCode, uint32_t fragSize);
+        void DestroyGraphicsShaderObject(RID rid);
+        GraphicsShaderObject* GetGraphicsShaderObject(RID rid);
+
         //Descriptor
         RID CreateDescriptorSlotBinding(const DescriptorSlotLayout& descriptorSlotLayout);
         void DestroyDescriptorSlotBinding(RID rid);
         DescriptorSlotBinding* GetDescriptorSlotBinding(const RID& rid) {
             return m_descriptorSlots.Get(rid);
         }
-        void BindDescriptorSet(VkCommandBuffer commandBuffer) const;
+        void BindDescriptorSet(VkCommandBuffer commandBuffer, VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE) const;
 
 
     private:
@@ -219,6 +225,7 @@ namespace Ccino::RHI {
         TRIDArray<ComputePipeline> m_computePipelines;
         TRIDArray<DescriptorSlotBinding> m_descriptorSlots;
         TRIDArray<VulkanTexture> m_textures;
+        TRIDArray<GraphicsShaderObject> m_graphicsShaderObjects;
 
         std::mutex m_deletionMutex; //保护m_bufferDeletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
         std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列

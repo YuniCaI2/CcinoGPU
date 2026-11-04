@@ -162,8 +162,8 @@ TEST(GlobalFuncAndStructSpvTest, ParseFromProjectCompileCommandsAndCompileToSpv)
 
     ASSERT_EQ(shaderIRs.size(), 3u);
 
-    const std::string& deferredGlsl = shaderIRs[0].glsl;
-    const std::string& combineOneGlsl = shaderIRs[1].glsl;
+    const std::string& deferredGlsl = shaderIRs[0].cs;
+    const std::string& combineOneGlsl = shaderIRs[1].cs;
 
     // 1. 验证结构体定义已在对应 Pass 中按需生成且无重复
     const std::string expectedLightSampleStruct =
@@ -210,13 +210,13 @@ TEST(GlobalFuncAndStructSpvTest, ParseFromProjectCompileCommandsAndCompileToSpv)
 
     // 4. 验证每个 Pass 自包含生成的 GLSL 可以直接编译为 SPIR-V
     for (auto& shaderIR : shaderIRs) {
-        const auto it = shaderIR.glsl.find("in;");
+        const auto it = shaderIR.cs.find("in;");
         ASSERT_NE(it, std::string::npos);
 
         std::vector<uint32_t> spv;
         EXPECT_NO_THROW({
-            spv = Ccino::GLSLCompiler::CompileToSpv(shaderIR.passName, shaderIR.glsl, Ccino::ShaderType::Compute);
-        }) << "Pass " << shaderIR.passName << " failed to compile GLSL:\n" << shaderIR.glsl;
+            spv = Ccino::GLSLCompiler::CompileToSpv(shaderIR.passName, shaderIR.cs, Ccino::ShaderType::Compute);
+        }) << "Pass " << shaderIR.passName << " failed to compile GLSL:\n" << shaderIR.cs;
 
         ASSERT_GT(spv.size(), 5u);
         EXPECT_EQ(spv[0], kSpirvMagicNumber);

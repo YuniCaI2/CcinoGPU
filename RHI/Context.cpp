@@ -286,6 +286,9 @@ namespace Ccino::RHI {
             m_computePipelines.ForEach([&](ComputePipeline& pipeline) {
                 pipeline.Destroy();
             });
+            m_graphicsShaderObjects.ForEach([&](GraphicsShaderObject& shaderObject) {
+                shaderObject.Destroy();
+            });
             m_descriptorSlots.ForEach([&](DescriptorSlotBinding& slot) {
                 slot.Release();
             });
@@ -1377,6 +1380,8 @@ namespace Ccino::RHI {
             DestroySemaphore(rid);
         } else if (rid.type == RID::GetIndex<ComputePipeline>()) {
             DestroyComputePipeline(rid);
+        } else if (rid.type == RID::GetIndex<GraphicsShaderObject>()) {
+            DestroyGraphicsShaderObject(rid);
         } else if (rid.type == RID::GetIndex<DescriptorSlotBinding>()) {
             DestroyDescriptorSlotBinding(rid);
         } else {
@@ -1529,8 +1534,58 @@ namespace Ccino::RHI {
         return pipeline != nullptr ? pipeline->GetVkPipeline() : VK_NULL_HANDLE;
     }
 
-    void Context::BindDescriptorSet(VkCommandBuffer commandBuffer) const {
-        m_descriptorSlot->BindDescriptorSet(commandBuffer);
+    RID Context::CreateGraphicsShaderObject(const std::string& name, void* vertCode, uint32_t vertSize, void* fragCode, uint32_t fragSize) {
+        if (vertCode == nullptr || fragCode == nullptr || vertSize == 0 || fragSize == 0 ||
+            (vertSize % sizeof(uint32_t)) != 0 || (fragSize % sizeof(uint32_t)) != 0) {
+            throw std::invalid_argument("Graphics shader SPIR-V is empty or not 4-byte aligned: " + name);
+        }
+
+        const VkDescriptorSetLayout setLayout = DescriptorSlot::GetGlobalDescriptorSetLayout();
+        VkPushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = DESCRIPTOR_SHADER_STAGES;
+        pushConstantRange.offset = 0;
+        pushConstantRange.size = DESCRIPTOR_PUSH_CONSTANT_SIZE;
+
+        //VS 和 PS 一起创建并 link, 插值接口由驱动在创建时匹配
+        std::vector<VkShaderCreateInfoEXT> shaderInfos(2);
+        shaderInfos[0].sType = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT;
+        shaderInfos[0].flags = VK_SHADER_CREATE_LINK_STAGE_BIT_EXT;
+        shaderInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        shaderInfos[0].nextStage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        shaderInfos[0].codeType = VK_SHADER_CODE_TYPE_SPIRV_EXT;
+        shaderInfos[0].codeSize = vertSize;
+        shaderInfos[0].pCode = vertCode;
+        shaderInfos[0].pName = "main";
+        shaderInfos[0].setLayoutCount = 1;
+        shaderInfos[0].pSetLayouts = &setLayout;
+        shaderInfos[0].pushConstantRangeCount = 1;
+        shaderInfos[0].pPushConstantRanges = &pushConstantRange;
+
+        shaderInfos[1] = shaderInfos[0];
+        shaderInfos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        shaderInfos[1].nextStage = 0;
+        shaderInfos[1].codeSize = fragSize;
+        shaderInfos[1].pCode = fragCode;
+
+        GraphicsShaderObject shaderObject;
+        shaderObject.Init(m_core.get(), name, shaderInfos);
+        return m_graphicsShaderObjects.Add(std::move(shaderObject));
+    }
+
+    void Context::DestroyGraphicsShaderObject(RID rid) {
+        GraphicsShaderObject* shaderObject = m_graphicsShaderObjects.Get(rid);
+        if (shaderObject != nullptr) {
+            shaderObject->Destroy();
+        }
+        m_graphicsShaderObjects.Remove(rid);
+    }
+
+    GraphicsShaderObject* Context::GetGraphicsShaderObject(RID rid) {
+        return m_graphicsShaderObjects.Get(rid);
+    }
+
+    void Context::BindDescriptorSet(VkCommandBuffer commandBuffer, VkPipelineBindPoint bindPoint) const {
+        m_descriptorSlot->BindDescriptorSet(commandBuffer, bindPoint);
     }
 
     RID Context::CreateDescriptorSlotBinding(const DescriptorSlotLayout& descriptorSlotLayout) {

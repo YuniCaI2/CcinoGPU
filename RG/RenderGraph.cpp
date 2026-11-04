@@ -212,7 +212,6 @@ namespace Ccino {
             } else if (IsReadable(edge.resourceAccessFlags)) {
                 readers[edge.resourceRID][edge.version].push_back({edge.passRID, edge.resourceAccessFlags});
             }
-            //TODO: Texture
         }
 
         //WAR
@@ -428,9 +427,11 @@ namespace Ccino {
         if (m_timeline.empty()) {
             return;
         }
-        m_context->BindDescriptorSet(commandBuffer);
+        //TODO: 不全部绑定
+        m_context->BindDescriptorSet(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE);
+        m_context->BindDescriptorSet(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS);
 
-        //处理时间线，然后生成对应命令
+        //处理时间线，然后生成对应Barrier和bind
         for (size_t i = 0; i < m_timeline.size(); ++i) {
             std::vector<VkBufferMemoryBarrier2> bufferBarriers;
             std::vector<VkImageMemoryBarrier2> imageBarriers;

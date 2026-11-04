@@ -3,6 +3,7 @@
 #include "RHI/RHIStruct.h"
 #include "RHI/Core.h"
 #include "ShaderStruct/UniformData.h"
+#include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
 
 #include <array>
 #include <atomic>
@@ -29,7 +30,7 @@
 
 #define DESCRIPTOR_MAX_SET_COUNT 8 //全局DescriptorPool 能分配的DescriptorSet 数量, 每个DescriptorSlot 占一个
 #define DESCRIPTOR_PUSH_CONSTANT_SIZE 8 //PushConstant 只有UniformBuffer 的BDA
-#define DESCRIPTOR_SHADER_STAGES VK_SHADER_STAGE_COMPUTE_BIT //目前只考虑计算, 支持图形时改成VK_SHADER_STAGE_ALL
+#define DESCRIPTOR_SHADER_STAGES (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT)
 
 static_assert(static_cast<uint32_t>(SamplerType::COUNT) <= DESCRIPTOR_MAX_SAMPLER_COUNT);
 static_assert(sizeof(VkDeviceAddress) == DESCRIPTOR_PUSH_CONSTANT_SIZE);
@@ -58,7 +59,7 @@ namespace Ccino::RHI {
         DescriptorSlotBinding CreateSlotBinding(const DescriptorSlotLayout& layout);
 
         //每个命令缓冲绑定一次, PipelineLayout 全局唯一, 切换Pipeline 之后不需要重新绑定
-        void BindDescriptorSet(VkCommandBuffer commandBuffer) const;
+        void BindDescriptorSet(VkCommandBuffer commandBuffer, VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_COMPUTE) const;
 
         VkDescriptorSet GetDescriptorSet() const { return m_descriptorSet; }
 

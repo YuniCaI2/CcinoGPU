@@ -342,13 +342,13 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "barrier();\n"
         "}\n";
 
-    EXPECT_EQ(ir.glsl.find(expectedHeader), 0u) << ir.glsl;
-    const size_t particlePos = ir.glsl.find(expectedParticleBuf);
-    const size_t debugPos    = ir.glsl.find(expectedDebugBuf);
-    const size_t tailPos     = ir.glsl.find(expectedTail);
-    ASSERT_NE(particlePos, std::string::npos) << ir.glsl;
-    ASSERT_NE(debugPos, std::string::npos) << ir.glsl;
-    ASSERT_NE(tailPos, std::string::npos) << ir.glsl;
+    EXPECT_EQ(ir.cs.find(expectedHeader), 0u) << ir.cs;
+    const size_t particlePos = ir.cs.find(expectedParticleBuf);
+    const size_t debugPos    = ir.cs.find(expectedDebugBuf);
+    const size_t tailPos     = ir.cs.find(expectedTail);
+    ASSERT_NE(particlePos, std::string::npos) << ir.cs;
+    ASSERT_NE(debugPos, std::string::npos) << ir.cs;
+    ASSERT_NE(tailPos, std::string::npos) << ir.cs;
     EXPECT_LT(particlePos, tailPos);
     EXPECT_LT(debugPos, tailPos);
 }
@@ -383,12 +383,12 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
         "vec3 pos;\n"
         "float mass;\n"
         "};\n";
-    const size_t firstPos = ir.glsl.find(particleBlock);
+    const size_t firstPos = ir.cs.find(particleBlock);
     ASSERT_NE(firstPos, std::string::npos);
-    EXPECT_EQ(ir.glsl.find(particleBlock, firstPos + 1), std::string::npos);
+    EXPECT_EQ(ir.cs.find(particleBlock, firstPos + 1), std::string::npos);
 
     // 但 UniformData 和 DescriptorSlotLayout 中必须保留全部 3 个字段
-    EXPECT_NE(ir.glsl.find("Particle inA;\nParticle inB;\nParticle outC;\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("Particle inA;\nParticle inB;\nParticle outC;\n"), std::string::npos);
     ASSERT_EQ(ir.descriptorSlotLayout.size(), 3u);
     EXPECT_EQ(ir.descriptorSlotLayout[0].name, "inA");
     EXPECT_EQ(ir.descriptorSlotLayout[1].name, "inB");
@@ -427,7 +427,7 @@ TEST(ProcessComputeShaderTest, NestedStructAndBufferReferenceRecursiveEmission) 
         Ccino::ThreadGroupSize{32, 1, 1});
 
     ASSERT_EQ(shaders.size(), 1u);
-    const std::string& glsl = shaders[0].glsl;
+    const std::string& glsl = shaders[0].cs;
 
     const std::string expectedLeafStruct =
         "struct LeafPayload{\n"
@@ -589,7 +589,7 @@ TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
         Ccino::ThreadGroupSize{16, 16, 1});
 
     ASSERT_EQ(withParamShaders.size(), 1u);
-    const std::string& glsl = withParamShaders[0].glsl;
+    const std::string& glsl = withParamShaders[0].cs;
     EXPECT_NE(glsl.find("uvec3 tid_copy = gl_GlobalInvocationID;\n"), std::string::npos);
     EXPECT_NE(glsl.find("uvec3 lid_copy = gl_LocalInvocationID;\n"), std::string::npos);
     EXPECT_NE(glsl.find("uint lidx = gl_LocalInvocationIndex;\n"), std::string::npos);
@@ -612,9 +612,9 @@ TEST(ProcessComputeShaderTest, BuiltInParameterNameReplacementAndWordBoundary) {
         Ccino::ThreadGroupSize{0, 0, 8});
 
     ASSERT_EQ(noParamShaders.size(), 2u);
-    EXPECT_NE(noParamShaders[0].glsl.find("layout(local_size_z = 8) in;\n"), std::string::npos);
-    EXPECT_NE(noParamShaders[0].glsl.find("int a = 42;\n"), std::string::npos);
-    EXPECT_NE(noParamShaders[1].glsl.find("int b = 99;\n"), std::string::npos);
+    EXPECT_NE(noParamShaders[0].cs.find("layout(local_size_z = 8) in;\n"), std::string::npos);
+    EXPECT_NE(noParamShaders[0].cs.find("int a = 42;\n"), std::string::npos);
+    EXPECT_NE(noParamShaders[1].cs.find("int b = 99;\n"), std::string::npos);
 }
 
 TEST(ProcessComputeShaderTest, ImplicitCaptureAndInitCapture) {
@@ -641,13 +641,13 @@ TEST(ProcessComputeShaderTest, ImplicitCaptureAndInitCapture) {
 
     // unusedDir 未在 Lambda 体内使用，不应出现在捕获布局中；scale / usedDir / baseCount 均应正确提取名称
     ASSERT_EQ(ir.descriptorSlotLayout.size(), 3u);
-    EXPECT_EQ(ir.glsl.find("unusedDir"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("float scale;\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("vec3 usedDir;\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("int baseCount;\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("vec3 d = pc.uniformData.usedDir;\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("int total = (pc.uniformData.baseCount + 1);\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("float s = pc.uniformData.scale;\n"), std::string::npos);
+    EXPECT_EQ(ir.cs.find("unusedDir"), std::string::npos);
+    EXPECT_NE(ir.cs.find("float scale;\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("vec3 usedDir;\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("int baseCount;\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("vec3 d = pc.uniformData.usedDir;\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("int total = (pc.uniformData.baseCount + 1);\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("float s = pc.uniformData.scale;\n"), std::string::npos);
 }
 
 TEST(ProcessComputeShaderTest, UnsupportedCaptureTypeThrowsInvalidArgument) {
@@ -821,10 +821,10 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
     EXPECT_EQ(ir.descriptorSlotLayout, expectedLayout);
     ASSERT_EQ(ir.uniformDataBindings.size(), 3u);
 
-    EXPECT_NE(ir.glsl.find("layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("layout(buffer_reference, scalar) buffer Particle{ \n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("uint idx = gl_GlobalInvocationID.x;\n"), std::string::npos);
-    EXPECT_NE(ir.glsl.find("pc.uniformData.inOutParticles[idx].pos = (pc.uniformData.inOutParticles[idx].pos + (pc.uniformData.gravity * pc.uniformData.dt))"), std::string::npos);
+    EXPECT_NE(ir.cs.find("layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("layout(buffer_reference, scalar) buffer Particle{ \n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("uint idx = gl_GlobalInvocationID.x;\n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("pc.uniformData.inOutParticles[idx].pos = (pc.uniformData.inOutParticles[idx].pos + (pc.uniformData.gravity * pc.uniformData.dt))"), std::string::npos);
 }
 
 TEST(ParseFilePassShadersTest, BuiltinHeadersAndEndOfOptionsSeparator) {
@@ -853,7 +853,7 @@ TEST(ParseFilePassShadersTest, BuiltinHeadersAndEndOfOptionsSeparator) {
     const auto shaders = Ccino::CppParser::ParseFilePassShaders(compileCommandsPath);
     ASSERT_EQ(shaders.size(), 1u);
     EXPECT_EQ(shaders[0].passName, "BuiltinHeadersPass");
-    EXPECT_NE(shaders[0].glsl.find("uint idx = gl_GlobalInvocationID.x;"), std::string::npos);
+    EXPECT_NE(shaders[0].cs.find("uint idx = gl_GlobalInvocationID.x;"), std::string::npos);
 }
 
 TEST(ParseFilePassShadersTest, ExplicitResourceDirectoryIsPreserved) {
@@ -927,12 +927,12 @@ TEST(ParseFilePassShadersTest, VariableLambdaAndChainedPasses) {
     ASSERT_EQ(shaders.size(), 2u);
 
     EXPECT_EQ(shaders[0].passName, "CullPass");
-    EXPECT_NE(shaders[0].glsl.find("layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
-    EXPECT_NE(shaders[0].glsl.find("(gl_GlobalInvocationID.x < pc.uniformData.limit)"), std::string::npos);
+    EXPECT_NE(shaders[0].cs.find("layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
+    EXPECT_NE(shaders[0].cs.find("(gl_GlobalInvocationID.x < pc.uniformData.limit)"), std::string::npos);
 
     EXPECT_EQ(shaders[1].passName, "LightingPass");
-    EXPECT_NE(shaders[1].glsl.find("layout(local_size_x = 16, local_size_y = 8, local_size_z = 2) in;\n"), std::string::npos);
-    EXPECT_NE(shaders[1].glsl.find("(pc.uniformData.outColor[gl_GlobalInvocationID.x].count = (pc.uniformData.inCounter[gl_GlobalInvocationID.x].count * pc.uniformData.scale));\n"), std::string::npos);
+    EXPECT_NE(shaders[1].cs.find("layout(local_size_x = 16, local_size_y = 8, local_size_z = 2) in;\n"), std::string::npos);
+    EXPECT_NE(shaders[1].cs.find("(pc.uniformData.outColor[gl_GlobalInvocationID.x].count = (pc.uniformData.inCounter[gl_GlobalInvocationID.x].count * pc.uniformData.scale));\n"), std::string::npos);
 }
 
 TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
@@ -993,9 +993,9 @@ TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
     // 头文件 common_pass_helper.h 中的 HeaderPassShouldBeIgnored 应被 isWrittenInMainFile 过滤掉
     ASSERT_EQ(shaders.size(), 2u);
     EXPECT_EQ(shaders[0].passName, "FileAPass");
-    EXPECT_NE(shaders[0].glsl.find("layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
+    EXPECT_NE(shaders[0].cs.find("layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
     EXPECT_EQ(shaders[1].passName, "FileBPass");
-    EXPECT_NE(shaders[1].glsl.find("layout(local_size_x = 128, local_size_y = 2, local_size_z = 1) in;\n"), std::string::npos);
+    EXPECT_NE(shaders[1].cs.find("layout(local_size_x = 128, local_size_y = 2, local_size_z = 1) in;\n"), std::string::npos);
 }
 
 TEST(ParseFilePassShadersTest, InvalidOrEmptyCompilationDatabaseReturnsEmpty) {

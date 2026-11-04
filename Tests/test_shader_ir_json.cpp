@@ -38,8 +38,9 @@ namespace {
         if (lhs.passName != rhs.passName || lhs.shaderType != rhs.shaderType) {
             return false;
         }
-        if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.glsl != rhs.glsl ||
-            lhs.spvPath != rhs.spvPath || lhs.size != rhs.size) {
+        if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.cs != rhs.cs ||
+            lhs.vs != rhs.vs || lhs.fs != rhs.fs || lhs.csSize != rhs.csSize ||
+            lhs.vsSize != rhs.vsSize || lhs.fsSize != rhs.fsSize || lhs.spvPath != rhs.spvPath) {
             return false;
         }
         if (lhs.uniformDataBindings.size() != rhs.uniformDataBindings.size()) {
@@ -65,12 +66,12 @@ namespace {
             {"exposure", 16u, UniformDataType::Float},
             {"tint", 32u, UniformDataType::Vec4},
         };
-        ir.glsl = "layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;\n"
-                  "void main() {\n"
-                  "    // \"ClearBuffer\"\n"
-                  "}\n";
+        ir.cs = "layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;\n"
+                "void main() {\n"
+                "    // \"ClearBuffer\"\n"
+                "}\n";
         ir.spvPath = ".CcinoGPU/Shaders/ClearBuffer.spv";
-        ir.size = static_cast<uint32_t>(ir.glsl.size());
+        ir.csSize = static_cast<uint32_t>(ir.cs.size());
         return ir;
     }
 
@@ -181,8 +182,12 @@ TEST(ShaderIRJson, ShaderIRRoundTrip) {
     ASSERT_EQ(value.at("uniformDataBindings").size(), 2u);
     EXPECT_EQ(value.at("uniformDataBindings").at(1).at("name"), "tint");
     EXPECT_EQ(value.at("uniformDataBindings").at(1).at("uniformDataType"), "Vec4");
-    EXPECT_EQ(value.at("glsl"), original.glsl);
-    EXPECT_EQ(value.at("size"), original.size);
+    EXPECT_EQ(value.at("cs"), original.cs);
+    EXPECT_TRUE(value.at("vs").get<std::string>().empty());
+    EXPECT_TRUE(value.at("fs").get<std::string>().empty());
+    EXPECT_EQ(value.at("csSize"), original.csSize);
+    EXPECT_EQ(value.at("vsSize"), 0u);
+    EXPECT_EQ(value.at("fsSize"), 0u);
 
     const ShaderIR restored = RoundTrip(value).get<ShaderIR>();
     EXPECT_TRUE(SameShaderIR(restored, original));
@@ -194,7 +199,7 @@ TEST(ShaderIRJson, ShaderIRRejectsIncompleteJson) {
         {"shaderType", "Compute"},
         {"descriptorSlotLayout", json::array()},
         {"uniformDataBindings", json::array()},
-        {"size", 0},
+        {"csSize", 0},
     };
     EXPECT_THROW(missingGlsl.get<ShaderIR>(), json::out_of_range);
 
@@ -209,8 +214,10 @@ TEST(ShaderIRJson, GeneratedDirectorySkipsNonShaderJson) {
     ShaderIR vertex = compute;
     vertex.passName = "Blit";
     vertex.shaderType = ShaderType::Vertex;
-    vertex.glsl = "void main() {}\n";
-    vertex.size = static_cast<uint32_t>(vertex.glsl.size());
+    vertex.cs.clear();
+    vertex.csSize = 0;
+    vertex.vs = "void main() {}\n";
+    vertex.vsSize = static_cast<uint32_t>(vertex.vs.size());
 
     struct TempShaderDir {
         std::filesystem::path path = std::filesystem::temp_directory_path() /
@@ -257,8 +264,8 @@ TEST_F(ShaderIRRegistryTest, RegisterFindAndReplace) {
     EXPECT_TRUE(SameShaderIR(*found, original));
 
     ShaderIR replaced = original;
-    replaced.glsl = "void main() {}\n";
-    replaced.size = static_cast<uint32_t>(replaced.glsl.size());
+    replaced.cs = "void main() {}\n";
+    replaced.csSize = static_cast<uint32_t>(replaced.cs.size());
     registry.Register(replaced);
     EXPECT_TRUE(SameShaderIR(registry[original.passName], replaced));
     EXPECT_EQ(registry.GetAll().size(), 1u);

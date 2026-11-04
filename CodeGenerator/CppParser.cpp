@@ -311,7 +311,7 @@ namespace Ccino
             astGlsl += "}\n";
         }
 
-        shaderIR.glsl = std::move(astGlsl);
+        shaderIR.cs = std::move(astGlsl);
         return shaderIR;
     }
 }  // namespace Ccino

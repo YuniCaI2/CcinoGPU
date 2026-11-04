@@ -55,13 +55,21 @@ namespace Ccino {
                 return false;
             }
             spvFile.seekg(0, std::ios::beg);
-            shaderIR.glsl.clear();
-            shaderIR.glsl.resize(static_cast<size_t>(spvByteSize));
-            if (!spvFile.read(shaderIR.glsl.data(), spvByteSize)) {
+            std::string* shaderCode = &shaderIR.cs;
+            uint32_t* shaderSize = &shaderIR.csSize;
+            if (shaderIR.shaderType == ShaderType::Vertex) {
+                shaderCode = &shaderIR.vs;
+                shaderSize = &shaderIR.vsSize;
+            } else if (shaderIR.shaderType == ShaderType::Fragment) {
+                shaderCode = &shaderIR.fs;
+                shaderSize = &shaderIR.fsSize;
+            }
+            shaderCode->assign(static_cast<size_t>(spvByteSize), '\0');
+            if (!spvFile.read(shaderCode->data(), spvByteSize)) {
                 std::cerr << "Error: failed to read precompiled SPV file: " << spvFilePath << std::endl;
                 return false;
             }
-            shaderIR.size = static_cast<uint32_t>(spvByteSize);
+            *shaderSize = static_cast<uint32_t>(spvByteSize);
 
             shaderIRs.push_back(std::move(shaderIR));
         }

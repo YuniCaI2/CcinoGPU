@@ -476,8 +476,8 @@ namespace Ccino::RHI {
         return DescriptorSlotBinding(this, layout);
     }
 
-    void DescriptorSlot::BindDescriptorSet(VkCommandBuffer commandBuffer) const {
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_globalPipelineLayout,
+    void DescriptorSlot::BindDescriptorSet(VkCommandBuffer commandBuffer ,VkPipelineBindPoint bindPoint) const {
+        vkCmdBindDescriptorSets(commandBuffer, bindPoint, m_globalPipelineLayout,
             0, 1, &m_descriptorSet, 0, nullptr);
     }
 

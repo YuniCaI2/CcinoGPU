@@ -44,7 +44,7 @@ int main() {
         }
 
         if (shaderIR.shaderType == Ccino::ShaderType::Compute) {
-            const auto it = shaderIR.glsl.find("in;");
+            const auto it = shaderIR.cs.find("in;");
             if (it == std::string::npos) {
                 std::cerr << "Error: the compute shader doesn't have thread group size: " << shaderIR.passName << "\n";
                 return 1;
@@ -57,8 +57,8 @@ int main() {
 
         try {
             const std::vector<uint32_t> spv = Ccino::GLSLCompiler::CompileToSpv(
-                shaderIR.passName, shaderIR.glsl, shaderIR.shaderType);
-            shaderIR.size = static_cast<uint32_t>(spv.size() * sizeof(uint32_t));
+                shaderIR.passName, shaderIR.cs, shaderIR.shaderType);
+            shaderIR.csSize = static_cast<uint32_t>(spv.size() * sizeof(uint32_t));
 
             std::ofstream spvStream(spvPath, std::ios::binary | std::ios::trunc);
             if (!spvStream) {
@@ -66,7 +66,7 @@ int main() {
                 return 1;
             }
             spvStream.write(reinterpret_cast<const char*>(spv.data()),
-                            static_cast<std::streamsize>(shaderIR.size));
+                            static_cast<std::streamsize>(shaderIR.csSize));
             if (!spvStream) {
                 std::cerr << "Failed to write SPV file: " << spvPath << "\n";
                 return 1;
@@ -115,7 +115,8 @@ int main() {
         } catch (const nlohmann::json::exception&) {
             continue;
         }
-        if (existing.is_object() && existing.contains("passName") && existing.contains("glsl")) {
+        if (existing.is_object() && existing.contains("passName") &&
+            (existing.contains("cs") || existing.contains("glsl"))) {
             std::filesystem::remove(path, ec);
         }
     }
