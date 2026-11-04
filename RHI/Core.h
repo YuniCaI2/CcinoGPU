@@ -65,6 +65,19 @@ namespace Ccino::RHI {
         }
         const VkPhysicalDeviceProperties& GetPhysicalDeviceProperties() const { return m_properties; }
 
+        // VK_EXT_shader_object & Dynamic State 扩展函数指针
+        PFN_vkCreateShadersEXT              vkCreateShadersEXT              = nullptr;
+        PFN_vkDestroyShaderEXT              vkDestroyShaderEXT              = nullptr;
+        PFN_vkCmdBindShadersEXT             vkCmdBindShadersEXT             = nullptr;
+        PFN_vkCmdSetVertexInputEXT          vkCmdSetVertexInputEXT          = nullptr;
+        PFN_vkCmdSetPolygonModeEXT          vkCmdSetPolygonModeEXT          = nullptr;
+        PFN_vkCmdSetRasterizationSamplesEXT vkCmdSetRasterizationSamplesEXT = nullptr;
+        PFN_vkCmdSetSampleMaskEXT           vkCmdSetSampleMaskEXT           = nullptr;
+        PFN_vkCmdSetAlphaToCoverageEnableEXT vkCmdSetAlphaToCoverageEnableEXT = nullptr;
+        PFN_vkCmdSetColorBlendEnableEXT     vkCmdSetColorBlendEnableEXT     = nullptr;
+        PFN_vkCmdSetColorWriteMaskEXT       vkCmdSetColorWriteMaskEXT       = nullptr;
+        PFN_vkCmdSetColorBlendEquationEXT   vkCmdSetColorBlendEquationEXT   = nullptr;
+
     private:
         VkInstance m_instance = VK_NULL_HANDLE;
         VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;

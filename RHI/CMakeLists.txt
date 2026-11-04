@@ -1,6 +1,6 @@
 find_package(Vulkan REQUIRED)
 
-file(GLOB RHI_SOURCES "*.cpp" "*.h")
+file(GLOB RHI_SOURCES CONFIGURE_DEPENDS "*.cpp" "*.h")
 
 add_library(RHI STATIC ${RHI_SOURCES})
 

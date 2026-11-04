@@ -159,9 +159,6 @@ private:
 
 //这里不需要Vertex Buffer 和 Index Buffer 直接使用Bindless 配合 索引完成所有
 
-//纹理先不处理，先把当前的库设置为一个单的计算库
-//TODO: 纹理
-
 //区分队列
 enum class CommandQueueType {
     COMPUTE = 0,

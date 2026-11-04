@@ -36,6 +36,7 @@ namespace Ccino::RHI {
         //配置Vulkan Device Features
         VkPhysicalDeviceFeatures deviceFeatures{};
         deviceFeatures.samplerAnisotropy = VK_TRUE;
+        deviceFeatures.fillModeNonSolid = VK_TRUE; //VK_POLYGON_MODE_LINE 线框模式, ShaderObject 的 PolygonMode 才能运行期切换
         deviceFeatures.shaderInt64 = VK_TRUE;  // Shader 里使用uint64_t 参数 (GL_EXT_shader_explicit_arithmetic_types_int64)
 
         //Texutre在GLSL不需要处理format ，简化模板参数导致的组合
@@ -70,12 +71,19 @@ namespace Ccino::RHI {
         features14.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES;
         features14.maintenance5 = VK_TRUE;
 
+        VkPhysicalDeviceShaderObjectFeaturesEXT shaderObjectFeatures{};
+        shaderObjectFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT;
+        shaderObjectFeatures.shaderObject = VK_TRUE;
+
         features11.pNext = &features12;
         features12.pNext = &features13;
         features13.pNext = &features14;
+        features14.pNext = &shaderObjectFeatures;
 
         //Bindless 只依赖Vulkan 1.2 核心的bufferDeviceAddress 和descriptor_indexing, 不需要额外的设备扩展
-        std::vector<const char*> deviceExtensions = {};
+        std::vector<const char*> deviceExtensions = {
+            VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+        };
         if (settings.bUseSwapChain) {
             deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         }
@@ -450,7 +458,27 @@ namespace Ccino::RHI {
     }
 
     void Core::InitDynamicFunctions() {
-        //动态加载扩展函数. 目前只用到核心API, 没有需要加载的函数
+        auto loadDeviceFunc = [this](auto& fnPtr, const char* name) {
+            fnPtr = reinterpret_cast<std::remove_reference_t<decltype(fnPtr)>>(vkGetDeviceProcAddr(m_device, name));
+            if (fnPtr == nullptr) {
+                throw std::runtime_error(std::string("Failed to load device function: ") + name);
+            }
+        };
+
+        // 1. Shader Object 生命周期 (3 个)
+        loadDeviceFunc(vkCreateShadersEXT,               "vkCreateShadersEXT");
+        loadDeviceFunc(vkDestroyShaderEXT,               "vkDestroyShaderEXT");
+        loadDeviceFunc(vkCmdBindShadersEXT,              "vkCmdBindShadersEXT");
+
+        // 2. 动态状态 (7 个必调 + 1 个 Blend 方程)
+        loadDeviceFunc(vkCmdSetVertexInputEXT,           "vkCmdSetVertexInputEXT");
+        loadDeviceFunc(vkCmdSetPolygonModeEXT,           "vkCmdSetPolygonModeEXT");
+        loadDeviceFunc(vkCmdSetRasterizationSamplesEXT,  "vkCmdSetRasterizationSamplesEXT");
+        loadDeviceFunc(vkCmdSetSampleMaskEXT,            "vkCmdSetSampleMaskEXT");
+        loadDeviceFunc(vkCmdSetAlphaToCoverageEnableEXT, "vkCmdSetAlphaToCoverageEnableEXT");
+        loadDeviceFunc(vkCmdSetColorBlendEnableEXT,      "vkCmdSetColorBlendEnableEXT");
+        loadDeviceFunc(vkCmdSetColorWriteMaskEXT,        "vkCmdSetColorWriteMaskEXT");
+        loadDeviceFunc(vkCmdSetColorBlendEquationEXT,    "vkCmdSetColorBlendEquationEXT");
     }
 
     void Core::SetDebugging(VkInstance instance) {
