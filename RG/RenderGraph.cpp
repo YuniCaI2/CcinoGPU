@@ -147,7 +147,8 @@ namespace Ccino {
             if constexpr (std::is_same_v<T, BufferAccessFlags>) {
                 isWritable = static_cast<bool>(arg & BufferAccessFlagBits::Write);
             } else if constexpr (std::is_same_v<T, TextureAccessFlags>) {
-                isWritable = HasTextureAccess(arg, TextureAccessFlagBits::StorageWrite);
+                isWritable = HasTextureAccess(arg, TextureAccessFlagBits::StorageWrite) ||
+                             HasTextureAccess(arg, TextureAccessFlagBits::RenderTarget);
             }
         }, accessFlags);
         return isWritable;

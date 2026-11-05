@@ -184,5 +184,6 @@ namespace Ccino {
         WorkGroupSize workGroupSize;
         //Graphics Info
         GraphicsSetting graphicsSetting{};
+        std::vector<RID> renderTargets; //下标对应FS 的 out location
     };
 }

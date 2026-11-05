@@ -375,3 +375,62 @@ TEST(RenderGraphTimeline, DiamondDAG) {
         {p4}
     });
 }
+
+// 11. RenderTarget 作为写入：P0(RT A) -> P1(Sample A) -> P2(RT A) -> P3(Sample A)
+TEST(RenderGraphTimeline, RenderTargetWriteChain) {
+    Ccino::RGBuilder builder;
+    RID texA = builder.CreateTransientTexture2D(Ccino::Texture2D::CreateArgs{});
+
+    RID p0, p1, p2, p3;
+    builder.AddPass<"RTChainDraw0">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p0 = passRID;
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texA});
+    }).AddPass<"RTChainSample0">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p1 = passRID;
+        rg.Sample<Ccino::ViewType::Float>(texA, passRID);
+    }).AddPass<"RTChainDraw1">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p2 = passRID;
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texA});
+    }).AddPass<"RTChainSample1">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p3 = passRID;
+        rg.Sample<Ccino::ViewType::Float>(texA, passRID);
+    });
+
+    builder.BuildGraph();
+
+    const auto& timeline = GetTimeline(builder);
+    ExpectTimelineEquals(timeline, {
+        {p0},
+        {p1},
+        {p2},
+        {p3}
+    });
+}
+
+// 12. 两个图形 Pass 写不同 RenderTarget 可并行，P2 同时采样两者
+TEST(RenderGraphTimeline, IndependentRenderTargetsJoin) {
+    Ccino::RGBuilder builder;
+    RID texA = builder.CreateTransientTexture2D(Ccino::Texture2D::CreateArgs{});
+    RID texB = builder.CreateTransientTexture2D(Ccino::Texture2D::CreateArgs{});
+
+    RID p0, p1, p2;
+    builder.AddPass<"RTJoinDrawA">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p0 = passRID;
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texA});
+    }).AddPass<"RTJoinDrawB">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p1 = passRID;
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texB});
+    }).AddPass<"RTJoinSample">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p2 = passRID;
+        rg.Sample<Ccino::ViewType::Float>(texA, passRID);
+        rg.Sample<Ccino::ViewType::Float>(texB, passRID);
+    });
+
+    builder.BuildGraph();
+
+    const auto& timeline = GetTimeline(builder);
+    ExpectTimelineEquals(timeline, {
+        {p0, p1},
+        {p2}
+    });
+}

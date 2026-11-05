@@ -73,12 +73,20 @@ namespace Ccino {
 
         //这里VS和PS VS的输入类型就是out FS的输入类型就是in, 这里规定如果传值就是说in 传引用就是out. fs的out作为renderTarget的一部分，直接写到RenderTarget中. 两者需要对齐. 处理输入的RenderTarget
         template<typename VS, typename FS>
-        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<RID>& renderTargets) {
+        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<RID>& renderTargets) { //这里是RGResource, RenderTarget就相当于是Write,需要记录在Pass中，因为绑定需要
             //处理VS和PS的翻译和绑定
             auto pass = m_passes.Get(m_currentPass);
             pass->passType = RGPassTypeFlagBits::Graphics;
             pass->graphicsSetting = setting;
-            
+            pass->renderTargets = renderTargets;
+            for (RID renderTarget : renderTargets) {
+                if (!CheckResourceType(renderTarget, ResourceType::Texture, "AddVSAndFS")) {
+                    continue;
+                }
+                uint32_t version = m_edgeNums[renderTarget]++;
+                m_edges.push_back(RGEdge{renderTarget, m_currentPass, version, TextureAccessFlagBits::RenderTarget});
+            }
+
 
             //此处直接短路即可
             if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
