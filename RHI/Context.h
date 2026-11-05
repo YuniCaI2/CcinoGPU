@@ -123,6 +123,8 @@ namespace Ccino::RHI {
         CommandContext::CommandBuffer& GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex = 0);
         void StartRecording(CommandContext::CommandBuffer& commandBuffer);
         void EndRecording(CommandContext::CommandBuffer& commandBuffer);
+        // void BeginRendering(CommandContext::CommandBuffer& commandBuffer);
+        // void EndRendering(CommandContext::CommandBuffer& commandBuffer);
 
         void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0, 
             const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});

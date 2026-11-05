@@ -384,13 +384,15 @@ TEST(RenderGraphTimeline, RenderTargetWriteChain) {
     RID p0, p1, p2, p3;
     builder.AddPass<"RTChainDraw0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
-        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texA});
+        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID);
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtA});
     }).AddPass<"RTChainSample0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Sample<Ccino::ViewType::Float>(texA, passRID);
     }).AddPass<"RTChainDraw1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
-        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texA});
+        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID);
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtA});
     }).AddPass<"RTChainSample1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p3 = passRID;
         rg.Sample<Ccino::ViewType::Float>(texA, passRID);
@@ -416,10 +418,12 @@ TEST(RenderGraphTimeline, IndependentRenderTargetsJoin) {
     RID p0, p1, p2;
     builder.AddPass<"RTJoinDrawA">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
-        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texA});
+        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID);
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtA});
     }).AddPass<"RTJoinDrawB">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
-        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, {texB});
+        auto rtB = rg.RTView<Ccino::ViewType::Float>(texB, passRID);
+        rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtB});
     }).AddPass<"RTJoinSample">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
         rg.Sample<Ccino::ViewType::Float>(texA, passRID);

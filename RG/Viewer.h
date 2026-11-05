@@ -2,6 +2,8 @@
 #include "AccessorEnums.h"
 #include "CcinoType.h"
 #include "RHI/RHIStruct.h"
+#include "Texture2D.h"
+#include <stdexcept>
 
 namespace Ccino {
     //和 VkImageAspectFlagBits 对齐: 枚举值直接等于 Vulkan 的位值, 可直接 static_cast 成 VkImageAspectFlags
@@ -62,6 +64,20 @@ namespace Ccino {
         using Type = UVec4;
     };
 
+
+    inline constexpr ViewType TextureFormatToViewType(TextureFormat textureFormat) {
+        switch (textureFormat) {
+            case Ccino::TextureFormat::RGBA8_sRGB:
+            case Ccino::TextureFormat::RGBA8_UNorm:
+            case Ccino::TextureFormat::R32_Float:
+            case Ccino::TextureFormat::RGBA16_Float:
+            case Ccino::TextureFormat::D32_Float:
+                return ViewType::Float;
+        }
+        throw std::invalid_argument("Unknown texture format");
+    }
+    
+
     //完全和RHI对齐即可
     enum class SamplerType {
         LINEAR_REPEAT = 0,
@@ -76,7 +92,7 @@ namespace Ccino {
     };
 
 
-
+    class RGBuilder;
     //先只考虑2D， 3D纹理后续再扩展，太复杂
     template<TextureAccessFlags textureAccessFlags, ViewType viewType = ViewType::Float>
     class Viewer {
@@ -106,7 +122,9 @@ namespace Ccino {
         }
 
         //TODO: 支持Array
+
     private:
+        friend class RGBuilder;
         RID m_resource = RID::Invalid();
         ViewRange m_viewRange {};
     };

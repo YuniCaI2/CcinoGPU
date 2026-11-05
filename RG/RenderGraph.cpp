@@ -1,6 +1,7 @@
 #include "RenderGraph.h"
 #include "Accessor.h"
 #include "AccessorEnums.h"
+#include "Pass.h"
 #include "RGResource.h"
 #include "RHI/Context.h"
 #include "ResourceConcept.h"
@@ -183,6 +184,24 @@ namespace Ccino {
                       << (expected == ResourceType::Buffer ? "Buffer" : "Texture") << " but got "
                       << (actual == ResourceType::Buffer ? "Buffer" : "Texture")
                       << ", access skipped\n";
+            return false;
+        }
+        return true;
+    }
+
+    bool RGBuilder::CheckTextureFormat(RID resourceRID, ViewType viewType, const char* accessName) {
+        auto* resource = m_resources.Get(resourceRID);
+        const auto* createArgs = (resource != nullptr && resource->m_handle != nullptr)
+                                     ? resource->GetCreateArgs<Texture2D>()
+                                     : nullptr;
+        if (createArgs == nullptr) {
+            std::cerr << "RGBuilder::" << accessName << ": resource is not a Texture2D (index "
+                      << resourceRID.index << "), access skipped\n";
+            return false;
+        }
+        if (TextureFormatToViewType(createArgs->format) != viewType) {
+            std::cerr << "RGBuilder::" << accessName << ": texture format does not match ViewType (index "
+                      << resourceRID.index << "), access skipped\n";
             return false;
         }
         return true;
@@ -388,6 +407,9 @@ namespace Ccino {
                 GenerateCommands(commandBuffer.commandBuffer);
             }, CommandQueueType::GRAPHICS);
         }
+
+        //释放
+        ReleaseRenderTargetViews();
     }
 
 
@@ -533,11 +555,51 @@ namespace Ccino {
                 }
 
                 //管线绑定与派发
-                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_context->GetComputePipeline(pass->m_pipleineRID));
-                descriptorSlot->Push(commandBuffer);
-                vkCmdDispatch(commandBuffer, pass->workGroupSize.x, pass->workGroupSize.y, pass->workGroupSize.z);
+                if (pass->passType == RGPassTypeFlagBits::Graphics) {
+                    auto shaderObject = m_context->GetGraphicsShaderObject(pass->m_pipleineRID); 
+                    shaderObject->Bind(commandBuffer, ToShaderObjectBindingSetting(pass->graphicsSetting));
+                    descriptorSlot->Push(commandBuffer);
+                    //TODO:更加灵活的派发，可以将这些配置放到Setting
+                    vkCmdDraw(commandBuffer, pass->graphicsSetting.drawCounts, 1, 0, 0);
+                } else if (pass->passType == RGPassTypeFlagBits::Compute) {
+                    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_context->GetComputePipeline(pass->m_pipleineRID));
+                    descriptorSlot->Push(commandBuffer);
+                    vkCmdDispatch(commandBuffer, pass->workGroupSize.x, pass->workGroupSize.y, pass->workGroupSize.z);
+                }
             }
         }
+    }
+
+    RID RGBuilder::CreateRenderTargetView(const RID& renderTargetRHIRID, const ViewRange& viewRange) {
+        if (m_context == nullptr) {
+            return RID::Invalid();
+        }
+        VkImageViewCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = m_context->GetVkImage(renderTargetRHIRID);
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.format = m_context->GetFormat(renderTargetRHIRID);
+        createInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                                 VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+        createInfo.subresourceRange.aspectMask = ToVkAspectFlags(viewRange.aspectMask);
+        //附件 View 只能覆盖一个 mip, 2D View 也只能覆盖一个 layer
+        createInfo.subresourceRange.baseMipLevel = viewRange.baseMipMap;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = viewRange.baseArray;
+        createInfo.subresourceRange.layerCount = 1;
+
+        RID view = m_context->CreateImageView(createInfo);
+        m_renderTargetViews.push_back(view);
+        return view;
+    }
+
+    void RGBuilder::ReleaseRenderTargetViews() {
+        if (m_context != nullptr) {
+            for (const RID& view : m_renderTargetViews) {
+                m_context->DeleteResource(view);
+            }
+        }
+        m_renderTargetViews.clear();
     }
 
     void RGBuilder::ReleasePass() {

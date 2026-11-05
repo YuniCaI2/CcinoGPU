@@ -68,6 +68,8 @@ namespace Ccino {
     using ColorWriteFlags = Flags<ColorWriteFlagBits>;
 
     struct GraphicsSetting {
+        uint32_t width {};
+        uint32_t height {};
         uint32_t drawCounts{}; //这个控制了顶点的数量
         PrimitiveTopology topology = PrimitiveTopology::TriangleList;
         PolygonMode polygonMode = PolygonMode::Fill;
@@ -82,7 +84,7 @@ namespace Ccino {
     };
 
     //width / height 来自 RenderTarget, 写入 BindingSetting::extent
-    inline RHI::ShaderObjectBindingSetting ToShaderObjectBindingSetting(const GraphicsSetting& setting, uint32_t width, uint32_t height) {
+    inline RHI::ShaderObjectBindingSetting ToShaderObjectBindingSetting(const GraphicsSetting& setting) {
         auto topology = [](PrimitiveTopology value) {
             switch (value) {
             case PrimitiveTopology::TriangleList: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -137,7 +139,7 @@ namespace Ccino {
         };
 
         RHI::ShaderObjectBindingSetting binding{};
-        binding.extent = {width, height};
+        binding.extent = {setting.width, setting.height};
         binding.topology = topology(setting.topology);
         binding.polygonMode = polygonMode(setting.polygonMode);
         binding.cullMode = cullMode(setting.cullMode);

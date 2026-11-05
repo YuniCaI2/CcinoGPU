@@ -9,6 +9,7 @@
 #include "Core/ThreadPoo.h"
 #include "RefCounted.hpp"
 #include "ShaderStruct/ShaderCommon.h"
+#include "Texture2D.h"
 #include <concepts>
 #include <cstring>
 #include <string>
@@ -72,21 +73,17 @@ namespace Ccino {
 
 
         //这里VS和PS VS的输入类型就是out FS的输入类型就是in, 这里规定如果传值就是说in 传引用就是out. fs的out作为renderTarget的一部分，直接写到RenderTarget中. 两者需要对齐. 处理输入的RenderTarget
-        template<typename VS, typename FS>
-        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<RID>& renderTargets) { //这里是RGResource, RenderTarget就相当于是Write,需要记录在Pass中，因为绑定需要
+        template<typename VS, typename FS, ViewType viewType>
+        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<Viewer<TextureAccessFlagBits::RenderTarget, viewType>>& renderTargets) { //这里是RGResource, RenderTarget就相当于是Write,需要记录在Pass中，因为绑定需要
             //处理VS和PS的翻译和绑定
             auto pass = m_passes.Get(m_currentPass);
             pass->passType = RGPassTypeFlagBits::Graphics;
             pass->graphicsSetting = setting;
-            pass->renderTargets = renderTargets;
-            for (RID renderTarget : renderTargets) {
-                if (!CheckResourceType(renderTarget, ResourceType::Texture, "AddVSAndFS")) {
-                    continue;
-                }
-                uint32_t version = m_edgeNums[renderTarget]++;
-                m_edges.push_back(RGEdge{renderTarget, m_currentPass, version, TextureAccessFlagBits::RenderTarget});
+            pass->renderTargets.reserve(renderTargets.size());
+            //TODO：性能优化点，这里每帧都会创建imageview ，效率极低 P0
+            for (const auto& renderTarget : renderTargets) {
+                pass->renderTargets.push_back(CreateRenderTargetView(m_resources.Get(renderTarget.m_resource)->GetRHI(), renderTarget.m_viewRange));
             }
-
 
             //此处直接短路即可
             if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
@@ -174,7 +171,8 @@ namespace Ccino {
         //StorageImage 只读访问, 语义同 Read: 不递增版本
         template<ViewType viewType>
         Viewer<TextureAccessFlagBits::StorageRead, viewType> LoadUAV(RID& resource, RID& passRID, ViewRange viewRange = {}) {
-            if (!CheckResourceType(resource, ResourceType::Texture, "LoadUAV")) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "LoadUAV") ||
+                !CheckTextureFormat(resource, viewType, "LoadUAV")) {
                 return Viewer<TextureAccessFlagBits::StorageRead, viewType>(RID::Invalid(), viewRange);
             }
             uint32_t version = m_edgeNums[resource];
@@ -185,7 +183,8 @@ namespace Ccino {
         //StorageImage 只写访问, 语义同 Write: 产生新版本
         template<ViewType viewType>
         Viewer<TextureAccessFlagBits::StorageWrite, viewType> StoreUAV(RID& resource, RID& passRID, ViewRange viewRange = {}) {
-            if (!CheckResourceType(resource, ResourceType::Texture, "StoreUAV")) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "StoreUAV") ||
+                !CheckTextureFormat(resource, viewType, "StoreUAV")) {
                 return Viewer<TextureAccessFlagBits::StorageWrite, viewType>(RID::Invalid(), viewRange);
             }
             uint32_t version = m_edgeNums[resource]++;
@@ -196,7 +195,8 @@ namespace Ccino {
         //StorageImage 读写访问, 语义同 ReadWrite: 产生新版本
         template<ViewType viewType>
         Viewer<TextureAccessFlagBits::StorageReadWrite, viewType> LoadStoreUAV(RID& resource, RID& passRID, ViewRange viewRange = {}) {
-            if (!CheckResourceType(resource, ResourceType::Texture, "LoadStoreUAV")) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "LoadStoreUAV") ||
+                !CheckTextureFormat(resource, viewType, "LoadStoreUAV")) {
                 return Viewer<TextureAccessFlagBits::StorageReadWrite, viewType>(RID::Invalid(), viewRange);
             }
             uint32_t version = m_edgeNums[resource]++;
@@ -207,7 +207,8 @@ namespace Ccino {
         //SampledImage 采样访问, 相当于Read: 不递增版本
         template<ViewType viewType>
         Viewer<TextureAccessFlagBits::Sampled, viewType> Sample(RID& resource, RID& passRID, ViewRange viewRange = {}) {
-            if (!CheckResourceType(resource, ResourceType::Texture, "Sample")) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "Sample") ||
+                !CheckTextureFormat(resource, viewType, "Sample")) {
                 return Viewer<TextureAccessFlagBits::Sampled, viewType>(RID::Invalid(), viewRange);
             }
             uint32_t version = m_edgeNums[resource];
@@ -215,8 +216,19 @@ namespace Ccino {
             return Viewer<TextureAccessFlagBits::Sampled, viewType>(resource, viewRange);
         }
 
+        //RenderTarget,其实RenderTarget都是默认Float
+        template<ViewType viewType>
+        Viewer<TextureAccessFlagBits::RenderTarget, viewType> RTView(RID& resource, RID& passRID, ViewRange viewRange = {}) {
+            if (!CheckResourceType(resource, ResourceType::Texture, "RTView") ||
+                !CheckTextureFormat(resource, viewType, "RTView")) {
+                return Viewer<TextureAccessFlagBits::RenderTarget, viewType>(RID::Invalid(), viewRange);
+            }
+            uint32_t version = m_edgeNums[resource]++;
+            m_edges.push_back(RGEdge{resource, passRID, version, TextureAccessFlagBits::RenderTarget});
+            return Viewer<TextureAccessFlagBits::RenderTarget, viewType>(resource, viewRange);
+        }
 
-        //处理Texture依赖
+        //处理 Texture依赖
         void BuildGraph();
         void Run(); //这里传入一个分配的池
 
@@ -238,12 +250,15 @@ namespace Ccino {
 
         RID CreateTransientBuffer(typename Buffer::CreateArgs createArgs);
         RID CreateExternalBuffer(const Ref<Buffer>& buffer);
+
+
         RID CreateTransientTexture2D(typename Texture2D::CreateArgs createArgs);
         RID CreateExternalTexture2D(const Ref<Texture2D>& texture);
 
     private:
         //运行期资源类型检查(热路径, 不抛异常): 类型不符时cerr 报错并返回false, 调用方跳过建边并返回无效句柄
         bool CheckResourceType(RID resourceRID, ResourceType expected, const char* accessName);
+        bool CheckTextureFormat(RID resourceRID, ViewType viewType, const char* accessName);
 
         //先不考虑资源的别名和并行录制
         void CreateGPUResource();
@@ -253,6 +268,9 @@ namespace Ccino {
 
         void GenerateCommands(VkCommandBuffer buffer); //现在先单线程处理后续增加多线程
 
+        RID CreateRenderTargetView(const RID& renderTargetRHIRID, const ViewRange& viewRange);
+        //批量释放，帧尾部
+        void ReleaseRenderTargetViews();
         //使用擦除类型句柄管理
         TRIDArray<RGPass> m_passes;
         TRIDArray<RGResource> m_resources;
@@ -269,6 +287,9 @@ namespace Ccino {
         //类型粒度分开
         std::vector<std::vector<RGBufferBarrier>> m_bufferBarriers; //这个和timeline需要对齐 | timeline 0 || barrier 0 || timeline 1 || barrier 1 || timeline2
         std::vector<std::vector<RGTextureBarrier>> m_textureBarriers; 
+
+        //RenderTarget由RGBuilder管理View
+        std::vector<RID> m_renderTargetViews;
 
 
         RHI::Context* m_context = nullptr;

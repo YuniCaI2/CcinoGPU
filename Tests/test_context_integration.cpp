@@ -220,7 +220,8 @@ TEST(CcinoIntegrationTest, GraphicsPassRegisteredAndCreatesShaderObject) {
         auto fs = [=](const Ccino::Vec4& color, Ccino::Vec4& outColor) {
             outColor = color;
         };
-        rg.AddVSAndFS(vs, fs, Ccino::GraphicsSetting{}, {});
+        rg.AddVSAndFS(vs, fs, Ccino::GraphicsSetting{},
+                      std::vector<Ccino::Viewer<TextureAccessFlagBits::RenderTarget>>{});
     });
 
     EXPECT_TRUE(ctx.DestroyRGBuilder("GraphicsShaderObjectGraph"));
