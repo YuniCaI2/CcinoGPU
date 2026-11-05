@@ -37,6 +37,31 @@ int main() {
     }
 
     std::unordered_set<std::string> generatedFiles;
+    auto compileStage = [&](const std::string& passName, const std::string& glsl, Ccino::ShaderType shaderType,
+                            const std::filesystem::path& spvPath, std::string& spvPathOut, uint32_t& spvSizeOut) {
+        try {
+            const std::vector<uint32_t> spv = Ccino::GLSLCompiler::CompileToSpv(passName, glsl, shaderType);
+            spvSizeOut = static_cast<uint32_t>(spv.size() * sizeof(uint32_t));
+
+            std::ofstream spvStream(spvPath, std::ios::binary | std::ios::trunc);
+            if (!spvStream) {
+                std::cerr << "Failed to open SPV file for writing: " << spvPath << "\n";
+                return false;
+            }
+            spvStream.write(reinterpret_cast<const char*>(spv.data()), static_cast<std::streamsize>(spvSizeOut));
+            if (!spvStream) {
+                std::cerr << "Failed to write SPV file: " << spvPath << "\n";
+                return false;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to compile GLSL to SPV for pass '" << passName << "':\n" << e.what() << "\n";
+            return false;
+        }
+        spvPathOut = spvPath.generic_string();
+        generatedFiles.insert(spvPath.filename().string());
+        return true;
+    };
+
     for (auto& shaderIR : shaderIRs) {
         if (shaderIR.passName.empty()) {
             std::cerr << "ShaderIR pass name is empty\n";
@@ -52,30 +77,20 @@ int main() {
         }
 
         const std::filesystem::path outputPath = shaderDir / (shaderIR.passName + ".json");
-        const std::filesystem::path spvPath = shaderDir / (shaderIR.passName + ".spv");
-        shaderIR.csSpvPath = spvPath.generic_string();
-
-        try {
-            const std::vector<uint32_t> spv = Ccino::GLSLCompiler::CompileToSpv(
-                shaderIR.passName, shaderIR.cs, Ccino::ShaderType::Compute);
-            shaderIR.csSize = static_cast<uint32_t>(spv.size() * sizeof(uint32_t));
-
-            std::ofstream spvStream(spvPath, std::ios::binary | std::ios::trunc);
-            if (!spvStream) {
-                std::cerr << "Failed to open SPV file for writing: " << spvPath << "\n";
+        if (shaderIR.passType == Ccino::PassType::Compute) {
+            if (!compileStage(shaderIR.passName, shaderIR.cs, Ccino::ShaderType::Compute,
+                              shaderDir / (shaderIR.passName + ".spv"), shaderIR.csSpvPath, shaderIR.csSize)) {
                 return 1;
             }
-            spvStream.write(reinterpret_cast<const char*>(spv.data()),
-                            static_cast<std::streamsize>(shaderIR.csSize));
-            if (!spvStream) {
-                std::cerr << "Failed to write SPV file: " << spvPath << "\n";
+        } else {
+            if (!compileStage(shaderIR.passName, shaderIR.vs, Ccino::ShaderType::Vertex,
+                              shaderDir / (shaderIR.passName + ".vs.spv"), shaderIR.vsSpvPath, shaderIR.vsSize) ||
+                !compileStage(shaderIR.passName, shaderIR.fs, Ccino::ShaderType::Fragment,
+                              shaderDir / (shaderIR.passName + ".fs.spv"), shaderIR.fsSpvPath, shaderIR.fsSize)) {
                 return 1;
             }
-            std::cout << " GLSL Compiling : " << shaderIR.passName << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "Failed to compile GLSL to SPV for pass '" << shaderIR.passName << "':\n" << e.what() << "\n";
-            return 1;
         }
+        std::cout << " GLSL Compiling : " << shaderIR.passName << std::endl;
 
         std::ofstream os(outputPath, std::ios::binary | std::ios::trunc);
         if (!os) {
@@ -89,7 +104,6 @@ int main() {
         }
 
         generatedFiles.insert(outputPath.filename().string());
-        generatedFiles.insert(spvPath.filename().string());
     }
 
     for (const auto& entry : std::filesystem::directory_iterator(shaderDir)) {

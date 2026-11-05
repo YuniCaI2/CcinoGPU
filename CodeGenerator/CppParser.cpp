@@ -114,6 +114,7 @@ namespace {
     };
 
     class GraphicsPassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {
+    public:
         void run(const clang::ast_matchers::MatchFinder::MatchResult& result) override {
             if (!result.Context) return;
 
@@ -133,6 +134,8 @@ namespace {
             }
 
             std::string passName = ExtractPassName(addPassMethod);
+            shaderIRs.push_back(Ccino::CppParser::ProcessGraphicsShader(
+                vsLambda, fsLambda, *result.Context, passName));
         }
 
         std::vector<Ccino::ShaderIR> shaderIRs;
@@ -224,7 +227,7 @@ namespace Ccino
             if (!seenFiles.insert(cmd.Filename).second) {
                 continue;
             }
-            if (!fileContainsKeyword(cmd.Filename, "AddCS")) {
+            if (!fileContainsKeyword(cmd.Filename, "AddCS") && !fileContainsKeyword(cmd.Filename, "AddVSAndFS")) {
                 continue;
             }
             sourceFiles.push_back(cmd.Filename);
@@ -268,6 +271,7 @@ namespace Ccino
             });
 
         ComputePassShaderCollector collector;
+        GraphicsPassShaderCollector graphicsCollector;
         MatchFinder finder;
         //这里 设置Matcher的对象，这里设置了它的调用者和参数绑定
         auto csCallMatcher = cxxMemberCallExpr(
@@ -297,6 +301,7 @@ namespace Ccino
         );
 
         finder.addMatcher(csCallMatcher, &collector);
+        finder.addMatcher(vsAndFsMatcher, &graphicsCollector);
 
         // 4. 运行 Clang 前端并触发回调
         if (tool.run(clang::tooling::newFrontendActionFactory(&finder).get()) != 0) {
@@ -309,7 +314,11 @@ namespace Ccino
         }
 
         // 5. 返回收集好的所有 ShaderIR
-        return std::move(collector.shaderIRs);
+        std::vector<ShaderIR> shaderIRs = std::move(collector.shaderIRs);
+        for (auto& shaderIR : graphicsCollector.shaderIRs) {
+            shaderIRs.push_back(std::move(shaderIR));
+        }
+        return shaderIRs;
     }
 
     ShaderIR CppParser::ProcessComputeShader(const clang::LambdaExpr* lambda, clang::ASTContext& context, const std::string& passName, ThreadGroupSize threadGroupSize) {
@@ -445,11 +454,11 @@ namespace Ccino
         if (!allUniformBindGLSL->fields.empty()) {
             vsGLSL += allUniformBindGLSL->EmitGLSL();
             fsGLSL += allUniformBindGLSL->EmitGLSL();
-        }
 
-        GLSL::PushConstantBinding pushConstantBinding;
-        vsGLSL += pushConstantBinding.EmitGLSL();
-        fsGLSL += pushConstantBinding.EmitGLSL();
+            GLSL::PushConstantBinding pushConstantBinding;
+            vsGLSL += pushConstantBinding.EmitGLSL();
+            fsGLSL += pushConstantBinding.EmitGLSL();
+        }
 
         vsGLSL += vsOut->EmitGLSL(false);
         // 5. 生成 void main 主体

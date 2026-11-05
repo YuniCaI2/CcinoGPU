@@ -40,7 +40,8 @@ namespace {
         }
         if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.cs != rhs.cs ||
             lhs.vs != rhs.vs || lhs.fs != rhs.fs || lhs.csSize != rhs.csSize ||
-            lhs.vsSize != rhs.vsSize || lhs.fsSize != rhs.fsSize || lhs.csSpvPath != rhs.csSpvPath) {
+            lhs.vsSize != rhs.vsSize || lhs.fsSize != rhs.fsSize || lhs.csSpvPath != rhs.csSpvPath ||
+            lhs.vsSpvPath != rhs.vsSpvPath || lhs.fsSpvPath != rhs.fsSpvPath) {
             return false;
         }
         if (lhs.csUniformDataBindings.size() != rhs.csUniformDataBindings.size()) {

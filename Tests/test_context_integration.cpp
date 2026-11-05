@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include "TestContext.h"
@@ -178,5 +179,50 @@ TEST(CcinoIntegrationTest, StorageImageReadWriteClosedLoop) {
     // 6. 释放资源
     externalOutBuffer.Reset();
     EXPECT_TRUE(ctx.DestroyRGBuilder("StorageImageClosedLoopGraph"));
+    ctx.Destroy();
+}
+
+TEST(CcinoIntegrationTest, GraphicsPassRegisteredAndCreatesShaderObject) {
+    DestroyTestContextIfInitialized();
+
+    // 1. Init 会把编译期生成的 VS/FS SPV 加载进 ShaderIRRegistry
+    Ccino::Context ctx;
+    RHISettings settings{};
+    settings.bUseSwapChain = false;
+    settings.flightFrameCount = 1;
+    ASSERT_TRUE(ctx.Init(settings));
+
+    const Ccino::ShaderIR* ir = Ccino::ShaderIRRegistry::Instance().Find("IntegrationGraphicsPass");
+    ASSERT_NE(ir, nullptr);
+    EXPECT_EQ(ir->passType, Ccino::PassType::Graphics);
+    ASSERT_GE(ir->vsSize, sizeof(uint32_t));
+    ASSERT_GE(ir->fsSize, sizeof(uint32_t));
+    EXPECT_EQ(ir->vs.size(), ir->vsSize);
+    EXPECT_EQ(ir->fs.size(), ir->fsSize);
+
+    constexpr uint32_t kSpirvMagic = 0x07230203u;
+    uint32_t vsMagic = 0;
+    uint32_t fsMagic = 0;
+    std::memcpy(&vsMagic, ir->vs.data(), sizeof(uint32_t));
+    std::memcpy(&fsMagic, ir->fs.data(), sizeof(uint32_t));
+    EXPECT_EQ(vsMagic, kSpirvMagic);
+    EXPECT_EQ(fsMagic, kSpirvMagic);
+
+    // 2. AddVSAndFS 从注册表取 SPV 创建 GraphicsShaderObject
+    Ccino::RGBuilder* builder = ctx.CreateRGBuilder("GraphicsShaderObjectGraph");
+    ASSERT_NE(builder, nullptr);
+    builder->AddPass<"IntegrationGraphicsPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        Ccino::Vec4 tint(1.0f, 0.5f, 0.25f, 1.0f);
+        auto vs = [=](Ccino::Vec4& color) {
+            Ccino::Position = Ccino::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            color = tint;
+        };
+        auto fs = [=](const Ccino::Vec4& color, Ccino::Vec4& outColor) {
+            outColor = color;
+        };
+        rg.AddVSAndFS(vs, fs, Ccino::GraphicsSetting{}, {});
+    });
+
+    EXPECT_TRUE(ctx.DestroyRGBuilder("GraphicsShaderObjectGraph"));
     ctx.Destroy();
 }

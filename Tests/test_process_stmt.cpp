@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "CodeGenerator/CppParser.h"
+#include "GLSLCompiler/GLSLCompiler.h"
 #include "RHI/DescriptorSlot.h"
 
 namespace
@@ -964,6 +965,12 @@ namespace
                 Accessor<BufferResourceType, BufferAccessFlagBits::ReadWrite> ReadWrite(RID&, RID&) {
                     return {};
                 }
+
+                template <typename VS, typename FS>
+                void AddVSAndFS(VS&& vs, FS&& fs) {
+                    (void)vs;
+                    (void)fs;
+                }
             };
         }
     )";
@@ -1238,6 +1245,42 @@ TEST(ParseFilePassShadersTest, MultipleFilesAndIgnoreHeaderLambda) {
     EXPECT_NE(shaders[0].cs.find("layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;\n"), std::string::npos);
     EXPECT_EQ(shaders[1].passName, "FileBPass");
     EXPECT_NE(shaders[1].cs.find("layout(local_size_x = 128, local_size_y = 2, local_size_z = 1) in;\n"), std::string::npos);
+}
+
+TEST(ParseFilePassShadersTest, GraphicsPassCollectsAndCompilesVertexAndFragment) {
+    TempCompileCommandsWorkspace ws("GraphicsPass");
+
+    const auto cppPath = ws.WriteFile(
+        "graphics_pass.cpp",
+        kRGPassTestPreamble + R"(
+            void BuildForwardGraph() {
+                Ccino::RGBuilder builder;
+                builder.AddPass<"ForwardGraphicsPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+                    Ccino::Vec4 tint(1.0f, 0.5f, 0.25f, 1.0f);
+                    auto vs = [=](Ccino::Vec4& color) {
+                        color = tint;
+                    };
+                    rg.AddVSAndFS(vs, [=](const Ccino::Vec4& color, Ccino::Vec4& outColor) {
+                        outColor = color;
+                    });
+                });
+            }
+        )");
+
+    const std::string compileCommandsPath = ws.WriteCompileCommands({cppPath});
+    const std::vector<Ccino::ShaderIR> shaders = Ccino::CppParser::ParseFilePassShaders(compileCommandsPath);
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+    EXPECT_EQ(ir.passName, "ForwardGraphicsPass");
+    EXPECT_EQ(ir.passType, Ccino::PassType::Graphics);
+    EXPECT_TRUE(ir.cs.empty());
+    EXPECT_NE(ir.vs.find("layout(location = 0) out vec4 color;\n"), std::string::npos) << ir.vs;
+    EXPECT_NE(ir.fs.find("layout(location = 0) in vec4 color;\n"
+                         "layout(location = 0) out vec4 outColor;\n"), std::string::npos) << ir.fs;
+
+    EXPECT_FALSE(Ccino::GLSLCompiler::CompileToSpv(ir.passName, ir.vs, Ccino::ShaderType::Vertex).empty());
+    EXPECT_FALSE(Ccino::GLSLCompiler::CompileToSpv(ir.passName, ir.fs, Ccino::ShaderType::Fragment).empty());
 }
 
 TEST(ParseFilePassShadersTest, InvalidOrEmptyCompilationDatabaseReturnsEmpty) {

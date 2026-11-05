@@ -28,6 +28,29 @@ namespace Ccino {
         //加载编译期生成的 ShaderIR JSON 与预编译 SPV
         std::filesystem::path shaderDir(CCINO_SHADER_DIR);
 
+        auto loadSpv = [&](const std::string& recordedPath, const std::filesystem::path& fallbackPath,
+                           std::string& code, uint32_t& size) {
+            const std::filesystem::path spvFilePath = recordedPath.empty() ? fallbackPath : std::filesystem::path(recordedPath);
+            std::ifstream spvFile(spvFilePath, std::ios::binary | std::ios::ate);
+            if (!spvFile.is_open()) {
+                std::cerr << "Error: failed to open precompiled SPV file: " << spvFilePath << std::endl;
+                return false;
+            }
+            const std::streamsize spvByteSize = spvFile.tellg();
+            if (spvByteSize <= 0 || (spvByteSize % sizeof(uint32_t)) != 0) {
+                std::cerr << "Error: invalid precompiled SPV file size: " << spvFilePath << std::endl;
+                return false;
+            }
+            spvFile.seekg(0, std::ios::beg);
+            code.assign(static_cast<size_t>(spvByteSize), '\0');
+            if (!spvFile.read(code.data(), spvByteSize)) {
+                std::cerr << "Error: failed to read precompiled SPV file: " << spvFilePath << std::endl;
+                return false;
+            }
+            size = static_cast<uint32_t>(spvByteSize);
+            return true;
+        };
+
         std::vector<ShaderIR> shaderIRs;
         for (const auto& entry : std::filesystem::directory_iterator(shaderDir)) {
             const std::filesystem::path& shaderPath = entry.path();
@@ -40,31 +63,16 @@ namespace Ccino {
                 continue;
             }
             auto shaderIR = shaderJson.get<ShaderIR>();
-            if (shaderIR.passType != PassType::Compute) {
-                std::cerr << "Error: precompiled SPV loading only supports compute passes: " << shaderIR.passName << std::endl;
-                return false;
+            if (shaderIR.passType == PassType::Compute) {
+                if (!loadSpv(shaderIR.csSpvPath, shaderDir / (shaderIR.passName + ".spv"), shaderIR.cs, shaderIR.csSize)) {
+                    return false;
+                }
+            } else {
+                if (!loadSpv(shaderIR.vsSpvPath, shaderDir / (shaderIR.passName + ".vs.spv"), shaderIR.vs, shaderIR.vsSize) ||
+                    !loadSpv(shaderIR.fsSpvPath, shaderDir / (shaderIR.passName + ".fs.spv"), shaderIR.fs, shaderIR.fsSize)) {
+                    return false;
+                }
             }
-
-            const std::filesystem::path spvFilePath = shaderIR.csSpvPath.empty()
-                ? (shaderDir / (shaderIR.passName + ".spv"))
-                : std::filesystem::path(shaderIR.csSpvPath);
-            std::ifstream spvFile(spvFilePath, std::ios::binary | std::ios::ate);
-            if (!spvFile.is_open()) {
-                std::cerr << "Error: failed to open precompiled SPV file: " << spvFilePath << std::endl;
-                return false;
-            }
-            const std::streamsize spvByteSize = spvFile.tellg();
-            if (spvByteSize <= 0 || (spvByteSize % sizeof(uint32_t)) != 0) {
-                std::cerr << "Error: invalid precompiled SPV file size: " << spvFilePath << std::endl;
-                return false;
-            }
-            spvFile.seekg(0, std::ios::beg);
-            shaderIR.cs.assign(static_cast<size_t>(spvByteSize), '\0');
-            if (!spvFile.read(shaderIR.cs.data(), spvByteSize)) {
-                std::cerr << "Error: failed to read precompiled SPV file: " << spvFilePath << std::endl;
-                return false;
-            }
-            shaderIR.csSize = static_cast<uint32_t>(spvByteSize);
 
             shaderIRs.push_back(std::move(shaderIR));
         }

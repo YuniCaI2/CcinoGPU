@@ -67,7 +67,8 @@ namespace Ccino {
         std::string fsSpvPath;
     };
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderIR,
-        passName, passType, descriptorSlotLayout, csUniformDataBindings, cs, vs, fs, csSize, vsSize, fsSize, csSpvPath)
+        passName, passType, descriptorSlotLayout, csUniformDataBindings, vsUniformDataBindings, fsUniformDataBindings,
+        cs, vs, fs, csSize, vsSize, fsSize, csSpvPath, vsSpvPath, fsSpvPath)
 
     //这里统一丢到HugeHeader中，并且只需要处理下其中的类型
     struct ShaderFunction {
