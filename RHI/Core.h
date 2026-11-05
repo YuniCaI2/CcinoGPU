@@ -8,7 +8,7 @@
 #include "RHI/RHIStruct.h"
 
 #ifdef NDEBUG
-    #define USE_VALIDATION_LAYERS 0
+    #define USE_VALIDATION_LAYERS 1
 #else
     #define USE_VALIDATION_LAYERS 1
 #endif
@@ -105,7 +105,7 @@ namespace Ccino::RHI {
         SDL_Window* window = nullptr;
         bool m_sdlInitialized = false; 
 
-#ifndef NDEBUG
+#if USE_VALIDATION_LAYERS
         PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT = nullptr;
         PFN_vkDestroyDebugUtilsMessengerEXT vkDestroyDebugUtilsMessengerEXT = nullptr;
         VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;

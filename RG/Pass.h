@@ -68,6 +68,7 @@ namespace Ccino {
     using ColorWriteFlags = Flags<ColorWriteFlagBits>;
 
     struct GraphicsSetting {
+        uint32_t drawCounts{}; //这个控制了顶点的数量
         PrimitiveTopology topology = PrimitiveTopology::TriangleList;
         PolygonMode polygonMode = PolygonMode::Fill;
         CullMode cullMode = CullMode::None;

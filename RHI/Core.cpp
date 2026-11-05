@@ -482,7 +482,7 @@ namespace Ccino::RHI {
     }
 
     void Core::SetDebugging(VkInstance instance) {
-#ifndef NDEBUG
+#if USE_VALIDATION_LAYERS
         vkCreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
         vkDestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
 
@@ -501,7 +501,7 @@ namespace Ccino::RHI {
     }
 
     void Core::DestroyDebugCallback(VkInstance instance) {
-#ifndef NDEBUG
+#if USE_VALIDATION_LAYERS
         if (m_debugMessenger != VK_NULL_HANDLE && vkDestroyDebugUtilsMessengerEXT != nullptr) {
             vkDestroyDebugUtilsMessengerEXT(instance, m_debugMessenger, nullptr);
             m_debugMessenger = VK_NULL_HANDLE;
