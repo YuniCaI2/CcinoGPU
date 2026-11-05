@@ -23,12 +23,15 @@
 #include <clang/Tooling/JSONCompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
 #include <fstream>
+#include <stdexcept>
 #include <iterator>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 
 namespace {
 
@@ -361,11 +364,13 @@ namespace Ccino
     }
 
 
-    ShaderIR CppParser::ProcessGraphicsShader(const clang::LambdaExpr* vsLambda, clang::LambdaExpr* fsLambda,clang::ASTContext& context, const std::string& passName) {
+    ShaderIR CppParser::ProcessGraphicsShader(const clang::LambdaExpr* vsLambda, const clang::LambdaExpr* fsLambda, clang::ASTContext& context, const std::string& passName) {
         ASTGenerator astGenerator;
         ShaderIR shaderIR; 
         auto vsDescriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(vsLambda, context);
         auto fsDescriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(fsLambda, context);
+        std::string vsGLSL = kGLSLHeader.data();
+        std::string fsGLSL = kGLSLHeader.data();
 
         //合并
         //TODO:修复当前的DescriptorSlotLayout的布局和UniformReference 对齐后者是GLSL 生成的代码前者是CPU端和GPU通信的约定偏移
@@ -378,7 +383,7 @@ namespace Ccino
             uniformDataSet[data.name] = data; 
         }
         for (auto& [_, data] : uniformDataSet) {
-
+            descriptorSlotLayout.push_back(std::move(data));
         }
 
 
@@ -387,7 +392,82 @@ namespace Ccino
         shaderIR.fsUniformDataBindings = astGenerator.GetUniformDataBindings(fsLambda, context);
         shaderIR.descriptorSlotLayout = descriptorSlotLayout;
 
+        //Uniform Bind
+        auto vsUniformBindGLSL = astGenerator.GenerateUniformDataReference(vsLambda, context); 
+        auto fsUniformBindGLSL = astGenerator.GenerateUniformDataReference(fsLambda, context);
+        auto allUniformBindGLSL = std::make_unique<GLSL::UniformBinding>();
+        auto findField = [](const std::unique_ptr<GLSL::UniformBinding>& binding, const std::string& name) -> GLSL::DeclField* {
+            if (!binding) {
+                return nullptr;
+            }
+            for (const auto& field : binding->fields) {
+                if (field && field->name == name) {
+                    return field.get();
+                }
+            }
+            return nullptr;
+        };
+        for (const auto& data : descriptorSlotLayout) {
+            GLSL::DeclField* vsField = findField(vsUniformBindGLSL, data.name);
+            GLSL::DeclField* fsField = findField(fsUniformBindGLSL, data.name);
+            if (vsField != nullptr && fsField != nullptr &&
+                (vsField->type != fsField->type || vsField->dimensions != fsField->dimensions)) {
+                throw std::invalid_argument("Descriptor slot field type mismatch between vertex and fragment shaders: " + data.name);
+            }
+            const GLSL::DeclField* source = vsField != nullptr ? vsField : fsField;
+            if (source == nullptr) {
+                throw std::invalid_argument("Descriptor slot field is missing from shader bindings: " + data.name);
+            }
+            auto declField = std::make_unique<GLSL::DeclField>();
+            declField->type = source->type;
+            declField->name = source->name;
+            declField->dimensions = source->dimensions;
+            allUniformBindGLSL->fields.push_back(std::move(declField));
+        }
 
+        auto vsOut = astGenerator.GenerateOutBinding(vsLambda, context);
+        auto fsOut = astGenerator.GenerateOutBinding(fsLambda, context);
+
+        //生成 Struct Decl 和 Function Decl，使用 RecursiveASTVisitor 并且 Emit
+        LambdaInnerCollector innerCollector(&astGenerator);
+        innerCollector.TraverseStmt(vsLambda->getBody());
+        innerCollector.TraverseStmt(fsLambda->getBody());
+        auto declGraph = astGenerator.EmitDeclGraph();
+        vsGLSL += declGraph;
+        fsGLSL += declGraph;
+
+        GLSL::TextureBinding textureBinding;
+        vsGLSL += textureBinding.EmitGLSL();
+        fsGLSL += textureBinding.EmitGLSL();
+        //生成Binding
+
+        if (!allUniformBindGLSL->fields.empty()) {
+            vsGLSL += allUniformBindGLSL->EmitGLSL();
+            fsGLSL += allUniformBindGLSL->EmitGLSL();
+        }
+
+        GLSL::PushConstantBinding pushConstantBinding;
+        vsGLSL += pushConstantBinding.EmitGLSL();
+        fsGLSL += pushConstantBinding.EmitGLSL();
+
+        vsGLSL += vsOut->EmitGLSL(false);
+        // 5. 生成 void main 主体
+        if (auto mainBody = astGenerator.ProcessClangStmt(vsLambda->getBody())) {
+            vsGLSL += "void main() { \n";
+            vsGLSL += mainBody->EmitGLSL();
+            vsGLSL += "}\n";
+        }
+
+        fsGLSL += vsOut->EmitGLSL(true);
+        fsGLSL += fsOut->EmitGLSL(false);
+        if (auto mainBody = astGenerator.ProcessClangStmt(fsLambda->getBody())) {
+            fsGLSL += "void main() { \n";
+            fsGLSL += mainBody->EmitGLSL();
+            fsGLSL += "}\n";
+        }
+
+        shaderIR.fs = std::move(fsGLSL);
+        shaderIR.vs = std::move(vsGLSL);
 
         return shaderIR;
     }

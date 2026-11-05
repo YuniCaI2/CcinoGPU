@@ -1,4 +1,5 @@
 #include "GLSLAST.h"
+#include <string>
 
 namespace Ccino::GLSL {
     namespace {
@@ -332,5 +333,15 @@ namespace Ccino::GLSL {
         "layout(set = 0, binding = 2) uniform image2D globalImages[];\n"
         "layout(set = 0, binding = 2) uniform iimage2D globalIImages[];\n"
         "layout(set = 0, binding = 2) uniform uimage2D globalUImages[];\n";
+    }
+
+    std::string OutBinding::EmitGLSL(bool in) {
+        std::string result ={};
+        for (int i = 0; i < fields.size(); i++) {
+            auto& field = fields[i];
+            std::string inout = (in ? "in" : "out");
+            result += "layout(location = "+ std::to_string(i) +") " + inout + " " + field->EmitGLSL() + ";\n";
+        }
+        return result;
     }
 }

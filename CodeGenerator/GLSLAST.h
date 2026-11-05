@@ -174,7 +174,7 @@ namespace Ccino::GLSL {
 
     struct OutBinding {
         std::vector<std::unique_ptr<DeclField>> fields;
-        std::string EmitGLSL();
+        std::string EmitGLSL(bool in = false);
     };
     //FSIn 即是VSOut，所以此处不需要再创建一个FSIn
 

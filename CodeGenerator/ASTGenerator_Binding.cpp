@@ -72,7 +72,10 @@ namespace Ccino {
         const clang::CXXMethodDecl* callOp = lambdaExpr->getCallOperator(); //这个相当于Lambda是一个隐式的struct 其中有operator()这个对象
         for (const clang::ParmVarDecl* param : callOp->parameters()) {
             clang::QualType type = param->getType();
-            if(type->isLValueReferenceType() && !type.isConstQualified()) {
+            if(type->isLValueReferenceType() && !type.getNonReferenceType().isConstQualified()) { //const 修饰的是type本身而不是引用类型，引用类型永远不会是const
+                auto canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
+                InsertCXXRecordDeclToGraph(canonical->getAsCXXRecordDecl(), false);
+
                 auto declField = std::make_unique<GLSL::DeclField>();
                 auto typePack = SignatureFlattener::FlattenType(type);
                 declField->type = std::move(typePack.name); 

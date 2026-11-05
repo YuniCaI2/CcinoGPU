@@ -668,6 +668,247 @@ TEST(ProcessComputeShaderTest, UnsupportedCaptureTypeThrowsInvalidArgument) {
 }
 
 // ============================================================================
+// 2. ProcessGraphicsShader 端到端集成测试 (ProcessGraphicsShaderTest)
+// ============================================================================
+
+namespace
+{
+    class GraphicsShaderLambdaCollector : public MatchFinder::MatchCallback
+    {
+    public:
+        std::string PassName = "TestGraphicsPass";
+        const LambdaExpr* VsLambda = nullptr;
+        const LambdaExpr* FsLambda = nullptr;
+        ASTContext* Context = nullptr;
+        std::vector<Ccino::ShaderIR> Shaders;
+
+        void run(const MatchFinder::MatchResult& Result) override {
+            if (!Result.Context) return;
+            Context = Result.Context;
+            if (const auto* vs = Result.Nodes.getNodeAs<LambdaExpr>("vsLambda")) {
+                VsLambda = vs;
+            }
+            if (const auto* fs = Result.Nodes.getNodeAs<LambdaExpr>("fsLambda")) {
+                FsLambda = fs;
+            }
+            if (VsLambda && FsLambda && Shaders.empty()) {
+                Shaders.push_back(
+                    Ccino::CppParser::ProcessGraphicsShader(VsLambda, FsLambda, *Context, PassName));
+            }
+        }
+    };
+
+    std::vector<Ccino::ShaderIR> RunProcessGraphicsShaderOnCode(
+        const std::string& code,
+        const std::string& passName = "TestGraphicsPass")
+    {
+        GraphicsShaderLambdaCollector collector;
+        collector.PassName = passName;
+
+        MatchFinder finder;
+        finder.addMatcher(
+            varDecl(hasAncestor(functionDecl(hasName("TestEntry"))),
+                    hasName("vs"),
+                    hasInitializer(ignoringImplicit(lambdaExpr().bind("vsLambda")))),
+            &collector);
+        finder.addMatcher(
+            varDecl(hasAncestor(functionDecl(hasName("TestEntry"))),
+                    hasName("fs"),
+                    hasInitializer(ignoringImplicit(lambdaExpr().bind("fsLambda")))),
+            &collector);
+
+        EXPECT_TRUE(tooling::runToolOnCodeWithArgs(
+            tooling::newFrontendActionFactory(&finder)->create(),
+            code,
+            {"-std=c++20"}));
+        return collector.Shaders;
+    }
+}  // namespace
+
+TEST(ProcessGraphicsShaderTest, MergesBindingsAndEmitsMatchingUniformLayout) {
+    const auto shaders = RunProcessGraphicsShaderOnCode(
+        kShaderTestPreamble + R"(
+            struct VertexItem {
+                Ccino::Vec3 pos;
+                float weight;
+            };
+
+            struct PixelOut {
+                Ccino::Vec4 color;
+            };
+
+            float ApplyExposure(float v, float exposure) {
+                return v * exposure;
+            }
+
+            void TestEntry() {
+                Ccino::Accessor<VertexItem, BufferAccessFlagBits::Read> inVertices;
+                Ccino::Accessor<PixelOut, BufferAccessFlagBits::Write> outPixels;
+                float exposure = 1.5f;
+                Ccino::Mat4 mvp;
+                Ccino::Vec4 tint(1.0f, 0.5f, 0.25f, 1.0f);
+
+                auto vs = [inVertices, exposure, mvp]() {
+                    float w = ApplyExposure(inVertices[0].weight, exposure);
+                };
+
+                auto fs = [outPixels, exposure, tint]() {
+                    float e = ApplyExposure(1.0f, exposure);
+                    outPixels[0].color = tint;
+                };
+            }
+        )",
+        "ForwardPass");
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    EXPECT_EQ(ir.passName, "ForwardPass");
+    ASSERT_EQ(ir.descriptorSlotLayout.size(), 5u);
+
+    uint32_t totalSlotSize = 0;
+    const auto gpuOffsets = Ccino::RHI::DescriptorSlotBinding::GetOffsetsTable(ir.descriptorSlotLayout, totalSlotSize);
+    EXPECT_TRUE(gpuOffsets.contains("inVertices"));
+    EXPECT_TRUE(gpuOffsets.contains("outPixels"));
+    EXPECT_TRUE(gpuOffsets.contains("exposure"));
+    EXPECT_TRUE(gpuOffsets.contains("mvp"));
+    EXPECT_TRUE(gpuOffsets.contains("tint"));
+    EXPECT_GT(totalSlotSize, 0u);
+
+    ASSERT_EQ(ir.vsUniformDataBindings.size(), 3u);
+    EXPECT_EQ(ir.vsUniformDataBindings[0].name, "inVertices");
+    EXPECT_EQ(ir.vsUniformDataBindings[0].uniformDataType, Ccino::UniformDataType::Buffer);
+    EXPECT_EQ(ir.vsUniformDataBindings[1].name, "exposure");
+    EXPECT_EQ(ir.vsUniformDataBindings[1].uniformDataType, Ccino::UniformDataType::Float);
+    EXPECT_EQ(ir.vsUniformDataBindings[2].name, "mvp");
+    EXPECT_EQ(ir.vsUniformDataBindings[2].uniformDataType, Ccino::UniformDataType::Mat4);
+
+    ASSERT_EQ(ir.fsUniformDataBindings.size(), 3u);
+    EXPECT_EQ(ir.fsUniformDataBindings[0].name, "outPixels");
+    EXPECT_EQ(ir.fsUniformDataBindings[0].uniformDataType, Ccino::UniformDataType::Buffer);
+    EXPECT_EQ(ir.fsUniformDataBindings[1].name, "exposure");
+    EXPECT_EQ(ir.fsUniformDataBindings[1].uniformDataType, Ccino::UniformDataType::Float);
+    EXPECT_EQ(ir.fsUniformDataBindings[2].name, "tint");
+    EXPECT_EQ(ir.fsUniformDataBindings[2].uniformDataType, Ccino::UniformDataType::Vec4);
+
+    std::string expectedUniformBlock =
+        "layout(buffer_reference, scalar, buffer_reference_align = 8) readonly buffer UniformData { \n";
+    for (const auto& field : ir.descriptorSlotLayout) {
+        if (field.name == "inVertices") expectedUniformBlock += "VertexItem inVertices;\n";
+        else if (field.name == "outPixels") expectedUniformBlock += "PixelOut outPixels;\n";
+        else if (field.name == "exposure") expectedUniformBlock += "float exposure;\n";
+        else if (field.name == "mvp") expectedUniformBlock += "mat4 mvp;\n";
+        else if (field.name == "tint") expectedUniformBlock += "vec4 tint;\n";
+    }
+    expectedUniformBlock += "};\n";
+
+    EXPECT_NE(ir.vs.find(expectedUniformBlock), std::string::npos) << ir.vs;
+    EXPECT_NE(ir.fs.find(expectedUniformBlock), std::string::npos) << ir.fs;
+    EXPECT_NE(ir.vs.find("layout(buffer_reference, scalar) buffer VertexItem{ \n"), std::string::npos) << ir.vs;
+    EXPECT_NE(ir.fs.find("layout(buffer_reference, scalar) buffer PixelOut{ \n"), std::string::npos) << ir.fs;
+    EXPECT_NE(ir.vs.find("ApplyExposure_float_float"), std::string::npos) << ir.vs;
+    EXPECT_NE(ir.fs.find("ApplyExposure_float_float"), std::string::npos) << ir.fs;
+    EXPECT_NE(ir.vs.find("float w = ApplyExposure_float_float(pc.uniformData.inVertices[0].weight,pc.uniformData.exposure);\n"),
+              std::string::npos) << ir.vs;
+    EXPECT_NE(ir.fs.find("(pc.uniformData.outPixels[0].color = pc.uniformData.tint);\n"),
+              std::string::npos) << ir.fs;
+}
+
+TEST(ProcessGraphicsShaderTest, NoCapturesOmitsUniformDataBlock) {
+    const auto shaders = RunProcessGraphicsShaderOnCode(
+        kShaderTestPreamble + R"(
+            void TestEntry() {
+                auto vs = []() {
+                    int a = 1;
+                };
+                auto fs = []() {
+                    int b = 2;
+                };
+            }
+        )",
+        "EmptyCaptureGraphicsPass");
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    EXPECT_TRUE(ir.descriptorSlotLayout.empty());
+    EXPECT_TRUE(ir.vsUniformDataBindings.empty());
+    EXPECT_TRUE(ir.fsUniformDataBindings.empty());
+    EXPECT_EQ(ir.vs.find("readonly buffer UniformData"), std::string::npos) << ir.vs;
+    EXPECT_EQ(ir.fs.find("readonly buffer UniformData"), std::string::npos) << ir.fs;
+    EXPECT_NE(ir.vs.find("int a = 1;\n"), std::string::npos) << ir.vs;
+    EXPECT_NE(ir.fs.find("int b = 2;\n"), std::string::npos) << ir.fs;
+}
+
+TEST(ProcessGraphicsShaderTest, ConflictingFieldTypesThrowInvalidArgument) {
+    EXPECT_THROW(
+        RunProcessGraphicsShaderOnCode(
+            kShaderTestPreamble + R"(
+                void TestEntry() {
+                    auto vs = [param = 1.0f]() {
+                        float x = param;
+                    };
+                    auto fs = [param = 2]() {
+                        int y = param;
+                    };
+                }
+            )"),
+        std::invalid_argument);
+}
+
+TEST(ProcessGraphicsShaderTest, OutBindingEmitsLocationsAndInsertsCustomStructs) {
+    const auto shaders = RunProcessGraphicsShaderOnCode(
+        kShaderTestPreamble + R"(
+            struct VaryingData {
+                Ccino::Vec2 uv;
+                Ccino::Vec3 worldNormal;
+            };
+
+            void TestEntry() {
+                auto vs = [](VaryingData& vOut, float& depthBias) {
+                    vOut.uv = Ccino::Vec2(0.5f, 0.5f);
+                    depthBias = 0.01f;
+                };
+
+                auto fs = [](const VaryingData& vOut, Ccino::Vec4& outColor, Ccino::Vec4& outNormal) {
+                    outColor = Ccino::Vec4(vOut.uv.x, vOut.uv.y, 0.0f, 1.0f);
+                    outNormal = Ccino::Vec4(vOut.worldNormal.x, vOut.worldNormal.y, vOut.worldNormal.z, 1.0f);
+                };
+            }
+        )",
+        "VaryingAndOutBindingPass");
+
+    ASSERT_EQ(shaders.size(), 1u);
+    const Ccino::ShaderIR& ir = shaders[0];
+
+    const std::string expectedVaryingStruct =
+        "struct VaryingData{\n"
+        "vec2 uv;\n"
+        "vec3 worldNormal;\n"
+        "};\n";
+
+    // 自定义结构体仅出现在 Lambda 引用形参中也应入图且只输出一次
+    const size_t vsStructPos = ir.vs.find(expectedVaryingStruct);
+    const size_t fsStructPos = ir.fs.find(expectedVaryingStruct);
+    ASSERT_NE(vsStructPos, std::string::npos) << ir.vs;
+    ASSERT_NE(fsStructPos, std::string::npos) << ir.fs;
+    EXPECT_EQ(ir.vs.find(expectedVaryingStruct, vsStructPos + 1), std::string::npos) << ir.vs;
+    EXPECT_EQ(ir.fs.find(expectedVaryingStruct, fsStructPos + 1), std::string::npos) << ir.fs;
+
+    // VS 输出绑定按引用形参递增 location
+    EXPECT_NE(ir.vs.find("layout(location = 0) out VaryingData vOut;\n"
+                         "layout(location = 1) out float depthBias;\n"),
+              std::string::npos) << ir.vs;
+
+    // FS 输入复用 vsOut，FS 输出只收集非 const 左值引用形参
+    EXPECT_NE(ir.fs.find("layout(location = 0) in VaryingData vOut;\n"
+                         "layout(location = 1) in float depthBias;\n"
+                         "layout(location = 0) out vec4 outColor;\n"
+                         "layout(location = 1) out vec4 outNormal;\n"),
+              std::string::npos) << ir.fs;
+}
+
+// ============================================================================
 // CppParser::ParseFilePassShaders 端到端单元测试 (基于真实 compile_commands.json)
 // ============================================================================
 namespace
