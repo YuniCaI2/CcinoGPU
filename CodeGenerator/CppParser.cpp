@@ -315,7 +315,7 @@ namespace Ccino
     ShaderIR CppParser::ProcessComputeShader(const clang::LambdaExpr* lambda, clang::ASTContext& context, const std::string& passName, ThreadGroupSize threadGroupSize) {
         ASTGenerator astGenerator;
         ShaderIR shaderIR;
-        shaderIR.shaderType = ShaderType::Compute;
+        shaderIR.passType = PassType::Compute;
         shaderIR.descriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(lambda, context);
         shaderIR.passName = passName;
         shaderIR.csUniformDataBindings = astGenerator.GetUniformDataBindings(lambda, context);
@@ -388,6 +388,7 @@ namespace Ccino
 
 
         shaderIR.passName = passName;
+        shaderIR.passType = PassType::Graphics;
         shaderIR.vsUniformDataBindings = astGenerator.GetUniformDataBindings(vsLambda, context);
         shaderIR.fsUniformDataBindings = astGenerator.GetUniformDataBindings(fsLambda, context);
         shaderIR.descriptorSlotLayout = descriptorSlotLayout;

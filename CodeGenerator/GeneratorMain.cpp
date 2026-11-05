@@ -43,7 +43,7 @@ int main() {
             return 1;
         }
 
-        if (shaderIR.shaderType == Ccino::ShaderType::Compute) {
+        if (shaderIR.passType == Ccino::PassType::Compute) {
             const auto it = shaderIR.cs.find("in;");
             if (it == std::string::npos) {
                 std::cerr << "Error: the compute shader doesn't have thread group size: " << shaderIR.passName << "\n";
@@ -57,7 +57,7 @@ int main() {
 
         try {
             const std::vector<uint32_t> spv = Ccino::GLSLCompiler::CompileToSpv(
-                shaderIR.passName, shaderIR.cs, shaderIR.shaderType);
+                shaderIR.passName, shaderIR.cs, Ccino::ShaderType::Compute);
             shaderIR.csSize = static_cast<uint32_t>(spv.size() * sizeof(uint32_t));
 
             std::ofstream spvStream(spvPath, std::ios::binary | std::ios::trunc);

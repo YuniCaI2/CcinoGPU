@@ -249,7 +249,7 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
 
     // 1. 验证基础元数据
     EXPECT_EQ(ir.passName, "ParticleSimulatePass");
-    EXPECT_EQ(ir.shaderType, Ccino::ShaderType::Compute);
+    EXPECT_EQ(ir.passType, Ccino::PassType::Compute);
 
     // 2. 验证 DescriptorSlotLayout
     const Ccino::DescriptorSlotLayout expectedLayout = {
@@ -764,6 +764,7 @@ TEST(ProcessGraphicsShaderTest, MergesBindingsAndEmitsMatchingUniformLayout) {
     const Ccino::ShaderIR& ir = shaders[0];
 
     EXPECT_EQ(ir.passName, "ForwardPass");
+    EXPECT_EQ(ir.passType, Ccino::PassType::Graphics);
     ASSERT_EQ(ir.descriptorSlotLayout.size(), 5u);
 
     uint32_t totalSlotSize = 0;
@@ -1052,7 +1053,7 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
     const Ccino::ShaderIR& ir = shaders[0];
 
     EXPECT_EQ(ir.passName, "ParticleSimulatePass");
-    EXPECT_EQ(ir.shaderType, Ccino::ShaderType::Compute);
+    EXPECT_EQ(ir.passType, Ccino::PassType::Compute);
 
     const Ccino::DescriptorSlotLayout expectedLayout = {
         {"inOutParticles", Ccino::UniformDataType::Buffer},

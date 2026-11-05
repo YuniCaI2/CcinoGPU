@@ -45,7 +45,7 @@ namespace Ccino {
 
     struct ShaderIR {
         std::string passName;
-        ShaderType shaderType;
+        PassType passType;
 
         //资源部分,声明布局
         DescriptorSlotLayout descriptorSlotLayout;
@@ -67,7 +67,7 @@ namespace Ccino {
         std::string fsSpvPath;
     };
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ShaderIR,
-        passName, shaderType, descriptorSlotLayout, csUniformDataBindings, cs, vs, fs, csSize, vsSize, fsSize, csSpvPath)
+        passName, passType, descriptorSlotLayout, csUniformDataBindings, cs, vs, fs, csSize, vsSize, fsSize, csSpvPath)
 
     //这里统一丢到HugeHeader中，并且只需要处理下其中的类型
     struct ShaderFunction {

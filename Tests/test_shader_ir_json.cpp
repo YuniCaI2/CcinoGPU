@@ -18,7 +18,7 @@ namespace {
     using Ccino::ShaderIRRegistry;
     using Ccino::ShaderPropertyBinding;
     using Ccino::ShaderPropertyType;
-    using Ccino::ShaderType;
+    using Ccino::PassType;
     using Ccino::ShaderUniformDataBinding;
     using Ccino::ThreadGroupSize;
     using Ccino::UniformDataType;
@@ -35,7 +35,7 @@ namespace {
     }
 
     bool SameShaderIR(const ShaderIR& lhs, const ShaderIR& rhs) {
-        if (lhs.passName != rhs.passName || lhs.shaderType != rhs.shaderType) {
+        if (lhs.passName != rhs.passName || lhs.passType != rhs.passType) {
             return false;
         }
         if (lhs.descriptorSlotLayout != rhs.descriptorSlotLayout || lhs.cs != rhs.cs ||
@@ -57,7 +57,7 @@ namespace {
     ShaderIR MakeComputeIR() {
         ShaderIR ir;
         ir.passName = "ClearBuffer";
-        ir.shaderType = ShaderType::Compute;
+        ir.passType = PassType::Compute;
         ir.descriptorSlotLayout = DescriptorSlotLayout{
             {"result", UniformDataType::Buffer},
             {"exposure", UniformDataType::Float},
@@ -175,7 +175,7 @@ TEST(ShaderIRJson, ShaderIRRoundTrip) {
     const json value = original;
 
     EXPECT_EQ(value.at("passName"), "ClearBuffer");
-    EXPECT_EQ(value.at("shaderType"), "Compute");
+    EXPECT_EQ(value.at("passType"), "Compute");
     ASSERT_EQ(value.at("descriptorSlotLayout").size(), 2u);
     EXPECT_EQ(value.at("descriptorSlotLayout").at(0).at("name"), "result");
     EXPECT_EQ(value.at("descriptorSlotLayout").at(0).at("dataType"), "Buffer");
@@ -196,7 +196,7 @@ TEST(ShaderIRJson, ShaderIRRoundTrip) {
 TEST(ShaderIRJson, ShaderIRRejectsIncompleteJson) {
     const json missingGlsl = {
         {"passName", "ClearBuffer"},
-        {"shaderType", "Compute"},
+        {"passType", "Compute"},
         {"descriptorSlotLayout", json::array()},
         {"csUniformDataBindings", json::array()},
         {"csSize", 0},
@@ -213,7 +213,7 @@ TEST(ShaderIRJson, GeneratedDirectorySkipsNonShaderJson) {
     const ShaderIR compute = MakeComputeIR();
     ShaderIR vertex = compute;
     vertex.passName = "Blit";
-    vertex.shaderType = ShaderType::Vertex;
+    vertex.passType = PassType::Graphics;
     vertex.cs.clear();
     vertex.csSize = 0;
     vertex.vs = "void main() {}\n";
@@ -276,7 +276,7 @@ TEST_F(ShaderIRRegistryTest, RegisterAllClearAndMapRoundTrip) {
     ShaderIR first = MakeComputeIR();
     ShaderIR second = first;
     second.passName = "Blit";
-    second.shaderType = ShaderType::Fragment;
+    second.passType = PassType::Graphics;
 
     std::vector<ShaderIR> batch;
     batch.push_back(first);

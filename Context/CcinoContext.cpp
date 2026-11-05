@@ -40,6 +40,10 @@ namespace Ccino {
                 continue;
             }
             auto shaderIR = shaderJson.get<ShaderIR>();
+            if (shaderIR.passType != PassType::Compute) {
+                std::cerr << "Error: precompiled SPV loading only supports compute passes: " << shaderIR.passName << std::endl;
+                return false;
+            }
 
             const std::filesystem::path spvFilePath = shaderIR.csSpvPath.empty()
                 ? (shaderDir / (shaderIR.passName + ".spv"))
@@ -55,21 +59,12 @@ namespace Ccino {
                 return false;
             }
             spvFile.seekg(0, std::ios::beg);
-            std::string* shaderCode = &shaderIR.cs;
-            uint32_t* shaderSize = &shaderIR.csSize;
-            if (shaderIR.shaderType == ShaderType::Vertex) {
-                shaderCode = &shaderIR.vs;
-                shaderSize = &shaderIR.vsSize;
-            } else if (shaderIR.shaderType == ShaderType::Fragment) {
-                shaderCode = &shaderIR.fs;
-                shaderSize = &shaderIR.fsSize;
-            }
-            shaderCode->assign(static_cast<size_t>(spvByteSize), '\0');
-            if (!spvFile.read(shaderCode->data(), spvByteSize)) {
+            shaderIR.cs.assign(static_cast<size_t>(spvByteSize), '\0');
+            if (!spvFile.read(shaderIR.cs.data(), spvByteSize)) {
                 std::cerr << "Error: failed to read precompiled SPV file: " << spvFilePath << std::endl;
                 return false;
             }
-            *shaderSize = static_cast<uint32_t>(spvByteSize);
+            shaderIR.csSize = static_cast<uint32_t>(spvByteSize);
 
             shaderIRs.push_back(std::move(shaderIR));
         }
