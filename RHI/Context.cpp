@@ -309,10 +309,10 @@ namespace Ccino::RHI {
 
         //View 引用着Image, 必须在Image 之前销毁
         if (device != VK_NULL_HANDLE) {
-            m_imageViews.ForEach([&](VkImageView& imageView) {
-                if (imageView != VK_NULL_HANDLE) {
-                    vkDestroyImageView(device, imageView, nullptr);
-                    imageView = VK_NULL_HANDLE;
+            m_textureViews.ForEach([&](TextureView& view) {
+                if (view.imageView != VK_NULL_HANDLE) {
+                    vkDestroyImageView(device, view.imageView, nullptr);
+                    view.imageView = VK_NULL_HANDLE;
                 }
             });
         }
@@ -782,6 +782,11 @@ namespace Ccino::RHI {
         }
         return m_timelines[queueFamilyIndex].get();
     }
+
+    bool Context::CheckAndNormalizeRenderDesc(RenderDesc& renderDesc) {
+        bool bResult = true;
+        return bResult;
+    }
     
     RID Context::CreateTexture(const TextureCreateInfo& createInfo) {
         if (createInfo.arrayLayers > 1) {
@@ -886,22 +891,63 @@ namespace Ccino::RHI {
         m_textures.Remove(rid);
     }
 
-    RID Context::CreateImageView(const VkImageViewCreateInfo& createInfo) {
+    RID Context::CreateTextureView(const RID& textureRID, const ViewRange& viewRange) {
+        VulkanTexture* texture = m_textures.Get(textureRID);
+        if (texture == nullptr || texture->image == VK_NULL_HANDLE) {
+            throw std::runtime_error("CreateTextureView: texture is invalid");
+        }
+        if (texture->format == VK_FORMAT_UNDEFINED) {
+            throw std::runtime_error("CreateTextureView: texture has no registered format");
+        }
+        if (viewRange.mipMapCounts == 0 || viewRange.arrayCounts == 0 ||
+            viewRange.baseMipMap + viewRange.mipMapCounts > texture->mipLevels ||
+            viewRange.baseArray + viewRange.arrayCounts > texture->arrayLayers) {
+            throw std::runtime_error("CreateTextureView: view range is out of the texture's subresources");
+        }
+
+        VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
+        switch (texture->type) {
+        case VK_IMAGE_TYPE_1D:
+            viewType = viewRange.arrayCounts > 1 ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D;
+            break;
+        case VK_IMAGE_TYPE_2D:
+            viewType = viewRange.arrayCounts > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+            break;
+        case VK_IMAGE_TYPE_3D:
+            viewType = VK_IMAGE_VIEW_TYPE_3D;
+            break;
+        default:
+            throw std::runtime_error("CreateTextureView: unsupported image type");
+        }
+
+        VkImageViewCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = texture->image;
+        createInfo.viewType = viewType;
+        createInfo.format = texture->format;
+        createInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                                 VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+        createInfo.subresourceRange.aspectMask = ToVkAspectFlags(viewRange.aspectMask);
+        createInfo.subresourceRange.baseMipLevel = viewRange.baseMipMap;
+        createInfo.subresourceRange.levelCount = viewRange.mipMapCounts;
+        createInfo.subresourceRange.baseArrayLayer = viewRange.baseArray;
+        createInfo.subresourceRange.layerCount = viewRange.arrayCounts;
+
         VkImageView imageView = VK_NULL_HANDLE;
         VULKAN_CHECK(vkCreateImageView(m_core->GetVkDevice(), &createInfo, nullptr, &imageView));
-        return m_imageViews.Add(imageView);
+        return m_textureViews.Add(TextureView{imageView, textureRID});
     }
 
     void Context::DestroyImageView(RID rid) {
-        VkImageView* imageView = m_imageViews.Get(rid);
-        if (imageView == nullptr) {
+        TextureView* view = m_textureViews.Get(rid);
+        if (view == nullptr) {
             return;
         }
-        if (*imageView != VK_NULL_HANDLE) {
-            vkDestroyImageView(m_core->GetVkDevice(), *imageView, nullptr);
-            *imageView = VK_NULL_HANDLE;
+        if (view->imageView != VK_NULL_HANDLE) {
+            vkDestroyImageView(m_core->GetVkDevice(), view->imageView, nullptr);
+            view->imageView = VK_NULL_HANDLE;
         }
-        m_imageViews.Remove(rid);
+        m_textureViews.Remove(rid);
     }
 
     void Context::TransitionTextureLayout(RID rid, VkImageLayout newLayout) {
@@ -1362,6 +1408,15 @@ namespace Ccino::RHI {
         VULKAN_CHECK(vkEndCommandBuffer(commandBuffer.commandBuffer));
     }
 
+    //非常薄的封装
+    void Context::BeginRendering(CommandContext::CommandBuffer& commandBuffer, const RenderDesc& renderingInfo) {
+        //Validation
+    }
+
+    void Context::EndRendering(CommandContext::CommandBuffer& commandBuffer) {
+        vkCmdEndRendering(commandBuffer.commandBuffer);
+    }
+
     void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {
         SubmitCommandBufferTracked(queueType, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
     }
@@ -1374,7 +1429,7 @@ namespace Ccino::RHI {
             DestroyBuffer(rid);
         } else if (rid.type == RID::GetIndex<VulkanTexture>()) {
             DestroyTexture(rid);
-        } else if (rid.type == RID::GetIndex<VkImageView>()) {
+        } else if (rid.type == RID::GetIndex<TextureView>()) {
             DestroyImageView(rid);
         } else if (rid.type == RID::GetIndex<VkSemaphore>()) {
             DestroySemaphore(rid);

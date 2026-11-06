@@ -37,8 +37,8 @@ namespace Ccino::RHI {
         DescriptorSlotBinding& BindBuffer(const std::string& name, RID rid); //写入Buffer 的BDA
         DescriptorSlotBinding& BindSampler(const std::string& name, SamplerType type); //写入Sampler 在全局DescriptorSet 中的数组索引
         //TODO: BindTexture, 等RHI 支持Texture 创建后实现, 写入SampledImage / StorageImage 的数组索引
-        DescriptorSlotBinding& BindTexture2DUAV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo); //StorageTexture StorageImage
-        DescriptorSlotBinding& BindTexture2DSRV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo); //SampledTexture
+        DescriptorSlotBinding& BindTexture2DUAV(const std::string& name, RID rid, const ViewRange& viewRange); //StorageTexture StorageImage
+        DescriptorSlotBinding& BindTexture2DSRV(const std::string& name, RID rid, const ViewRange& viewRange); //SampledTexture
 
         //常量绑定, 按layout 中声明的类型检查
         template<typename T>
@@ -82,7 +82,7 @@ namespace Ccino::RHI {
 
         const UniformOffset& FindField(const std::string& name) const;
         void MarkDirty();
-        DescriptorSlotBinding& BindTexture2D(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo, bool storage);
+        DescriptorSlotBinding& BindTexture2D(const std::string& name, RID rid, const ViewRange& viewRange, bool storage);
 
         struct BoundTexture {
             bool storage = false;

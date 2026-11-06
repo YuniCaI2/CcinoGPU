@@ -226,25 +226,22 @@ namespace Ccino::RHI {
         return *this;
     }
 
-    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2DUAV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo) {
-        return BindTexture2D(name, rid, viewCreateInfo, true);
+    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2DUAV(const std::string& name, RID rid, const ViewRange& viewRange) {
+        return BindTexture2D(name, rid, viewRange, true);
     }
 
-    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2DSRV(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo) {
-        return BindTexture2D(name, rid, viewCreateInfo, false);
+    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2DSRV(const std::string& name, RID rid, const ViewRange& viewRange) {
+        return BindTexture2D(name, rid, viewRange, false);
     }
 
-    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2D(const std::string& name, RID rid, VkImageViewCreateInfo viewCreateInfo, bool storage) {
+    DescriptorSlotBinding& DescriptorSlotBinding::BindTexture2D(const std::string& name, RID rid, const ViewRange& viewRange, bool storage) {
         const UniformOffset& field = FindField(name);
         const UniformDataType expected = storage ? UniformDataType::StorageImage : UniformDataType::SampledImage;
         if (field.uniformDataType != expected) {
             throw std::runtime_error(std::string("Field is not a ") + (storage ? "storage" : "sampled") +
                 " image in descriptor slot layout: " + name);
         }
-        viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewCreateInfo.image = m_context->GetVkImage(rid);
-        viewCreateInfo.format = m_context->GetFormat(rid); //不支持多format这个后续支持, TODO：支持多format
-        const RID imageView = m_context->CreateImageView(viewCreateInfo);
+        const RID imageView = m_context->CreateTextureView(rid, viewRange);
 
         uint32_t index = 0;
         try {

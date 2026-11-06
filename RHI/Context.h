@@ -44,6 +44,18 @@ namespace Ccino::RHI {
         //Layout 初始都是未定义
     };
 
+    struct RenderDesc {
+        //如果width 和 height有值为0则使用colors
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t offsetX = 0;
+        uint32_t offsetY = 0;
+        uint32_t layerCount = 1;
+        std::vector<RID> colorViews;
+        RID depthView;
+    };
+
+
     class Context {
     public:
         Context();
@@ -111,20 +123,22 @@ namespace Ccino::RHI {
         bool CopyTex(RID srcTex, RID dstTex);
 
 
-        //ImageView 直接传入VkImageViewCreateInfo 创建, image 由调用方从GetVkImage 填入
-        RID CreateImageView(const VkImageViewCreateInfo& createInfo);
+        RID CreateTextureView(const RID& textureRID, const ViewRange& viewRange); //format 取自纹理, 销毁走 DeleteResource
         void DestroyImageView(RID rid);
-        VkImageView GetVkImageView(RID rid) { return *m_imageViews.Get(rid); }
+        VkImageView GetVkImageView(RID rid) { return m_textureViews.Get(rid)->imageView; }
 
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
         void UnRegisterSwapchainImages(const std::vector<RID>& imageRIDs);
 
         //Command
         CommandContext::CommandBuffer& GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex = 0);
+
         void StartRecording(CommandContext::CommandBuffer& commandBuffer);
         void EndRecording(CommandContext::CommandBuffer& commandBuffer);
-        // void BeginRendering(CommandContext::CommandBuffer& commandBuffer);
-        // void EndRendering(CommandContext::CommandBuffer& commandBuffer);
+        //这里直接暴露VkRenderingInfo
+        //这里非常薄
+        void BeginRendering(CommandContext::CommandBuffer& commandBuffer, const RenderDesc& renderingInfo);
+        void EndRendering(CommandContext::CommandBuffer& commandBuffer);
 
         void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0, 
             const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
@@ -207,11 +221,17 @@ namespace Ccino::RHI {
             VkImageUsageFlags usage = 0;
         };
 
+        struct TextureView {
+            VkImageView imageView; //这里是本体
+            RID imageRID; //这里指向原来的view
+        };
+
         void DestroyResource(RID rid); 
         uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, 
             uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
         void ReleaseUploadStaging(VulkanBuffer& buffer);
         TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
+        bool CheckAndNormalizeRenderDesc(RenderDesc& renderDesc);
 
 
         //其实这里需要使用unique比较合适，然后前向声明
@@ -223,7 +243,7 @@ namespace Ccino::RHI {
 
         TRIDArray<VulkanBuffer> m_buffers;
         TRIDArray<VkSemaphore> m_semaphores;
-        TRIDArray<VkImageView> m_imageViews; //轻量包装托管到RID中 ，后续再DescriptorSlot中使用
+        TRIDArray<TextureView> m_textureViews; //轻量包装托管到RID中 ，后续再DescriptorSlot中使用
         TRIDArray<ComputePipeline> m_computePipelines;
         TRIDArray<DescriptorSlotBinding> m_descriptorSlots;
         TRIDArray<VulkanTexture> m_textures;

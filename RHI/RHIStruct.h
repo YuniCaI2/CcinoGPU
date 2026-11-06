@@ -251,3 +251,37 @@ inline VkSamplerCreateInfo CreateSamplerCreateInfo(SamplerType type) {
     info.unnormalizedCoordinates = VK_FALSE;
     return info;
 }
+
+namespace Ccino::RHI {
+    //和 VkImageAspectFlagBits 对齐: 枚举值直接等于 Vulkan 的位值, 可直接 static_cast 成 VkImageAspectFlags
+    enum class AspectMask : uint32_t {
+        None    = VK_IMAGE_ASPECT_NONE,
+        Color   = VK_IMAGE_ASPECT_COLOR_BIT,
+        Depth   = VK_IMAGE_ASPECT_DEPTH_BIT,
+        Stencil = VK_IMAGE_ASPECT_STENCIL_BIT,
+    };
+
+    constexpr AspectMask operator|(AspectMask lhs, AspectMask rhs) {
+        return static_cast<AspectMask>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
+    }
+
+    constexpr AspectMask operator&(AspectMask lhs, AspectMask rhs) {
+        return static_cast<AspectMask>(static_cast<uint32_t>(lhs) & static_cast<uint32_t>(rhs));
+    }
+
+    constexpr bool HasAspectMask(AspectMask mask, AspectMask bit) {
+        return (static_cast<uint32_t>(mask) & static_cast<uint32_t>(bit)) != 0;
+    }
+
+    constexpr VkImageAspectFlags ToVkAspectFlags(AspectMask mask) {
+        return static_cast<VkImageAspectFlags>(mask);
+    }
+
+    struct ViewRange {
+        uint32_t baseMipMap = 0;
+        uint32_t mipMapCounts = 1;
+        uint32_t baseArray = 0;
+        uint32_t arrayCounts = 1;
+        AspectMask aspectMask = AspectMask::Color;
+    };
+}

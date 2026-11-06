@@ -523,32 +523,13 @@ namespace Ccino {
                         auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
                         auto* viewRange =  reinterpret_cast<ViewRange*>(static_cast<char*>(pass->lambda.data()) + data.offset + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
                         RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
-                        VkImageViewCreateInfo createInfo = {};
-                        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-                        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; //支持2D 这里的UniformData不太合适
-                        createInfo.subresourceRange.aspectMask = ToVkAspectFlags(viewRange->aspectMask);
-                        createInfo.subresourceRange.baseArrayLayer = viewRange->baseArray;
-                        createInfo.subresourceRange.layerCount = viewRange->arrayCounts;
-                        createInfo.subresourceRange.levelCount = viewRange->mipMapCounts;
-                        createInfo.subresourceRange.baseMipLevel = viewRange->baseMipMap;
-
-                        descriptorSlot->BindTexture2DSRV(data.name, rhiTextureRID, createInfo);
+                        descriptorSlot->BindTexture2DSRV(data.name, rhiTextureRID, *viewRange);
 
                     } else if (data.uniformDataType == UniformDataType::StorageImage) {
                         auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
                         auto* viewRange =  reinterpret_cast<ViewRange*>(static_cast<char*>(pass->lambda.data()) + data.offset + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
                         RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
-
-                        VkImageViewCreateInfo createInfo = {};
-                        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-                        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                        createInfo.subresourceRange.aspectMask = ToVkAspectFlags(viewRange->aspectMask);
-                        createInfo.subresourceRange.baseArrayLayer = viewRange->baseArray;
-                        createInfo.subresourceRange.layerCount = viewRange->arrayCounts;
-                        createInfo.subresourceRange.levelCount = viewRange->mipMapCounts;
-                        createInfo.subresourceRange.baseMipLevel = viewRange->baseMipMap;
-
-                        descriptorSlot->BindTexture2DUAV(data.name, rhiTextureRID, createInfo);
+                        descriptorSlot->BindTexture2DUAV(data.name, rhiTextureRID, *viewRange);
                     } else {
                         descriptorSlot->BindParam(data.name, data.uniformDataType, static_cast<char*>(pass->lambda.data()) + data.offset);
                     }
@@ -574,21 +555,12 @@ namespace Ccino {
         if (m_context == nullptr) {
             return RID::Invalid();
         }
-        VkImageViewCreateInfo createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = m_context->GetVkImage(renderTargetRHIRID);
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = m_context->GetFormat(renderTargetRHIRID);
-        createInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-                                 VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
-        createInfo.subresourceRange.aspectMask = ToVkAspectFlags(viewRange.aspectMask);
-        //附件 View 只能覆盖一个 mip, 2D View 也只能覆盖一个 layer
-        createInfo.subresourceRange.baseMipLevel = viewRange.baseMipMap;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = viewRange.baseArray;
-        createInfo.subresourceRange.layerCount = 1;
+        //附件 View 只能覆盖一个 mip, 单层渲染也只覆盖一个 layer
+        ViewRange attachmentRange = viewRange;
+        attachmentRange.mipMapCounts = 1;
+        attachmentRange.arrayCounts = 1;
 
-        RID view = m_context->CreateImageView(createInfo);
+        RID view = m_context->CreateTextureView(renderTargetRHIRID, attachmentRange);
         m_renderTargetViews.push_back(view);
         return view;
     }
