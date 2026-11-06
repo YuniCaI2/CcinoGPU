@@ -33,7 +33,7 @@ namespace {
         auto& resources = builder.*GetPrivate(ResourcesTag{});
         return resources.Add(Ccino::RGResource{
             Ccino::ResourceType::Buffer,
-            Ccino::Buffer::CreateArgs{Ccino::BufferType::Device, size},
+            Ccino::Buffer::CreateArgs{.size = size},
             false
         });
     }
@@ -384,14 +384,14 @@ TEST(RenderGraphTimeline, RenderTargetWriteChain) {
     RID p0, p1, p2, p3;
     builder.AddPass<"RTChainDraw0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
-        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID);
+        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID, Ccino::LoadOp::Clear);
         rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtA});
     }).AddPass<"RTChainSample0">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
         rg.Sample<Ccino::ViewType::Float>(texA, passRID);
     }).AddPass<"RTChainDraw1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;
-        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID);
+        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID, Ccino::LoadOp::Clear);
         rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtA});
     }).AddPass<"RTChainSample1">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p3 = passRID;
@@ -418,11 +418,11 @@ TEST(RenderGraphTimeline, IndependentRenderTargetsJoin) {
     RID p0, p1, p2;
     builder.AddPass<"RTJoinDrawA">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p0 = passRID;
-        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID);
+        auto rtA = rg.RTView<Ccino::ViewType::Float>(texA, passRID, Ccino::LoadOp::Clear);
         rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtA});
     }).AddPass<"RTJoinDrawB">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p1 = passRID;
-        auto rtB = rg.RTView<Ccino::ViewType::Float>(texB, passRID);
+        auto rtB = rg.RTView<Ccino::ViewType::Float>(texB, passRID, Ccino::LoadOp::Clear);
         rg.AddVSAndFS([]() {}, []() {}, Ccino::GraphicsSetting{}, std::vector{rtB});
     }).AddPass<"RTJoinSample">([&](Ccino::RGBuilder& rg, RID& passRID) {
         p2 = passRID;

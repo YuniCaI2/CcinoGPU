@@ -1,3 +1,4 @@
+#include "RHI/Context.h"
 #include "TestContext.h"
 #include "RHI/DescriptorSlot.h"
 #include <cstdint>
@@ -42,7 +43,7 @@ namespace {
     }
 
     RID CreateStorage(Ccino::RHI::Context& context) {
-        return context.CreateBuffer({kElementCount * sizeof(uint32_t), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT, true});
+        return context.CreateBuffer({kElementCount * sizeof(uint32_t), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT, Ccino::RHI::HostAccess::ReadWrite,true});
     }
 
     void ExpectMultiplied(Ccino::RHI::Context& context, RID buffer, uint32_t multiplier, const char* what) {

@@ -1,3 +1,4 @@
+#include "RHI/Context.h"
 #include "TestContext.h"
 #include "RHI/DescriptorSlot.h"
 #include <cstdint>
@@ -116,7 +117,7 @@ TEST(DescriptorSlot, BindParam) {
     slot.Init(&context);
 
     constexpr uint32_t kResultCount = 64;
-    const RID result = context.CreateBuffer({kResultCount * sizeof(uint32_t), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT, true});
+    const RID result = context.CreateBuffer({kResultCount * sizeof(uint32_t), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT, Ccino::RHI::HostAccess::ReadWrite,true});
 
     const float f = 1.5f;
     const int32_t i = -7;

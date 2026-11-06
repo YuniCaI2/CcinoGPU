@@ -32,6 +32,7 @@ add_subdirectory(Context)
 add_subdirectory(GLSLCompiler)
 target_include_directories(RHI PUBLIC ${CMAKE_SOURCE_DIR})
 add_subdirectory(Tests)
+add_subdirectory(Demo)
 
 
 # 需要理解

@@ -10,12 +10,30 @@
 #include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
 #include "ThreadPoo.h"
 #include "Viewer.h"
+#include <algorithm>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <iostream>
 namespace {
+    VkAttachmentLoadOp ToVkLoadOp(Ccino::LoadOp loadOp) {
+        switch (loadOp) {
+        case Ccino::LoadOp::Load: return VK_ATTACHMENT_LOAD_OP_LOAD;
+        case Ccino::LoadOp::Clear: return VK_ATTACHMENT_LOAD_OP_CLEAR;
+        case Ccino::LoadOp::DontCare: return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        }
+        throw std::invalid_argument("Unknown load op");
+    }
+
+    VkAttachmentStoreOp ToVkStoreOp(Ccino::StoreOp storeOp) {
+        switch (storeOp) {
+        case Ccino::StoreOp::Store: return VK_ATTACHMENT_STORE_OP_STORE;
+        case Ccino::StoreOp::DontCare: return VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        }
+        throw std::invalid_argument("Unknown store op");
+    }
+
     VkAccessFlags2 ToVkBufferAccessFlags2(BufferAccessFlags flags) {
         VkAccessFlags2 access = VK_ACCESS_2_NONE;
         if (flags & BufferAccessFlagBits::Read) {
@@ -212,6 +230,7 @@ namespace Ccino {
     }
 
     void RGBuilder::Destroy() {
+        ReleaseRenderTargetViews();
         ReleaseGPUResource();
         ReleasePass();
     }
@@ -511,38 +530,65 @@ namespace Ccino {
                 auto& shaderIR = ShaderIRRegistry::Instance()[pass->passName];
                 auto descriptorSlot = m_context->GetDescriptorSlotBinding(pass->m_descriptorSlotRID);
 
-                //偏移映射
-                for (auto& data : shaderIR.csUniformDataBindings) {
-                    //TODO: Texture
-                    if (data.uniformDataType == UniformDataType::Buffer) {
-                        //直接得到Accessor第一个元素 rid , lambda实例化后相当于是一个struct
-                        auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
-                        RID rhiBufferRID = m_resources.Get(*rid)->GetRHI();
-                        descriptorSlot->BindBuffer(data.name, rhiBufferRID);
-                    } else if (data.uniformDataType == UniformDataType::SampledImage) {
-                        auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
-                        auto* viewRange =  reinterpret_cast<ViewRange*>(static_cast<char*>(pass->lambda.data()) + data.offset + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
-                        RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
-                        descriptorSlot->BindTexture2DSRV(data.name, rhiTextureRID, *viewRange);
-
-                    } else if (data.uniformDataType == UniformDataType::StorageImage) {
-                        auto* rid = reinterpret_cast<RID*>(static_cast<char*>(pass->lambda.data()) + data.offset);
-                        auto* viewRange =  reinterpret_cast<ViewRange*>(static_cast<char*>(pass->lambda.data()) + data.offset + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
-                        RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
-                        descriptorSlot->BindTexture2DUAV(data.name, rhiTextureRID, *viewRange);
-                    } else {
-                        descriptorSlot->BindParam(data.name, data.uniformDataType, static_cast<char*>(pass->lambda.data()) + data.offset);
+                //偏移映射: 按 ShaderIR 记录的偏移, 从 Lambda 闭包里取出捕获的资源和常量
+                auto bindUniforms = [&](const std::vector<ShaderUniformDataBinding>& bindings, std::vector<char>& lambdaData) {
+                    for (auto& data : bindings) {
+                        char* field = lambdaData.data() + data.offset;
+                        if (data.uniformDataType == UniformDataType::Buffer) {
+                            //直接得到Accessor第一个元素 rid , lambda实例化后相当于是一个struct
+                            auto* rid = reinterpret_cast<RID*>(field);
+                            RID rhiBufferRID = m_resources.Get(*rid)->GetRHI();
+                            descriptorSlot->BindBuffer(data.name, rhiBufferRID);
+                        } else if (data.uniformDataType == UniformDataType::SampledImage) {
+                            auto* rid = reinterpret_cast<RID*>(field);
+                            auto* viewRange = reinterpret_cast<ViewRange*>(field + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
+                            RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
+                            descriptorSlot->BindTexture2DSRV(data.name, rhiTextureRID, *viewRange);
+                        } else if (data.uniformDataType == UniformDataType::StorageImage) {
+                            auto* rid = reinterpret_cast<RID*>(field);
+                            auto* viewRange = reinterpret_cast<ViewRange*>(field + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
+                            RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
+                            descriptorSlot->BindTexture2DUAV(data.name, rhiTextureRID, *viewRange);
+                        } else {
+                            descriptorSlot->BindParam(data.name, data.uniformDataType, field);
+                        }
                     }
-                }
+                };
 
                 //管线绑定与派发
                 if (pass->passType == RGPassTypeFlagBits::Graphics) {
-                    auto shaderObject = m_context->GetGraphicsShaderObject(pass->m_pipleineRID); 
-                    shaderObject->Bind(commandBuffer, ToShaderObjectBindingSetting(pass->graphicsSetting));
+                    const bool hasInvalidTarget = std::any_of(pass->renderTargets.begin(), pass->renderTargets.end(),
+                        [this](const RenderTarget& renderTarget) { return m_resources.Get(renderTarget.m_resource) == nullptr; });
+                    if (hasInvalidTarget || pass->renderTargets.empty()) {
+                        std::cerr << "RGBuilder: graphics pass " << pass->passName << " has no valid render target, draw skipped\n";
+                        continue;
+                    }
+
+                    bindUniforms(shaderIR.vsUniformDataBindings, pass->vsLambda);
+                    bindUniforms(shaderIR.fsUniformDataBindings, pass->fsLambda);
+
+                    RHI::RenderDesc renderDesc = {};
+                    renderDesc.colorAttachments.resize(pass->renderTargets.size());
+                    for (size_t i = 0; i < pass->renderTargets.size(); i++) {
+                        const RenderTarget& renderTarget = pass->renderTargets[i];
+                        auto& attachment = renderDesc.colorAttachments[i];
+                        attachment.textureView = CreateRenderTargetView(m_resources.Get(renderTarget.m_resource)->GetRHI(), renderTarget.m_viewRange);
+                        attachment.loadOp = ToVkLoadOp(renderTarget.m_loadOp);
+                        attachment.storeOp = ToVkStoreOp(renderTarget.m_storeOp);
+                        std::copy_n(renderTarget.m_clear.color.begin(), 4, attachment.clearValue.color.float32);
+                    }
+
+                    const VkExtent2D extent = m_context->BeginRendering(commandBuffer, renderDesc);
+                    RHI::ShaderObjectBindingSetting bindingSetting = ToShaderObjectBindingSetting(pass->graphicsSetting);
+                    bindingSetting.extent = extent;
+                    auto shaderObject = m_context->GetGraphicsShaderObject(pass->m_pipleineRID);
+                    shaderObject->Bind(commandBuffer, bindingSetting);
                     descriptorSlot->Push(commandBuffer);
                     //TODO:更加灵活的派发，可以将这些配置放到Setting
                     vkCmdDraw(commandBuffer, pass->graphicsSetting.drawCounts, 1, 0, 0);
+                    m_context->EndRendering(commandBuffer);
                 } else if (pass->passType == RGPassTypeFlagBits::Compute) {
+                    bindUniforms(shaderIR.csUniformDataBindings, pass->lambda);
                     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_context->GetComputePipeline(pass->m_pipleineRID));
                     descriptorSlot->Push(commandBuffer);
                     vkCmdDispatch(commandBuffer, pass->workGroupSize.x, pass->workGroupSize.y, pass->workGroupSize.z);

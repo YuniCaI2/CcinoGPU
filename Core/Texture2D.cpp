@@ -1,4 +1,6 @@
 #include "Core/Texture2D.h"
+#include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 namespace Ccino {
@@ -89,6 +91,28 @@ namespace Ccino {
         info.type = VK_IMAGE_TYPE_2D;
         info.usage = ToVkUsage(m_createArgs.usage);
         m_rhiTexture = context.CreateTexture(info);
+    }
+
+    bool Texture2D::Readback(void* data) {
+        if (m_rhiTexture == RID::Invalid() || m_context == nullptr || data == nullptr) {
+            std::cerr << "Texture2D::Readback: texture or destination data pointer is invalid" << std::endl;
+            return false;
+        }
+        const uint32_t size = m_context->GetTextureSize(m_rhiTexture);
+        RID readbackRID = m_context->CreateReadbackBuffer(size);
+        if (!m_context->CopyTexToBuffer(m_rhiTexture, readbackRID)) {
+            m_context->DestroyBuffer(readbackRID);
+            return false;
+        }
+        while (!m_context->IsBufferAvailable(readbackRID)) {
+        }
+        void* mapped = m_context->MapBuffer(readbackRID);
+        if (mapped != nullptr) {
+            std::memcpy(data, mapped, size);
+            m_context->UnmapBuffer(readbackRID);
+        }
+        m_context->DestroyBuffer(readbackRID);
+        return mapped != nullptr;
     }
 
     void Texture2D::Delete() {

@@ -59,9 +59,9 @@ namespace
     // 真实 C++ RenderGraph 构建代码
     void BuildTestGlobalFuncAndStructPasses() {
         Ccino::RGBuilder builder;
-        RID outBuf = builder.CreateTransientBuffer({Ccino::BufferType::Device, 1024});
-        RID buf0   = builder.CreateTransientBuffer({Ccino::BufferType::Device, 512});
-        RID buf1   = builder.CreateTransientBuffer({Ccino::BufferType::Device, 512});
+        RID outBuf = builder.CreateTransientBuffer({.size = 1024});
+        RID buf0   = builder.CreateTransientBuffer({.size = 512});
+        RID buf1   = builder.CreateTransientBuffer({.size = 512});
 
         builder.AddPass<"DeferredLightingPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
             auto outPixels = rg.Write<OutputPixel>(outBuf, passRID);

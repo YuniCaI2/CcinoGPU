@@ -57,6 +57,8 @@ namespace Ccino {
         }
 
         void Delete();
+        //整张纹理按紧密排列读回到 data, 纹理需要 TransferSrc usage
+        bool Readback(void* data);
 
         RID GetRHI() const { return m_rhiTexture; }
         CreateArgs GetCreateArgs() const { return m_createArgs; }

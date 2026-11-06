@@ -3,6 +3,7 @@
 #include "CcinoType.h"
 #include "RHI/RHIStruct.h"
 #include "Texture2D.h"
+#include <array>
 #include <stdexcept>
 
 namespace Ccino {
@@ -100,4 +101,37 @@ namespace Ccino {
         RID m_resource = RID::Invalid();
         ViewRange m_viewRange {};
     };
+
+    enum class LoadOp {
+        Load,     //保留附件之前的内容
+        Clear,    //用 clear 值清空
+        DontCare, //之前的内容不需要, 整个区域都会被覆盖时使用
+    };
+
+    enum class StoreOp {
+        Store,
+        DontCare, //渲染结束后内容不再需要
+    };
+
+    struct ClearColor {
+        std::array<float, 4> color{};
+    };
+
+    //颜色附件, 只能由 RGBuilder::RTView 创建, 交给 AddVSAndFS 消费
+    class RenderTarget {
+    public:
+        RenderTarget() = default;
+
+    private:
+        friend class RGBuilder;
+        RenderTarget(RID resource, ViewRange viewRange, LoadOp loadOp, StoreOp storeOp, ClearColor clear)
+            : m_resource(resource), m_viewRange(viewRange), m_loadOp(loadOp), m_storeOp(storeOp), m_clear(clear) {}
+
+        RID m_resource = RID::Invalid();
+        ViewRange m_viewRange{};
+        LoadOp m_loadOp = LoadOp::Load;
+        StoreOp m_storeOp = StoreOp::Store;
+        ClearColor m_clear{}; //只在 m_loadOp 为 Clear 时生效
+    };
+
 }

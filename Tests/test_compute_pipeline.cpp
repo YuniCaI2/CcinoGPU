@@ -1,3 +1,4 @@
+#include "RHI/Context.h"
 #include "TestContext.h"
 #include "RHI/DescriptorSlot.h"
 #include <cstdint>
@@ -54,7 +55,7 @@ TEST(ComputePipeline, Dispatch) {
     RID outputs[2];
     for (int i = 0; i < 2; ++i) {
         params[i] = context.CreateUniformBuffer(sizeof(Params), &paramsData[i]);
-        outputs[i] = context.CreateBuffer({size, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT, true});
+        outputs[i] = context.CreateBuffer({size, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT, Ccino::RHI::HostAccess::Read,false});
         void* mapped = context.MapBuffer(outputs[i]);
         ASSERT_NE(mapped, nullptr);
         std::memcpy(mapped, data.data(), size);

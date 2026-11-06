@@ -7,9 +7,9 @@
 
 
 namespace Ccino {
-    enum class BufferType {
-        Device,
-        Host
+    enum class BufferUsage {
+        Storage,
+        Uniform 
     };
 
     //这里的Buffer只是作为存储的媒介，BufferView的功能不包含，减少模板带来的耦合
@@ -22,8 +22,10 @@ namespace Ccino {
         }
 
         struct CreateArgs {
-            BufferType bufferType = BufferType::Device;
             uint32_t size{};
+            BufferUsage usage = BufferUsage::Storage;
+            //None: Copy/Readback 走 Transfer 队列中转; 带 Write 的 Copy、带 Read 的 Readback 直接映射
+            RHI::HostAccess hostAccess = RHI::HostAccess::None;
         };
 
         //两种构造方式
@@ -60,7 +62,6 @@ namespace Ccino {
         RID m_rhiBuffer = RID::Invalid(); //资源Buffer
         RHI::Context* m_context = nullptr;
 
-        BufferType m_bufferType =  BufferType::Device;
         CreateArgs m_createArgs{}; //中转访问描述
     };
 

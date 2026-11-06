@@ -1,6 +1,7 @@
 #pragma once
 #include "Accessor.h"
 #include "AccessorEnums.h"
+#include "RHI/Context.h"
 #include "ShaderStruct/ShaderIR.h"
 #include "RGResource.h"
 #include "RHI/RHIStruct.h"
@@ -15,6 +16,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <variant>
 
 
 namespace Ccino {
@@ -73,17 +75,14 @@ namespace Ccino {
 
 
         //这里VS和PS VS的输入类型就是out FS的输入类型就是in, 这里规定如果传值就是说in 传引用就是out. fs的out作为renderTarget的一部分，直接写到RenderTarget中. 两者需要对齐. 处理输入的RenderTarget
-        template<typename VS, typename FS, ViewType viewType>
-        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<Viewer<TextureAccessFlagBits::RenderTarget, viewType>>& renderTargets) { //这里是RGResource, RenderTarget就相当于是Write,需要记录在Pass中，因为绑定需要
+        template<typename VS, typename FS>
+        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<RenderTarget>& renderTargets) { //RenderTarget 由 RTView 创建, 写依赖已经在 RTView 中建好
             //处理VS和PS的翻译和绑定
             auto pass = m_passes.Get(m_currentPass);
             pass->passType = RGPassTypeFlagBits::Graphics;
             pass->graphicsSetting = setting;
-            pass->renderTargets.reserve(renderTargets.size());
-            //TODO：性能优化点，这里每帧都会创建imageview ，效率极低 P0
-            for (const auto& renderTarget : renderTargets) {
-                pass->renderTargets.push_back(CreateRenderTargetView(m_resources.Get(renderTarget.m_resource)->GetRHI(), renderTarget.m_viewRange));
-            }
+            //此时 transient 纹理还没有创建 RHI 对象, View 在 GenerateCommands 中创建
+            pass->renderTargets = renderTargets;
 
             //此处直接短路即可
             if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
@@ -216,16 +215,17 @@ namespace Ccino {
             return Viewer<TextureAccessFlagBits::Sampled, viewType>(resource, viewRange);
         }
 
-        //RenderTarget,其实RenderTarget都是默认Float
-        template<ViewType viewType>
-        Viewer<TextureAccessFlagBits::RenderTarget, viewType> RTView(RID& resource, RID& passRID, ViewRange viewRange = {}) {
+        //RenderTarget 写访问, 产生新版本. clear 只在 loadOp 为 Clear 时生效
+        template<ViewType viewType = ViewType::Float>
+        RenderTarget RTView(RID& resource, RID& passRID, LoadOp loadOp, ClearColor clear = {},
+                            StoreOp storeOp = StoreOp::Store, ViewRange viewRange = {}) {
             if (!CheckResourceType(resource, ResourceType::Texture, "RTView") ||
                 !CheckTextureFormat(resource, viewType, "RTView")) {
-                return Viewer<TextureAccessFlagBits::RenderTarget, viewType>(RID::Invalid(), viewRange);
+                return RenderTarget{};
             }
             uint32_t version = m_edgeNums[resource]++;
             m_edges.push_back(RGEdge{resource, passRID, version, TextureAccessFlagBits::RenderTarget});
-            return Viewer<TextureAccessFlagBits::RenderTarget, viewType>(resource, viewRange);
+            return RenderTarget(resource, viewRange, loadOp, storeOp, clear);
         }
 
         //处理 Texture依赖

@@ -3,6 +3,7 @@
 #include "RHI/Core.h"
 #include "RHI/DescriptorSlot.h"
 #include "RHI/Swapchain.h"
+#include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -15,14 +16,6 @@
 
 namespace Ccino::RHI {
     namespace {
-        bool IsHostWriteBuffer(VkBufferUsageFlags2 usage) {
-            if ((usage & VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT) != 0) {
-                return false;
-            }
-            return (usage & VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT) != 0 ||
-                (usage & VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT) != 0;
-        }
-
         VkImageAspectFlags ImageAspect(VkFormat format) {
             switch (format) {
             case VK_FORMAT_D16_UNORM:
@@ -362,8 +355,8 @@ namespace Ccino::RHI {
 
     RID Context::CreateBuffer(const BufferCreateInfo& createInfo) {
         const VkBufferUsageFlags2 usage = createInfo.usage | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT;
-        const bool hostVisible = createInfo.hostVisible || createInfo.requireHostCoherent || IsHostWriteBuffer(usage);
-        const bool hostRead = hostVisible && !IsHostWriteBuffer(usage);
+        const bool hostVisible = createInfo.access != HostAccess::None;
+        const bool hostRead = HasHostAccess(createInfo.access, HostAccess::Read);
 
         VkBufferCreateInfo bufferCreateInfo{};
         bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -428,6 +421,10 @@ namespace Ccino::RHI {
             buffer.mappedPtr = allocInfo.pMappedData;
             buffer.persistentlyMapped = true;
         }
+        //不要求 coherent 时也可能分到 coherent 内存，按实际内存类型记录
+        VkMemoryPropertyFlags memoryProperties = 0;
+        vmaGetAllocationMemoryProperties(m_core->GetVmaAllocator(), buffer.allocation, &memoryProperties);
+        buffer.hostCoherent = (memoryProperties & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 
         VkBufferDeviceAddressInfo addressInfo{};
         addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
@@ -458,7 +455,7 @@ namespace Ccino::RHI {
         BufferCreateInfo createInfo{};
         createInfo.size = size;
         createInfo.usage = VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT;
-        createInfo.hostVisible = true;
+        createInfo.access = HostAccess::Write;
         createInfo.requireHostCoherent = true; //Uniform 走持久映射裸写，必须保证主机一致，免去每次写后 Flush
         RID rid = CreateBuffer(createInfo);
         if (data == nullptr) {
@@ -475,7 +472,7 @@ namespace Ccino::RHI {
     }
 
     RID Context::CreateTransferBuffer(uint32_t size, const void* data) {
-        RID rid = CreateBuffer(BufferCreateInfo{size, VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT});
+        RID rid = CreateBuffer(BufferCreateInfo{size, VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT, HostAccess::Write});
         if (data != nullptr && size > 0) {
             void* mapped = MapBuffer(rid);
             if (mapped == nullptr) {
@@ -502,7 +499,7 @@ namespace Ccino::RHI {
         BufferCreateInfo createInfo;
         createInfo.size = size;
         createInfo.usage = VK_BUFFER_USAGE_2_TRANSFER_DST_BIT;
-        createInfo.hostVisible = true;
+        createInfo.access = HostAccess::Read;
         return CreateBuffer(createInfo);
     }
 
@@ -520,15 +517,10 @@ namespace Ccino::RHI {
         const VkBuffer dstBuffer = destination->buffer;
         const uint32_t size = source->size;
 
-        //TODO: 增加更细粒度的timeline semaphore的设置，当前是等待整个管线的任务，后续增加Buffer粒度的可用性的标注
-        if (TimelineSemaphore* computeTimeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::COMPUTE));
-            computeTimeline != nullptr) {
-            computeTimeline->Wait(computeTimeline->ReadValue());
-        }
-        if (TimelineSemaphore* graphicsTimeline = GetTimeline(m_core->GetQueueFamilyIndex(CommandQueueType::GRAPHICS));
-            graphicsTimeline != nullptr) {
-            graphicsTimeline->Wait(graphicsTimeline->ReadValue());
-        }
+        WaitResource_Impl(source);
+        WaitResource_Impl(destination);
+        
+
 
         CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::TRANSFER);
         StartRecording(commandBuffer);
@@ -643,7 +635,7 @@ namespace Ccino::RHI {
             VULKAN_CHECK(vmaMapMemory(m_core->GetVmaAllocator(), buffer->allocation, &mapped));
             buffer->mappedPtr = mapped;
         }
-        if (!IsHostWriteBuffer(buffer->usage)) {
+        if (!buffer->hostCoherent) {
             VULKAN_CHECK(vmaInvalidateAllocation(m_core->GetVmaAllocator(), buffer->allocation, 0, buffer->size));
         }
         return buffer->mappedPtr;
@@ -656,7 +648,7 @@ namespace Ccino::RHI {
             return;
         }
 
-        if (IsHostWriteBuffer(buffer->usage)) {
+        if (!buffer->hostCoherent) {
             VULKAN_CHECK(vmaFlushAllocation(m_core->GetVmaAllocator(), buffer->allocation, 0, buffer->size));
         }
         if (!buffer->persistentlyMapped && buffer->mappedPtr != nullptr) {
@@ -667,7 +659,7 @@ namespace Ccino::RHI {
 
     void Context::WaitForUploadStaging(RID rid) {
         VulkanBuffer* buffer = m_buffers.Get(rid);
-        if (IsHostWriteBuffer(buffer->usage)) {
+        if (buffer == nullptr || !buffer->uploadStaging) {
             return;
         }
 
@@ -783,9 +775,68 @@ namespace Ccino::RHI {
         return m_timelines[queueFamilyIndex].get();
     }
 
-    bool Context::CheckAndNormalizeRenderDesc(RenderDesc& renderDesc) {
-        bool bResult = true;
-        return bResult;
+    bool Context::CheckAndNormalizeRenderDesc(const RenderDesc& renderDesc, uint32_t& width, uint32_t& height) {
+        //所有附件在各自 mip 上的尺寸必须一致
+        bool hasExtent = false;
+        uint32_t extentW = 0;
+        uint32_t extentH = 0;
+        auto checkAttachment = [&](const AttachmentInfo& attachment) {
+            const TextureView* view = m_textureViews.Get(attachment.textureView);
+            const VulkanTexture* texture = view != nullptr ? m_textures.Get(view->imageRID) : nullptr;
+            if (texture == nullptr) {
+                return false;
+            }
+            const uint32_t w = std::max(texture->width >> view->range.baseMipMap, 1u);
+            const uint32_t h = std::max(texture->height >> view->range.baseMipMap, 1u);
+            if (!hasExtent) {
+                extentW = w;
+                extentH = h;
+                hasExtent = true;
+                return true;
+            }
+            return w == extentW && h == extentH;
+        };
+
+        for (const AttachmentInfo& color : renderDesc.colorAttachments) {
+            if (!checkAttachment(color)) {
+                return false;
+            }
+        }
+        if (renderDesc.depthAttachment.textureView && !checkAttachment(renderDesc.depthAttachment)) {
+            return false;
+        }
+        if (!hasExtent || renderDesc.offsetX < 0 || renderDesc.offsetY < 0) {
+            return false;
+        }
+
+        width = renderDesc.width == 0 ? extentW : renderDesc.width;
+        height = renderDesc.height == 0 ? extentH : renderDesc.height;
+        return static_cast<uint32_t>(renderDesc.offsetX) + width <= extentW &&
+               static_cast<uint32_t>(renderDesc.offsetY) + height <= extentH;
+    }
+    
+    void Context::WaitResource_Impl(VulkanResource* resource) {
+        if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(resource->lastQueue));
+            timeline != nullptr) {
+            timeline->Wait(resource->lastTimelineValue);
+        }
+    }
+
+    VkRenderingAttachmentInfo Context::GetAttachmentInfo(const AttachmentInfo& attachmentInfo) {
+        const TextureView* view = m_textureViews.Get(attachmentInfo.textureView);
+        if (view == nullptr) {
+            throw std::invalid_argument("[RHI Context GetAttachmentInfo]: texture view is invalid");
+        }
+
+        VkRenderingAttachmentInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        info.imageView = view->imageView;
+        info.imageLayout = GetTextureLayout(view->imageRID);
+        info.resolveMode = VK_RESOLVE_MODE_NONE;
+        info.loadOp = attachmentInfo.loadOp;
+        info.storeOp = attachmentInfo.storeOp;
+        info.clearValue = attachmentInfo.clearValue;
+        return info;
     }
     
     RID Context::CreateTexture(const TextureCreateInfo& createInfo) {
@@ -935,7 +986,7 @@ namespace Ccino::RHI {
 
         VkImageView imageView = VK_NULL_HANDLE;
         VULKAN_CHECK(vkCreateImageView(m_core->GetVkDevice(), &createInfo, nullptr, &imageView));
-        return m_textureViews.Add(TextureView{imageView, textureRID});
+        return m_textureViews.Add(TextureView{imageView, textureRID, viewRange});
     }
 
     void Context::DestroyImageView(RID rid) {
@@ -1173,6 +1224,12 @@ namespace Ccino::RHI {
         };
         waitForPreviousUse(texture->lastQueue, texture->lastTimelineValue);
         waitForPreviousUse(buffer->lastQueue, buffer->lastTimelineValue);
+        //RenderGraph 的提交不按资源登记 timeline, 和 ReadbackBuffer 一样保守地等待计算和图形队列
+        for (CommandQueueType queueType : {CommandQueueType::COMPUTE, CommandQueueType::GRAPHICS}) {
+            if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(queueType))) {
+                timeline->Wait(timeline->ReadValue());
+            }
+        }
 
         CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::TRANSFER);
         StartRecording(commandBuffer);
@@ -1180,6 +1237,13 @@ namespace Ccino::RHI {
         if (oldLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
             VkImageMemoryBarrier2 barrier = MakeLayoutBarrier(srcImage, format, oldLayout,
                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mipLevels, arrayLayers);
+            //专用传输队列不支持图形阶段; 之前的图形 / 计算使用已在上面等待完成, 不需要源阶段依赖
+            constexpr VkPipelineStageFlags2 kGraphicsOnlyStages = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+            if ((barrier.srcStageMask & kGraphicsOnlyStages) != 0) {
+                barrier.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
+                barrier.srcAccessMask = VK_ACCESS_2_NONE;
+            }
             VkDependencyInfo dependency{};
             dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
             dependency.imageMemoryBarrierCount = 1;
@@ -1409,12 +1473,38 @@ namespace Ccino::RHI {
     }
 
     //非常薄的封装
-    void Context::BeginRendering(CommandContext::CommandBuffer& commandBuffer, const RenderDesc& renderingInfo) {
+    VkExtent2D Context::BeginRendering(VkCommandBuffer commandBuffer, const RenderDesc& renderingInfo) {
+        uint32_t width{}, height{};
         //Validation
+        if (!CheckAndNormalizeRenderDesc(renderingInfo, width, height)) {
+            throw std::runtime_error("[RHI Context BeginRendering]: RenderDesc is wrong!");
+        }
+        
+        std::vector<VkRenderingAttachmentInfo> colorAttachments;
+        colorAttachments.reserve(renderingInfo.colorAttachments.size());
+        for (const AttachmentInfo& color : renderingInfo.colorAttachments) {
+            colorAttachments.push_back(GetAttachmentInfo(color));
+        }
+
+        VkRenderingInfo renderInfo = {};
+        renderInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        renderInfo.renderArea = {{renderingInfo.offsetX, renderingInfo.offsetY}, {width, height}};
+        renderInfo.layerCount = renderingInfo.layerCount;
+        renderInfo.colorAttachmentCount = static_cast<uint32_t>(colorAttachments.size());
+        renderInfo.pColorAttachments = colorAttachments.data();
+
+        VkRenderingAttachmentInfo depthAttachment = {};
+        if (renderingInfo.depthAttachment.textureView) {
+            depthAttachment = GetAttachmentInfo(renderingInfo.depthAttachment);
+            renderInfo.pDepthAttachment = &depthAttachment;
+        }
+
+        vkCmdBeginRendering(commandBuffer, &renderInfo);
+        return renderInfo.renderArea.extent;
     }
 
-    void Context::EndRendering(CommandContext::CommandBuffer& commandBuffer) {
-        vkCmdEndRendering(commandBuffer.commandBuffer);
+    void Context::EndRendering(VkCommandBuffer commandBuffer) {
+        vkCmdEndRendering(commandBuffer);
     }
 
     void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {

@@ -1,4 +1,5 @@
 #pragma once
+#include "Core/Flags.h"
 #include "GraphicsShaderObject.h"
 #include "RHI/RHIStruct.h"
 #include "RHI/Command.h"
@@ -10,6 +11,8 @@
 #include <concepts>
 #include <memory>
 #include <mutex>
+#include <span>
+#include <type_traits>
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
@@ -22,10 +25,22 @@ namespace Ccino::RHI {
     class DescriptorSlot;
     class Swapchain;
 
+    //这个是决策底层Buffer 的内存行为
+    enum class HostAccess : uint8_t {
+        None = 0,
+        Write = 1 << 0,
+        Read = 1 << 1,
+        ReadWrite = Write | Read
+    };
+
+    constexpr bool HasHostAccess(HostAccess access, HostAccess bit) {
+        return (static_cast<uint8_t>(access) & static_cast<uint8_t>(bit)) != 0;
+    }
+
     struct BufferCreateInfo {
         uint32_t size = 0;
         VkBufferUsageFlags2 usage = 0;
-        bool hostVisible = false;
+        HostAccess access = HostAccess::None; 
         bool requireHostCoherent = false; //要求落在 HOST_VISIBLE | HOST_COHERENT 内存上，选不到时创建失败，不做降级
     };
 
@@ -44,22 +59,79 @@ namespace Ccino::RHI {
         //Layout 初始都是未定义
     };
 
-    struct RenderDesc {
-        //如果width 和 height有值为0则使用colors
-        uint32_t width = 0;
-        uint32_t height = 0;
-        uint32_t offsetX = 0;
-        uint32_t offsetY = 0;
-        uint32_t layerCount = 1;
-        std::vector<RID> colorViews;
-        RID depthView;
+
+
+    struct AttachmentInfo {
+        RID textureView;
+        VkAttachmentLoadOp       loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        VkAttachmentStoreOp      storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkClearValue clearValue{}; //颜色附件填 color, 深度附件填 depthStencil, 只在 loadOp 为 CLEAR 时生效
     };
 
+    struct RenderDesc {
+        //如果width 和 height有值为0则使用附件尺寸
+        uint32_t width = 0;
+        uint32_t height = 0;
+        int32_t offsetX = 0;
+        int32_t offsetY = 0;
+        uint32_t layerCount = 1;
+        std::vector<AttachmentInfo> colorAttachments;
+        AttachmentInfo depthAttachment; //textureView 为 Invalid 表示没有深度附件
+    };
+
+    struct VulkanResource {
+        // 最近一次 GPU 使用所在的队列，以及那次提交的 timeline 目标值。0 表示还没有 GPU 使用。
+        virtual ~VulkanResource() = default;
+        CommandQueueType lastQueue = CommandQueueType::GRAPHICS;
+        uint64_t lastTimelineValue = 0;
+        RID uploadStaging{};
+    };
+
+    struct VulkanBuffer : VulkanResource {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+
+        //MetaInfo
+        uint32_t size = 0;
+        VkBufferUsageFlags2 usage = 0;
+
+        void* mappedPtr = nullptr;
+        bool hostVisible = false;
+        bool hostCoherent = false;
+        bool persistentlyMapped = false;
+        uint64_t bda = 0; //GPU的地址
+
+    };
+
+    struct VulkanTexture : VulkanResource {
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+
+        //MetaInfo
+        bool isSwapchain = false;
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t depth = 1;
+        uint32_t mipLevels = 1;
+        uint32_t arrayLayers = 1;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkImageType type = VK_IMAGE_TYPE_2D;
+        VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkImageUsageFlags usage = 0;
+    };
+
+    struct TextureView {
+        VkImageView imageView; //这里是本体
+        RID imageRID; //这里指向原来的view
+        ViewRange range; //附件尺寸按 range.baseMipMap 从纹理尺寸推出
+    };
 
     class Context {
     public:
         Context();
         ~Context();
+
 
         void Init(const RHISettings& settings);
         void Tick(); //每次更新，这必须要调用，这是推动Delete释放队列的根本,这个在 !!!!帧首调用 ,不过需要SwapChain Acquire 后调用
@@ -67,6 +139,17 @@ namespace Ccino::RHI {
 
         //Resource
         void DeleteResource(RID rid);
+        template<typename R>
+        requires std::derived_from<R, VulkanResource>
+        void WaitResource(RID rid) {
+            if constexpr (std::is_same_v<R, VulkanBuffer>) {
+                WaitResource_Impl(m_buffers.Get(rid));
+            }
+            if constexpr (std::is_same_v<R, VulkanTexture>) {
+                WaitResource_Impl(m_textures.Get(rid));
+            }
+        }
+
 
         //meta
         uint32_t GetFlightFrameCount() const { return m_flightFrameCount; }
@@ -135,10 +218,9 @@ namespace Ccino::RHI {
 
         void StartRecording(CommandContext::CommandBuffer& commandBuffer);
         void EndRecording(CommandContext::CommandBuffer& commandBuffer);
-        //这里直接暴露VkRenderingInfo
-        //这里非常薄
-        void BeginRendering(CommandContext::CommandBuffer& commandBuffer, const RenderDesc& renderingInfo);
-        void EndRendering(CommandContext::CommandBuffer& commandBuffer);
+        //返回本次渲染的 renderArea 尺寸, 供 Viewport / Scissor 使用
+        VkExtent2D BeginRendering(VkCommandBuffer commandBuffer, const RenderDesc& renderingInfo);
+        void EndRendering(VkCommandBuffer commandBuffer);
 
         void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0, 
             const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
@@ -180,58 +262,7 @@ namespace Ccino::RHI {
         uint32_t m_flightFrameCount = 0;
         uint32_t m_currentFrameIndex = 0;
 
-        struct VulkanResource {
-            // 最近一次 GPU 使用所在的队列，以及那次提交的 timeline 目标值。0 表示还没有 GPU 使用。
-            CommandQueueType lastQueue = CommandQueueType::GRAPHICS;
-            uint64_t lastTimelineValue = 0;
-            RID uploadStaging{};
-        };
 
-        struct VulkanBuffer : VulkanResource {
-            VkBuffer buffer = VK_NULL_HANDLE;
-            VmaAllocation allocation = VK_NULL_HANDLE;
-
-            //MetaInfo
-            uint32_t size = 0;
-            VkBufferUsageFlags2 usage = 0;
-
-            void* mappedPtr = nullptr;
-            bool hostVisible = false;
-            bool hostCoherent = false;
-            bool persistentlyMapped = false;
-            uint64_t bda = 0; //GPU的地址
-
-        };
-
-        struct VulkanTexture : VulkanResource {
-            VkImage image = VK_NULL_HANDLE;
-            VmaAllocation allocation = VK_NULL_HANDLE;
-
-            //MetaInfo
-            bool isSwapchain = false;
-            uint32_t width = 0;
-            uint32_t height = 0;
-            uint32_t depth = 1;
-            uint32_t mipLevels = 1;
-            uint32_t arrayLayers = 1;
-            VkFormat format = VK_FORMAT_UNDEFINED;
-            VkImageType type = VK_IMAGE_TYPE_2D;
-            VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
-            VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-            VkImageUsageFlags usage = 0;
-        };
-
-        struct TextureView {
-            VkImageView imageView; //这里是本体
-            RID imageRID; //这里指向原来的view
-        };
-
-        void DestroyResource(RID rid); 
-        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, 
-            uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
-        void ReleaseUploadStaging(VulkanBuffer& buffer);
-        TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
-        bool CheckAndNormalizeRenderDesc(RenderDesc& renderDesc);
 
 
         //其实这里需要使用unique比较合适，然后前向声明
@@ -256,6 +287,17 @@ namespace Ccino::RHI {
         std::vector<std::unique_ptr<TimelineSemaphore>> m_timelines;
 
 
+        void DestroyResource(RID rid); 
+        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, 
+            uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
+        void ReleaseUploadStaging(VulkanBuffer& buffer);
+        TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
+        bool CheckAndNormalizeRenderDesc(const RenderDesc& renderDesc, uint32_t& width, uint32_t& height);
+
+        //这里是直接阻塞等待
+        void WaitResource_Impl(VulkanResource* resource); //首先其是资源
+
+        VkRenderingAttachmentInfo GetAttachmentInfo(const AttachmentInfo& attachmentInfo);
 
     };
 }

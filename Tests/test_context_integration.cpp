@@ -44,7 +44,7 @@ TEST(CcinoIntegrationTest, MinimalComputeClosedLoop) {
     constexpr uint32_t kBufferByteSize = kElementCount * sizeof(IntegrationBufferElem);
 
     Ccino::Ref<Ccino::Buffer> externalOutBuffer = ctx.CreateBuffer(
-        Ccino::Buffer::CreateArgs{Ccino::BufferType::Device, kBufferByteSize});
+        Ccino::Buffer::CreateArgs{.size = kBufferByteSize});
     ASSERT_TRUE(externalOutBuffer.IsValid());
 
     // 3. 创建 RGBuilder 并录制两个具有 RAW 依赖的 Compute Pass
@@ -52,7 +52,7 @@ TEST(CcinoIntegrationTest, MinimalComputeClosedLoop) {
     ASSERT_NE(builder, nullptr);
     EXPECT_EQ(ctx.GetRGBuilder("MinimalClosedLoopGraph"), builder);
 
-    RID transientBuf = builder->CreateTransientBuffer({Ccino::BufferType::Device, kBufferByteSize});
+    RID transientBuf = builder->CreateTransientBuffer({.size = kBufferByteSize});
     RID externalBuf  = builder->CreateExternalBuffer(externalOutBuffer);
 
     builder->AddPass<"IntegrationProducerPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
@@ -113,7 +113,7 @@ TEST(CcinoIntegrationTest, StorageImageReadWriteClosedLoop) {
     constexpr uint32_t kBufferByteSize = kPixelCount * sizeof(IntegrationPixelElem);
 
     Ccino::Ref<Ccino::Buffer> externalOutBuffer = ctx.CreateBuffer(
-        Ccino::Buffer::CreateArgs{Ccino::BufferType::Device, kBufferByteSize});
+        Ccino::Buffer::CreateArgs{.size = kBufferByteSize});
     ASSERT_TRUE(externalOutBuffer.IsValid());
 
     Ccino::RGBuilder* builder = ctx.CreateRGBuilder("StorageImageClosedLoopGraph");
@@ -220,8 +220,7 @@ TEST(CcinoIntegrationTest, GraphicsPassRegisteredAndCreatesShaderObject) {
         auto fs = [=](const Ccino::Vec4& color, Ccino::Vec4& outColor) {
             outColor = color;
         };
-        rg.AddVSAndFS(vs, fs, Ccino::GraphicsSetting{},
-                      std::vector<Ccino::Viewer<TextureAccessFlagBits::RenderTarget>>{});
+        rg.AddVSAndFS(vs, fs, Ccino::GraphicsSetting{}, {});
     });
 
     EXPECT_TRUE(ctx.DestroyRGBuilder("GraphicsShaderObjectGraph"));

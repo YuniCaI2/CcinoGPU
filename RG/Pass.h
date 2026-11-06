@@ -2,11 +2,14 @@
 #include "Flags.h"
 #include "RHI/RHIStruct.h"
 #include "RHI/GraphicsShaderObject.h"
+#include "RG/Viewer.h"
 #include "ShaderStruct/ShaderCommon.h"
+#include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace Ccino {
@@ -187,6 +190,6 @@ namespace Ccino {
         WorkGroupSize workGroupSize;
         //Graphics Info
         GraphicsSetting graphicsSetting{};
-        std::vector<RID> renderTargets; //下标对应FS 的 out location
+        std::vector<RenderTarget> renderTargets; //下标对应FS 的 out location
     };
 }
