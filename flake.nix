@@ -19,6 +19,8 @@
           nativeBuildInputs = with pkgs; [
             cmake
             ninja
+            pkg-config
+            wayland-scanner
             clang-tools
             gnumake
           ];
@@ -35,15 +37,12 @@
             python3Packages.pip
             python3Packages.virtualenv
 
-            # GLFW / 窗口 / X11 & 图形依赖
+            # Wayland & 图形依赖
             libGL
-            libx11
-            libxrandr
-            libxinerama
-            libxcursor
-            libxi
-            libxext
-            libxfixes
+            wayland
+            wayland-protocols
+            libxkbcommon
+            libdecor
 
             # libTooling: CMake 配置和头文件在 dev 输出里
             llvmPackages.llvm
@@ -57,16 +56,34 @@
             export CMAKE_EXPORT_COMPILE_COMMANDS=ON
             export VULKAN_SDK="${pkgs.vulkan-headers}"
             export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
+
+            # 让 LibTooling (GeneratorMain / Tests) 能找到 Nix 注入的 C/C++ 标准库与第三方头文件
+            c_inc=""
+            c_after=""
+            prev=""
+            for flag in $NIX_CFLAGS_COMPILE $(cat ${pkgs.clangStdenv.cc}/nix-support/libc-cflags); do
+              if [ "$prev" = "-isystem" ]; then c_inc="$c_inc:$flag"; fi
+              if [ "$prev" = "-idirafter" ]; then c_after="$c_after:$flag"; fi
+              prev="$flag"
+            done
+            export C_INCLUDE_PATH="''${c_inc#:}:''${c_after#:}"
+
+            cxx_inc=""
+            cxx_after=""
+            prev=""
+            for flag in $NIX_CFLAGS_COMPILE $(cat ${pkgs.clangStdenv.cc}/nix-support/libcxx-cxxflags) $(cat ${pkgs.clangStdenv.cc}/nix-support/libc-cflags); do
+              if [ "$prev" = "-isystem" ] || [ "$prev" = "-cxx-isystem" ]; then cxx_inc="$cxx_inc:$flag"; fi
+              if [ "$prev" = "-idirafter" ]; then cxx_after="$cxx_after:$flag"; fi
+              prev="$flag"
+            done
+            export CPLUS_INCLUDE_PATH="''${cxx_inc#:}:''${cxx_after#:}"
+
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (with pkgs; [
               vulkan-loader
               libGL
-              libx11
-              libxrandr
-              libxinerama
-              libxcursor
-              libxi
-              libxext
-              libxfixes
+              wayland
+              libxkbcommon
+              libdecor
               llvmPackages.llvm
               llvmPackages.clang-unwrapped
             ])}:$LD_LIBRARY_PATH"
