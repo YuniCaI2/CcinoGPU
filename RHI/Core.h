@@ -1,6 +1,7 @@
 #pragma once
 //这里实现Vulkan的基础功能
 #include <vulkan/vulkan.h>
+#include <tuple>
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
@@ -65,6 +66,8 @@ namespace Ccino::RHI {
         }
         const VkPhysicalDeviceProperties& GetPhysicalDeviceProperties() const { return m_properties; }
 
+        std::tuple<int, int> GetWindowExtent() const;
+
         // VK_EXT_shader_object & Dynamic State 扩展函数指针
         PFN_vkCreateShadersEXT              vkCreateShadersEXT              = nullptr;
         PFN_vkDestroyShaderEXT              vkDestroyShaderEXT              = nullptr;
@@ -102,7 +105,7 @@ namespace Ccino::RHI {
         VkPhysicalDeviceProperties m_properties{};
 
         //Window 作为Core的一部分
-        SDL_Window* window = nullptr;
+        SDL_Window* m_window = nullptr;
         bool m_sdlInitialized = false; 
 
 #if USE_VALIDATION_LAYERS

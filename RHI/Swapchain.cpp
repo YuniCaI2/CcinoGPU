@@ -133,16 +133,16 @@ namespace Ccino::RHI {
         m_textures = m_context->RegisterSwapchainImages(m_images); //获得注册
     }
 
-    void Swapchain::PresentFrame(uint32_t imageIndex, VkSemaphore imageReadySemaphore) {
+    VkResult Swapchain::PresentFrame(uint32_t imageIndex, VkSemaphore presentReadySemaphore) {
         VkPresentInfoKHR presentInfo = {};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &imageReadySemaphore;
+        presentInfo.pWaitSemaphores = &presentReadySemaphore;
         presentInfo.swapchainCount = 1;
         presentInfo.pSwapchains = &m_vulkanSwapchain;
         presentInfo.pImageIndices = &imageIndex;
 
-        vkQueuePresentKHR(m_core->GetVkQueue(CommandQueueType::GRAPHICS), &presentInfo);
+        return vkQueuePresentKHR(m_core->GetVkQueue(CommandQueueType::GRAPHICS), &presentInfo);
     }
 
     VkResult Swapchain::AcquireNextImage(VkSemaphore presentCompleteSemaphore, uint32_t& imageIndex) {

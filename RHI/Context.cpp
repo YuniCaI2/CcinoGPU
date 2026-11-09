@@ -242,7 +242,8 @@ namespace Ccino::RHI {
     Context::Context()
         : m_core(std::make_unique<Core>())
         , m_commandContext(std::make_unique<CommandContext>())
-        , m_descriptorSlot(std::make_unique<DescriptorSlot>()) {}
+        , m_descriptorSlot(std::make_unique<DescriptorSlot>())
+        , m_swapchain(std::make_unique<Swapchain>()) {}
 
     Context::~Context() = default;
 
@@ -259,13 +260,15 @@ namespace Ccino::RHI {
 
         m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
         m_descriptorSlot->Init(this);
-        m_swapchain->Init(this);
-        m_swapchain->Create(settings.windowWidth, settings.windowHeight, settings.bVsync);
 
-        m_settings = settings;
-
-        //Global Semaphore
-        CreateGlobalBinarySemaphores();
+        bVsync = settings.bVsync;
+        bUseSwapChain = settings.bUseSwapChain;
+        if (bUseSwapChain) {
+            m_swapchain->Init(this);
+            m_swapchain->Create(settings.windowWidth, settings.windowHeight, settings.bVsync);
+            //Global Semaphore
+            CreateGlobalBinarySemaphores();
+        }
         //FrameNums
         m_frameFenceNums.resize(m_flightFrameCount, 0);
     }
@@ -342,6 +345,11 @@ namespace Ccino::RHI {
         }
 
         m_bufferDeletionQueue.clear();
+        if (bUseSwapChain) {
+            m_swapchain->Destroy();
+            m_swapchain = std::make_unique<Swapchain>();
+            bUseSwapChain = false;
+        }
         DescriptorSlot::DestroyGlobal();
         DestroyGlobalTimelineSemaphore();
         m_commandContext->Destroy();
@@ -741,8 +749,8 @@ namespace Ccino::RHI {
 
     void Context::CreateGlobalBinarySemaphores() {
         int n = m_swapchain->m_images.size();
-        m_imageReadySemaphores.resize(n);
-        m_presentCompletedSemaphores.resize(n);
+        m_imageReadySemaphores.resize(m_flightFrameCount);
+        m_presentReadySemaphores.resize(n);
 
         auto Create = [this](VkSemaphore& semaphore) {
             VkSemaphoreCreateInfo createInfo{};
@@ -750,19 +758,30 @@ namespace Ccino::RHI {
             VULKAN_CHECK(vkCreateSemaphore(m_core->GetVkDevice(), &createInfo, nullptr, &semaphore));
         };
 
-        for (int i = 0; i < n; i++) {
-            Create(m_imageReadySemaphores[i]);
-            Create(m_presentCompletedSemaphores[i]);
+        for (auto& sempahore : m_imageReadySemaphores) {
+            Create(sempahore);
+        }
+
+        for (auto& sempahore : m_presentReadySemaphores) {
+            Create(sempahore);
         }
 
         return;
     }
     void Context::DestroyGlobalBinarySemaphores() {
-        int n = m_imageReadySemaphores.size();
-        for (int i = 0; i < n; i++) {
-            vkDestroySemaphore(m_core->GetVkDevice(), m_imageReadySemaphores[i], nullptr);
-            vkDestroySemaphore(m_core->GetVkDevice(), m_presentCompletedSemaphores[i], nullptr);
+        for (auto& semaphore : m_imageReadySemaphores) {
+            vkDestroySemaphore(m_core->GetVkDevice(), semaphore, nullptr);
         }
+        for (auto& semaphore : m_presentReadySemaphores) {
+             vkDestroySemaphore(m_core->GetVkDevice(), semaphore, nullptr);
+        }
+        m_imageReadySemaphores.clear();
+        m_presentReadySemaphores.clear();
+    }
+
+    void Context::RecreateGlobalBinarySemaphores() {
+        DestroyGlobalBinarySemaphores(); 
+        CreateGlobalBinarySemaphores();
     }
 
     void Context::CreateGlobalTimelineSemaphore() {
@@ -1489,6 +1508,14 @@ namespace Ccino::RHI {
             m_textures.Remove(rid);
     }
 
+    void Context::RecreateSwapchain() {
+        auto [width, height] = m_core->GetWindowExtent();        
+
+        vkDeviceWaitIdle(m_core->GetVkDevice());
+        m_swapchain->Create(width, height, bVsync);
+        RecreateGlobalBinarySemaphores();
+    }
+
     CommandContext::CommandBuffer& Context::GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex) {
         return m_commandContext->GetCommandBuffer(m_core->GetQueueFamilyIndex(queueType), frameIndex);
     }
@@ -1551,7 +1578,7 @@ namespace Ccino::RHI {
     }
 
     TimelineSemaphore::Signal Context::PrepareFrame() {
-        if (!m_settings.bUseSwapChain) {
+        if (!bUseSwapChain) {
             throw std::runtime_error("bUseSwapChain is false");
         }
 
@@ -1569,18 +1596,23 @@ namespace Ccino::RHI {
         }
 
         //Swapchain
-        uint32_t imageIndex = 0;
-        m_swapchain->AcquireNextImage(m_presentCompletedSemaphores[m_currentFrameIndex], imageIndex);
-
+        auto nextImageResult = m_swapchain->AcquireNextImage(m_imageReadySemaphores[m_currentFrameIndex], m_currentImageIndex);
+        if (nextImageResult == VK_ERROR_OUT_OF_DATE_KHR || nextImageResult == VK_SUBOPTIMAL_KHR) {
+            RecreateSwapchain();
+            nextImageResult = m_swapchain->AcquireNextImage(m_imageReadySemaphores[m_currentFrameIndex], m_currentImageIndex);
+        }
+        VULKAN_CHECK(nextImageResult);
 
         return returnSignal;
     }
 
     void Context::PresentFrame(TimelineSemaphore::Signal&& signal) {
-        if (!m_settings.bUseSwapChain) {
+        if (!bUseSwapChain) {
             std::cerr << "bUseSwapChain is false" << std::endl;
             return;
         }
+        //这里默认Command已经处理了
+        m_swapchain->PresentFrame(m_currentImageIndex, m_presentReadySemaphores[m_currentImageIndex]);
 
     }
 

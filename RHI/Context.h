@@ -187,6 +187,7 @@ namespace Ccino::RHI {
         VkSemaphore* GetVkSemaphore(RID rid) { return m_semaphores.Get(rid); }
         void CreateGlobalBinarySemaphores();
         void DestroyGlobalBinarySemaphores();
+        void RecreateGlobalBinarySemaphores();
 
         //Global Timeline Semaphore
         void CreateGlobalTimelineSemaphore(); //尽可能不让外部感知到这个信号量，这里不用RID管理
@@ -213,8 +214,10 @@ namespace Ccino::RHI {
         void DestroyImageView(RID rid);
         VkImageView GetVkImageView(RID rid) { return m_textureViews.Get(rid)->imageView; }
 
+        //Swapchain
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
         void UnRegisterSwapchainImages(const std::vector<RID>& imageRIDs);
+        void RecreateSwapchain();
 
         //Command
         CommandContext::CommandBuffer& GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex = 0);
@@ -266,7 +269,8 @@ namespace Ccino::RHI {
         uint32_t m_currentFrameIndex = 0;
         uint32_t m_currentImageIndex = 0;
 
-        RHISettings m_settings;
+        bool bVsync = false;
+        bool bUseSwapChain = false;
 
 
         //其实这里需要使用unique比较合适，然后前向声明
@@ -293,7 +297,7 @@ namespace Ccino::RHI {
         //Raster
         //内部管理两个信号量,这个信号量处理需要
         std::vector<VkSemaphore> m_imageReadySemaphores;
-        std::vector<VkSemaphore> m_presentCompletedSemaphores;
+        std::vector<VkSemaphore> m_presentReadySemaphores;
         std::vector<uint64_t> m_frameFenceNums;
         //这个bool值记录当前的对象是否开始渲染了
         bool m_bRenderStarted = false;

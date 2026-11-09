@@ -19,7 +19,7 @@ namespace Ccino::RHI {
 
         VkResult GetNextImage(VkSemaphore presentCompleteSemaphore, uint32_t& imageIndex); //获取下一个可用的交换链索引,这里不使用RID，减少索引开销
         //处理当前的Present
-        void PresentFrame(uint32_t imageIndex, VkSemaphore imageReadySemaphore);
+        VkResult PresentFrame(uint32_t imageIndex, VkSemaphore presentReadySemaphore);
         VkResult AcquireNextImage(VkSemaphore presentCompleteSemaphore, uint32_t& imageIndex);
 
     private:
