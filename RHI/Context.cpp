@@ -6,11 +6,14 @@
 #include "RHI/TimelineSemaphore.h"
 #include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include <vulkan/vulkan_core.h>
@@ -249,16 +252,18 @@ namespace Ccino::RHI {
 
     void Context::Init(const RHISettings& settings) {
         m_core->Init(settings);
+        m_flightFrameCount = std::max(settings.flightFrameCount, 1u); //飞行帧数用来处理资源和同步的分配
+        m_currentFrameIndex = 0;
         m_commandContext->Init(m_core->GetVkDevice(), {
             m_core->GetGraphicsQueueFamilyIndex(),
             m_core->GetComputeQueueFamilyIndex(),
             m_core->GetTransferQueueFamilyIndex()
-        });
+        }, m_flightFrameCount);
         CreateGlobalTimelineSemaphore();
         DescriptorSlot::InitGlobal(*m_core); //全局唯一的DescriptorSetLayout / PipelineLayout / DescriptorPool
-        m_flightFrameCount = settings.flightFrameCount; //飞行帧数用来处理资源和同步的分配
 
         m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
+        m_deletionWaitValues.assign(m_flightFrameCount, {});
         m_descriptorSlot->Init(this);
 
         bVsync = settings.bVsync;
@@ -266,19 +271,36 @@ namespace Ccino::RHI {
         if (bUseSwapChain) {
             m_swapchain->Init(this);
             m_swapchain->Create(settings.windowWidth, settings.windowHeight, settings.bVsync);
+            std::tie(m_swapchainWindowWidth, m_swapchainWindowHeight) = m_core->GetWindowExtent();
             //Global Semaphore
             CreateGlobalBinarySemaphores();
         }
-        //FrameNums
-        m_frameFenceNums.resize(m_flightFrameCount, 0);
     }
 
     void Context::Tick() {
         std::vector<RID> expired;
+        uint32_t enteringFrame = 0;
         {
             std::lock_guard lock(m_deletionMutex);
+            //离开当前帧时记下各timeline 的目标值, 作为这个飞行帧的Fence: 这一帧的所有提交(包括排队删除资源的最后一次使用)都在这之前
+            std::vector<uint64_t>& leaving = m_deletionWaitValues[m_currentFrameIndex];
+            leaving.assign(m_timelines.size(), 0);
+            for (size_t i = 0; i < m_timelines.size(); ++i) {
+                if (m_timelines[i] != nullptr) {
+                    leaving[i] = m_timelines[i]->ReadValue();
+                }
+            }
             m_currentFrameIndex = (m_currentFrameIndex + 1) % m_flightFrameCount;
+            enteringFrame = m_currentFrameIndex;
             expired.swap(m_bufferDeletionQueue[m_currentFrameIndex]); //取出后在锁外销毁, 避免销毁过程中持锁
+        }
+        //等上一次使用这个飞行帧时的全部提交完成, 之后它的命令缓冲 / ImageReady / UniformBuffer 都可以复用, 排队的资源也可以销毁
+        //m_deletionWaitValues 只在Tick 里读写, 不需要锁
+        const std::vector<uint64_t>& waitValues = m_deletionWaitValues[enteringFrame];
+        for (size_t i = 0; i < waitValues.size() && i < m_timelines.size(); ++i) {
+            if (m_timelines[i] != nullptr) {
+                m_timelines[i]->Wait(waitValues[i]);
+            }
         }
         for (RID rid : expired) {
             DestroyResource(rid);
@@ -286,12 +308,10 @@ namespace Ccino::RHI {
     }
 
     void Context::Destroy() {
-        //Global Semaphore Destroy
-        DestroyGlobalBinarySemaphores();
-
         VkDevice device = m_core->GetVkDevice();
         if (device != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device);
+            DestroyGlobalBinarySemaphores();
             m_computePipelines.ForEach([&](ComputePipeline& pipeline) {
                 pipeline.Destroy();
             });
@@ -345,6 +365,8 @@ namespace Ccino::RHI {
         }
 
         m_bufferDeletionQueue.clear();
+        m_deletionWaitValues.clear();
+        m_commandBufferSubmitValues.clear();
         if (bUseSwapChain) {
             m_swapchain->Destroy();
             m_swapchain = std::make_unique<Swapchain>();
@@ -782,6 +804,14 @@ namespace Ccino::RHI {
     void Context::RecreateGlobalBinarySemaphores() {
         DestroyGlobalBinarySemaphores(); 
         CreateGlobalBinarySemaphores();
+    }
+
+    VkSemaphore Context::GetImageReadySemaphore() const {
+        return m_imageReadySemaphores[m_currentFrameIndex];
+    }
+
+    VkSemaphore Context::GetPresentReadySemaphore() const {
+        return m_presentReadySemaphores[m_currentImageIndex];
     }
 
     void Context::CreateGlobalTimelineSemaphore() {
@@ -1499,6 +1529,7 @@ namespace Ccino::RHI {
             texture.format = m_swapchain->GetColorFormat();
             texture.width = m_swapchain->GetExtent().width;
             texture.height = m_swapchain->GetExtent().height;
+            texture.usage = m_swapchain->m_imageUsage;
 
             results.push_back(m_textures.Add(std::move(texture)));
         }
@@ -1511,11 +1542,19 @@ namespace Ccino::RHI {
     }
 
     void Context::RecreateSwapchain() {
-        auto [width, height] = m_core->GetWindowExtent();        
+        auto [width, height] = m_core->GetWindowExtent();
+        if (width == 0 || height == 0) {
+            return; //最小化时Surface 尺寸为0, 不能创建交换链, 恢复后PrepareFrame 检测到尺寸变化会再重建
+        }
 
         vkDeviceWaitIdle(m_core->GetVkDevice());
+        const size_t oldImageCount = m_swapchain->m_images.size();
         m_swapchain->Create(width, height, bVsync);
-        RecreateGlobalBinarySemaphores();
+        m_swapchainWindowWidth = width;
+        m_swapchainWindowHeight = height;        //PresentReady 可能仍被呈现引擎等待, vkDeviceWaitIdle 管不到呈现, 图像数量不变时不重建
+        if (m_swapchain->m_images.size() != oldImageCount) {
+            RecreateGlobalBinarySemaphores();
+        }
     }
 
     CommandContext::CommandBuffer& Context::GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex) {
@@ -1523,9 +1562,15 @@ namespace Ccino::RHI {
     }
 
     void Context::StartRecording(CommandContext::CommandBuffer& commandBuffer) {
-        TimelineSemaphore* timeline = GetTimeline(commandBuffer.queueFamilyIndex);
-        const uint64_t pendingValue = timeline != nullptr ? timeline->ReadValue() : 0;
-        if (timeline != nullptr) {
+        //只等这个命令缓冲上一次的提交, 其他飞行帧的命令可以继续在GPU 上执行, 这里在Loop中可能是多余的但是在别的非Loop下需要等待此command执行完毕
+        uint64_t pendingValue = 0;
+        {
+            std::lock_guard lock(m_commandBufferSubmitMutex);
+            if (auto it = m_commandBufferSubmitValues.find(commandBuffer.commandBuffer); it != m_commandBufferSubmitValues.end()) {
+                pendingValue = it->second;
+            }
+        }
+        if (TimelineSemaphore* timeline = GetTimeline(commandBuffer.queueFamilyIndex); timeline != nullptr) {
             timeline->Wait(pendingValue);
         }
 
@@ -1576,46 +1621,139 @@ namespace Ccino::RHI {
     }
 
     void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {
+        auto resolve = [this](const std::vector<RID>& rids, const char* error) {
+            std::vector<VkSemaphore> semaphores;
+            semaphores.reserve(rids.size());
+            for (RID rid : rids) {
+                VkSemaphore* semaphore = m_semaphores.Get(rid);
+                if (semaphore == nullptr || *semaphore == VK_NULL_HANDLE) {
+                    throw std::runtime_error(error);
+                }
+                semaphores.push_back(*semaphore);
+            }
+            return semaphores;
+        };
+        SubmitCommandBufferTracked(queueType, commandBuffers, signalValue,
+            resolve(waitSemaphores, "Invalid wait semaphore"),
+            resolve(signalSemaphores, "Invalid signal semaphore"),
+            pipelineStageFlags);
+    }
+    void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {
         SubmitCommandBufferTracked(queueType, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
     }
 
-    TimelineSemaphore::Signal Context::PrepareFrame() {
+
+    bool Context::PrepareFrame() {
         if (!bUseSwapChain) {
             throw std::runtime_error("bUseSwapChain is false");
         }
 
-        //这里需要特判第一帧
-        //如果是第一帧，直接等待graphics管线的任务，如果不是第一帧，则需要等待先前的任务
-        uint32_t graphicsIndex = m_core->GetGraphicsQueueFamilyIndex();
-        auto& graphicsTimeline = m_timelines[graphicsIndex];
-        TimelineSemaphore::Signal returnSignal = {};
-        if (!m_bRenderStarted) {
-            returnSignal = graphicsTimeline->BeginSignal();
-            m_frameFenceNums[m_currentFrameIndex] = returnSignal.current;
-        } else {
-            graphicsTimeline->Wait(m_frameFenceNums[m_currentFrameIndex]);
-            returnSignal =  graphicsTimeline->BeginSignal();
+        //有的平台调整窗口大小时不会报OUT_OF_DATE, 主动比较窗口尺寸
+        const auto [windowWidth, windowHeight] = m_core->GetWindowExtent();
+        if (windowWidth == 0 || windowHeight == 0) { //最小化时不空转
+            std::this_thread::sleep_for(std::chrono::milliseconds(10)); //最小化时不渲染, 也不要空转
+            return false;
         }
 
-        //Swapchain
-        auto nextImageResult = m_swapchain->AcquireNextImage(m_imageReadySemaphores[m_currentFrameIndex], m_currentImageIndex);
-        if (nextImageResult == VK_ERROR_OUT_OF_DATE_KHR || nextImageResult == VK_SUBOPTIMAL_KHR) {
+        //如果尺寸不对就直接更改,主导操作
+        if (windowWidth != m_swapchainWindowWidth || windowHeight != m_swapchainWindowHeight) {
             RecreateSwapchain();
-            nextImageResult = m_swapchain->AcquireNextImage(m_imageReadySemaphores[m_currentFrameIndex], m_currentImageIndex);
         }
-        VULKAN_CHECK(nextImageResult);
 
-        return returnSignal;
+        //SUBOPTIMAL 时ImageReady 已经被Signal, 这一帧照常渲染, 交给PresentFrame 去重建
+        const VkResult acquireResult = m_swapchain->AcquireNextImage(m_imageReadySemaphores[m_currentFrameIndex], m_currentImageIndex);
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+            RecreateSwapchain();
+            return false;
+        }
+        if (acquireResult != VK_SUBOPTIMAL_KHR) {
+            VULKAN_CHECK(acquireResult);
+        }
+        return true;
     }
 
-    void Context::PresentFrame(TimelineSemaphore::Signal&& signal) {
+    void Context::BlitToSwapchain(VkCommandBuffer commandBuffer, RID srcTexture) {
+        VulkanTexture* src = m_textures.Get(srcTexture);
+        VulkanTexture* dst = m_textures.Get(m_swapchain->GetTextures()[m_currentImageIndex]);
+        if (src == nullptr || dst == nullptr) {
+            throw std::runtime_error("BlitToSwapchain: invalid texture");
+        }
+        if ((src->usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
+            throw std::runtime_error("BlitToSwapchain: source texture needs TransferSrc usage");
+        }
+        if ((dst->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0) {
+            throw std::runtime_error("BlitToSwapchain: swapchain image does not support TransferDst");
+        }
+
+        auto makeBarrier = [](VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
+                              VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                              VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
+            VkImageMemoryBarrier2 barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            barrier.srcStageMask = srcStage;
+            barrier.srcAccessMask = srcAccess;
+            barrier.dstStageMask = dstStage;
+            barrier.dstAccessMask = dstAccess;
+            barrier.oldLayout = oldLayout;
+            barrier.newLayout = newLayout;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = image;
+            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            return barrier;
+        };
+
+        //交换链图像的srcStage 必须和SubmitFrame 里ImageReady 的等待阶段一致, 才能串上Acquire 的依赖
+        const VkImageMemoryBarrier2 toTransfer[] = {
+            makeBarrier(src->image, src->layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT),
+            makeBarrier(dst->image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_NONE,
+                VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT),
+        };
+        VkDependencyInfo dependencyInfo{};
+        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependencyInfo.imageMemoryBarrierCount = 2;
+        dependencyInfo.pImageMemoryBarriers = toTransfer;
+        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+
+        VkImageBlit region{};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.srcOffsets[1] = {static_cast<int32_t>(src->width), static_cast<int32_t>(src->height), 1};
+        region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstOffsets[1] = {static_cast<int32_t>(dst->width), static_cast<int32_t>(dst->height), 1};
+        vkCmdBlitImage(commandBuffer, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            dst->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR);
+
+        const VkImageMemoryBarrier2 toPresent = makeBarrier(dst->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+        dependencyInfo.imageMemoryBarrierCount = 1;
+        dependencyInfo.pImageMemoryBarriers = &toPresent;
+        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+
+        src->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        dst->layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
+
+    void Context::SubmitFrame(CommandContext::CommandBuffer& commandBuffer) {
+        SubmitCommandBufferTracked(CommandQueueType::GRAPHICS, {commandBuffer}, 0,
+            {m_imageReadySemaphores[m_currentFrameIndex]}, {m_presentReadySemaphores[m_currentImageIndex]},
+            {VK_PIPELINE_STAGE_2_BLIT_BIT});
+    }
+
+    void Context::PresentFrame() {
         if (!bUseSwapChain) {
             std::cerr << "bUseSwapChain is false" << std::endl;
             return;
         }
-        //这里默认Command已经处理了
-        m_swapchain->PresentFrame(m_currentImageIndex, m_presentReadySemaphores[m_currentImageIndex]);
-
+        const VkResult presentResult = m_swapchain->PresentFrame(m_currentImageIndex, m_presentReadySemaphores[m_currentImageIndex]);
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+            RecreateSwapchain();
+        } else {
+            VULKAN_CHECK(presentResult);
+        }
     }
 
 
@@ -1642,7 +1780,7 @@ namespace Ccino::RHI {
         }
     }
 
-    uint64_t Context::SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags) {
+    uint64_t Context::SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags) {
         if (commandBuffers.empty()) {
             return 0;
         }
@@ -1663,25 +1801,20 @@ namespace Ccino::RHI {
         std::vector<VkSemaphoreSubmitInfo> userWaits;
         userWaits.reserve(waitSemaphores.size());
         for (size_t i = 0; i < waitSemaphores.size(); ++i) {
-            VkSemaphore* semaphore = m_semaphores.Get(waitSemaphores[i]);
-            if (semaphore == nullptr || *semaphore == VK_NULL_HANDLE) {
+            if (waitSemaphores[i] == VK_NULL_HANDLE) {
                 throw std::runtime_error("Invalid wait semaphore");
             }
             VkSemaphoreSubmitInfo info{};
             info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-            info.semaphore = *semaphore;
+            info.semaphore = waitSemaphores[i];
             info.stageMask = i < pipelineStageFlags.size() ? pipelineStageFlags[i] : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
             userWaits.push_back(info);
         }
 
-        std::vector<VkSemaphore> userSignals;
-        userSignals.reserve(signalSemaphores.size());
-        for (RID rid : signalSemaphores) {
-            VkSemaphore* semaphore = m_semaphores.Get(rid);
-            if (semaphore == nullptr || *semaphore == VK_NULL_HANDLE) {
+        for (VkSemaphore semaphore : signalSemaphores) {
+            if (semaphore == VK_NULL_HANDLE) {
                 throw std::runtime_error("Invalid signal semaphore");
             }
-            userSignals.push_back(*semaphore);
         }
 
         auto appendWait = [](std::vector<VkSemaphoreSubmitInfo>& waits, VkSemaphore semaphore, uint64_t value) {
@@ -1725,8 +1858,8 @@ namespace Ccino::RHI {
         appendWait(waits, transferSemaphore, transferValue);
 
         std::vector<VkSemaphoreSubmitInfo> signals;
-        signals.reserve(userSignals.size() + 1);
-        for (VkSemaphore semaphore : userSignals) {
+        signals.reserve(signalSemaphores.size() + 1);
+        for (VkSemaphore semaphore : signalSemaphores) {
             VkSemaphoreSubmitInfo info{};
             info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
             info.semaphore = semaphore;
@@ -1749,6 +1882,12 @@ namespace Ccino::RHI {
         submitInfo.signalSemaphoreInfoCount = static_cast<uint32_t>(signals.size());
         submitInfo.pSignalSemaphoreInfos = signals.data();
         VULKAN_CHECK(vkQueueSubmit2(m_core->GetVkQueue(queueType), 1, &submitInfo, VK_NULL_HANDLE));
+        {
+            std::lock_guard lock(m_commandBufferSubmitMutex);
+            for (const CommandContext::CommandBuffer& commandBuffer : commandBuffers) {
+                m_commandBufferSubmitValues[commandBuffer.commandBuffer] = signal.current; //提交命令时，记录下当前的队列的末尾的信号量值是多少,后续方便直接Wait当前的信号量是否执行完毕
+            }
+        }
         return signal.current;
     }
 

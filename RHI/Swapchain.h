@@ -37,6 +37,7 @@ namespace Ccino::RHI {
         VkFormat m_colorFormat{};
         VkColorSpaceKHR m_colorSpace{};
         VkExtent2D m_extent{0, 0};
+        VkImageUsageFlags m_imageUsage{};
 
         uint32_t m_minImageCount{UINT32_MAX};
 

@@ -13,6 +13,7 @@
 #include <mutex>
 #include <span>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
@@ -134,7 +135,7 @@ namespace Ccino::RHI {
 
 
         void Init(const RHISettings& settings);
-        void Tick(); //每次更新，这必须要调用，这是推动Delete释放队列的根本,这个在 !!!!帧首调用 ,不过需要SwapChain Acquire 后调用
+        void Tick(); //每帧必须调用一次, 充当飞行帧的Fence: 推进帧索引, 等上一次使用新帧槽位的全部提交完成, 再释放它的延迟删除队列. 在帧尾(PresentFrame 之后)、下一次PrepareFrame 之前调用
         void Destroy();
 
         //Resource
@@ -188,6 +189,9 @@ namespace Ccino::RHI {
         void CreateGlobalBinarySemaphores();
         void DestroyGlobalBinarySemaphores();
         void RecreateGlobalBinarySemaphores();
+        VkSemaphore GetImageReadySemaphore() const;
+        VkSemaphore GetPresentReadySemaphore() const;
+
 
         //Global Timeline Semaphore
         void CreateGlobalTimelineSemaphore(); //尽可能不让外部感知到这个信号量，这里不用RID管理
@@ -228,8 +232,14 @@ namespace Ccino::RHI {
         void EndRendering(VkCommandBuffer commandBuffer);
         void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0,
             const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
-        TimelineSemaphore::Signal PrepareFrame();
-        void PresentFrame(TimelineSemaphore::Signal&& signal);
+        //waitSemaphores 不给默认值, 否则省略信号量的调用会和RID 版本产生重载歧义
+        void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue,
+            const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
+        //一帧的顺序: PrepareFrame -> 录制 -> BlitToSwapchain -> SubmitFrame -> PresentFrame
+        bool PrepareFrame(); //Acquire 交换链图像, 返回false 表示交换链已重建或窗口最小化, 本帧需要跳过. 帧槽位的复用由上一帧末尾的Tick 保证
+        void BlitToSwapchain(VkCommandBuffer commandBuffer, RID srcTexture); //src 需要TransferSrc usage, 交换链图像最终转到PRESENT_SRC
+        void SubmitFrame(CommandContext::CommandBuffer& commandBuffer); //等待ImageReady, 完成后Signal PresentReady
+        void PresentFrame();
 
         template<typename Fn>
         requires std::invocable<Fn, CommandContext::CommandBuffer&>
@@ -238,7 +248,7 @@ namespace Ccino::RHI {
             StartRecording(commandBuffer);
             fn(commandBuffer);
             EndRecording(commandBuffer);
-            SubmitCommandBuffer(queueType, {commandBuffer}, {}, {});
+            SubmitCommandBuffer(queueType, {commandBuffer});
         } //立即执行并且提交到队列中
 
 
@@ -271,6 +281,8 @@ namespace Ccino::RHI {
 
         bool bVsync = false;
         bool bUseSwapChain = false;
+        int m_swapchainWindowWidth = 0; //交换链最近一次创建时的窗口像素尺寸, 和当前窗口不一致就重建
+        int m_swapchainWindowHeight = 0;
 
 
         //其实这里需要使用unique比较合适，然后前向声明
@@ -290,6 +302,10 @@ namespace Ccino::RHI {
 
         std::mutex m_deletionMutex; //保护m_bufferDeletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
         std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列
+        std::vector<std::vector<uint64_t>> m_deletionWaitValues; //[帧][队列家族] 释放该帧队列前要等到的timeline 值
+
+        std::mutex m_commandBufferSubmitMutex;
+        std::unordered_map<VkCommandBuffer, uint64_t> m_commandBufferSubmitValues; //命令缓冲最近一次提交的timeline 值, 重新录制前要等它完成
 
         // 按队列家族索引。每个 TimelineSemaphore 自己保护目标值。
         std::vector<std::unique_ptr<TimelineSemaphore>> m_timelines;
@@ -298,16 +314,13 @@ namespace Ccino::RHI {
         //内部管理两个信号量,这个信号量处理需要
         std::vector<VkSemaphore> m_imageReadySemaphores;
         std::vector<VkSemaphore> m_presentReadySemaphores;
-        std::vector<uint64_t> m_frameFenceNums;
-        //这个bool值记录当前的对象是否开始渲染了
-        bool m_bRenderStarted = false;
 
 
 
 
         void DestroyResource(RID rid);
         uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers,
-            uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
+            uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
         void ReleaseUploadStaging(VulkanBuffer& buffer);
         TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
         bool CheckAndNormalizeRenderDesc(const RenderDesc& renderDesc, uint32_t& width, uint32_t& height);

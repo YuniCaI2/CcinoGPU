@@ -495,7 +495,7 @@ namespace Ccino {
                 }
             }
 
-            // 首次使用的 Texture 若仍处于 VK_IMAGE_LAYOUT_UNDEFINED，在本层执行前转换至目标 Layout
+            // Texture 当前 Layout 和本 Pass 需要的不一致时(首次使用为 UNDEFINED, 或上一帧/图外的操作改过), 在本层执行前转换
             for (const auto& passRID : m_timeline[i]) {
                 auto* pass = m_passes.Get(passRID);
                 for (const auto& edge : m_edges) {
@@ -503,14 +503,22 @@ namespace Ccino {
                     auto* res = m_resources.Get(edge.resourceRID);
                     if (!res || res->GetResourceType() != ResourceType::Texture) continue;
                     RID rhiTex = res->GetRHI();
-                    if (m_context->GetTextureLayout(rhiTex) == VK_IMAGE_LAYOUT_UNDEFINED) {
-                        std::visit([&](const auto& flags) {
-                            if constexpr (std::is_same_v<TextureAccessFlags, std::decay_t<decltype(flags)>>) {
-                                imageBarriers.push_back(GenerateVkTextureBarrier(
-                                    TextureAccessFlagBits::None, flags, m_context, rhiTex, pass->passType, pass->passType));
+                    std::visit([&](const auto& flags) {
+                        if constexpr (std::is_same_v<TextureAccessFlags, std::decay_t<decltype(flags)>>) {
+                            const VkImageLayout oldLayout = m_context->GetTextureLayout(rhiTex);
+                            if (oldLayout == ToVkImageLayout(flags)) {
+                                return;
                             }
-                        }, edge.resourceAccessFlags);
-                    }
+                            VkImageMemoryBarrier2 barrier = GenerateVkTextureBarrier(
+                                TextureAccessFlagBits::None, flags, m_context, rhiTex, pass->passType, pass->passType);
+                            if (oldLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
+                                //上一次访问不在本图内, 不知道具体阶段, 为了保证这个资源在非当前RDG正常执行，插入行一个保守的barrier,这里的flags 是当前的边推导而得，在编译期固定
+                                barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+                                barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+                            }
+                            imageBarriers.push_back(barrier);
+                        }
+                    }, edge.resourceAccessFlags);
                 }
             }
 
@@ -620,7 +628,19 @@ namespace Ccino {
         m_renderTargetViews.clear();
     }
 
+    void RGBuilder::RecordPasses() {
+        //每帧重新构建这张图
+        m_edges.clear();
+        m_edgeNums.clear();
+        for (auto& [passRID, recorder] : m_passRecorders) {
+            m_currentPass = passRID;
+            RID rid = passRID;
+            recorder(*this, rid);
+        }
+    }
+
     void RGBuilder::ReleasePass() {
+        m_passRecorders.clear();
         m_passes.ForEach([this](RGPass& pass){
             pass.lambda.clear();
             if (m_context != nullptr) {

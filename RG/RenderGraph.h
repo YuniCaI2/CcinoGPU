@@ -13,6 +13,7 @@
 #include "Texture2D.h"
 #include <concepts>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -60,8 +61,9 @@ namespace Ccino {
         void Init(RHI::Context* context);
         void Destroy();
 
+        //func 会被保存下来, LoopRun 每帧重新调用一次来刷新捕获值和依赖边, 所以资源要在func 外面创建
         template<FixedString passName, typename Func>
-        requires std::is_invocable_v<Func, RGBuilder&, RID&>
+        requires std::is_invocable_v<Func, RGBuilder&, RID&> && std::copy_constructible<std::remove_cvref_t<Func>>
         RGBuilder& AddPass(Func&& func) {
             //处理Accessor 并且处理Builder 内部Shader的翻译和绑定
             RGPass pass;
@@ -69,6 +71,7 @@ namespace Ccino {
             auto passRID = m_passes.Add(std::move(pass));
             m_currentPass = passRID;
             func(*this, passRID);
+            m_passRecorders.emplace_back(passRID, std::forward<Func>(func)); //这里保存的是外层的Lambda 也就是AddPass的Lambda 其中的数据是引用，所以尺寸也不大
             return *this;
         }
 
@@ -233,20 +236,31 @@ namespace Ccino {
         void Run(); //这里传入一个分配的池
 
         //需要实现循环运行，这个和游戏渲染循环一致,并且注入一个lambda用来处理当前是否需要退出, 必须使用交换链
+        //每帧重新调用所有AddPass 的func 并建图, 执行后把presentTexture Blit 到交换链图像上显示; exitFunc 每帧调用一次, 返回true 退出
         template<typename Exit>
-        requires std::is_same_v<bool, std::invoke_result<std::remove_cvref_t<Exit>>>
-        void LoopRun(Exit&& exitFunc) {
-            if (exitFunc()) {
-                //退出循环
+        requires std::is_same_v<bool, std::invoke_result_t<Exit&>>
+        void LoopRun(RID presentTexture, Exit&& exitFunc) {
+            if (m_context == nullptr || !CheckResourceType(presentTexture, ResourceType::Texture, "LoopRun")) {
                 return;
             }
-
-            //这里的LoopRun就是为了图像服务的，不是纯计算
-            auto commandBuffer = m_context->GetCommandBuffer(CommandQueueType::GRAPHICS, m_context->GetCurrentFrameIndex());
-            m_context->StartRecording(commandBuffer);
-            m_context->EndRecording(commandBuffer);
-            
-        } 
+            CreateGPUResource(); //这里不太对，因为没有每帧调用AddPass， 没法实现动态的效果,而且没有使用正确的合理的资源池
+            while (!exitFunc()) {
+                if (!m_context->PrepareFrame()) {
+                    continue; //交换链刚重建或窗口最小化, 重新Acquire
+                }
+                RecordPasses();
+                BuildGraph();
+                auto& commandBuffer = m_context->GetCommandBuffer(CommandQueueType::GRAPHICS, m_context->GetCurrentFrameIndex());
+                m_context->StartRecording(commandBuffer);
+                GenerateCommands(commandBuffer.commandBuffer);
+                m_context->BlitToSwapchain(commandBuffer.commandBuffer, m_resources.Get(presentTexture)->GetRHI());
+                m_context->EndRecording(commandBuffer);
+                m_context->SubmitFrame(commandBuffer);
+                m_context->PresentFrame();
+                ReleaseRenderTargetViews();
+                m_context->Tick();
+            }
+        }
 
         RID CreateTransientBuffer(typename Buffer::CreateArgs createArgs);
         RID CreateExternalBuffer(const Ref<Buffer>& buffer);
@@ -265,6 +279,7 @@ namespace Ccino {
         void ReleaseGPUResource();
 
         void ReleasePass();
+        void RecordPasses(); //清空依赖边后按添加顺序重新调用每个Pass 的func
 
         void GenerateCommands(VkCommandBuffer buffer); //现在先单线程处理后续增加多线程
 
@@ -274,6 +289,7 @@ namespace Ccino {
         //使用擦除类型句柄管理
         TRIDArray<RGPass> m_passes;
         TRIDArray<RGResource> m_resources;
+        std::vector<std::pair<RID, std::function<void(RGBuilder&, RID&)>>> m_passRecorders;
 
 
         //线程不安全，考虑是否加锁

@@ -1,1 +1,2 @@
 add_subdirectory(OfflineTriangle)
+add_subdirectory(SwapchainTriangle)

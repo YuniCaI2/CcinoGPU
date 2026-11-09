@@ -161,6 +161,7 @@ namespace Ccino::RHI {
         }
 
         VULKAN_CHECK(vkCreateSwapchainKHR(m_core->GetVkDevice(), &swapChainCreateInfo, nullptr, &m_vulkanSwapchain));
+        m_imageUsage = swapChainCreateInfo.imageUsage;
 
         //如果交换链被重新创建，销毁旧的交换链以及资源
         if (swapchain != VK_NULL_HANDLE) {

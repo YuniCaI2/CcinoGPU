@@ -92,7 +92,7 @@ namespace Ccino::RHI {
         CreateDevice(m_instance, deviceFeatures, deviceExtensions, &features11);
 
         if (settings.bUseSwapChain) {
-            m_window = SDL_CreateWindow("CcinoGPU", settings.windowWidth, settings.windowHeight, SDL_WINDOW_VULKAN);
+            m_window = SDL_CreateWindow("CcinoGPU", settings.windowWidth, settings.windowHeight, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
             auto result = SDL_Vulkan_CreateSurface(m_window, m_instance, nullptr, &m_surface);
             if(!result) {
                 throw std::runtime_error("Can't Create Window Surface!"); 
@@ -110,13 +110,13 @@ namespace Ccino::RHI {
     }
 
     void Core::Destroy() {
+        DestroyVmaAllocator();
+        DestroyDevice();
+        DestroySurface(); //Surface 必须在窗口之前销毁
         if (m_window != nullptr) {
             SDL_DestroyWindow(m_window);
             m_window = nullptr;
         }
-        DestroyVmaAllocator();
-        DestroyDevice();
-        DestroySurface();
         DestroyDebugCallback(m_instance);
         DestroyInstance();
         if (m_sdlInitialized) {
@@ -441,8 +441,10 @@ namespace Ccino::RHI {
     }
 
     void Core::DestroySurface() {
-        if (m_surface != VK_NULL_HANDLE)
-            SDL_Vulkan_CreateSurface(m_window, m_instance, nullptr, &m_surface);
+        if (m_surface != VK_NULL_HANDLE) {
+            SDL_Vulkan_DestroySurface(m_instance, m_surface, nullptr);
+            m_surface = VK_NULL_HANDLE;
+        }
     }
 
     void Core::CreateVmaAllocator() {
