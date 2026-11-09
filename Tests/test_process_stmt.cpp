@@ -299,12 +299,12 @@ TEST(ProcessComputeShaderTest, FullComputeShaderPipelineIntegration) {
         "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
         "layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n";
     const std::string expectedParticleBuf =
-        "layout(buffer_reference, scalar) buffer Particle{ \n"
+        "layout(buffer_reference, scalar, buffer_reference_align = 4) buffer Particle{ \n"
         "vec3 pos;\n"
         "float mass;\n"
         "};\n";
     const std::string expectedDebugBuf =
-        "layout(buffer_reference, scalar) buffer DebugInfo{ \n"
+        "layout(buffer_reference, scalar, buffer_reference_align = 8) buffer DebugInfo{ \n"
         "int stepCount;\n"
         "uint flags;\n"
         "};\n";
@@ -380,7 +380,7 @@ TEST(ProcessComputeShaderTest, DuplicateAccessorTypeDeduplication) {
 
     // 多个相同底层结构体的 Accessor（无论读写权限是否相同）只应生成一次 buffer Particle 声明
     const std::string particleBlock =
-        "layout(buffer_reference, scalar) buffer Particle{ \n"
+        "layout(buffer_reference, scalar, buffer_reference_align = 4) buffer Particle{ \n"
         "vec3 pos;\n"
         "float mass;\n"
         "};\n";
@@ -441,7 +441,7 @@ TEST(ProcessComputeShaderTest, NestedStructAndBufferReferenceRecursiveEmission) 
         "vec3 normal;\n"
         "};\n";
     const std::string expectedOuterBuffer =
-        "layout(buffer_reference, scalar) buffer OuterBufferBlock{ \n"
+        "layout(buffer_reference, scalar, buffer_reference_align = 8) buffer OuterBufferBlock{ \n"
         "InnerHeader header;\n"
         "LeafPayload extraLeaves[2];\n"
         "};\n";
@@ -806,8 +806,8 @@ TEST(ProcessGraphicsShaderTest, MergesBindingsAndEmitsMatchingUniformLayout) {
 
     EXPECT_NE(ir.vs.find(expectedUniformBlock), std::string::npos) << ir.vs;
     EXPECT_NE(ir.fs.find(expectedUniformBlock), std::string::npos) << ir.fs;
-    EXPECT_NE(ir.vs.find("layout(buffer_reference, scalar) buffer VertexItem{ \n"), std::string::npos) << ir.vs;
-    EXPECT_NE(ir.fs.find("layout(buffer_reference, scalar) buffer PixelOut{ \n"), std::string::npos) << ir.fs;
+    EXPECT_NE(ir.vs.find("layout(buffer_reference, scalar, buffer_reference_align = 4) buffer VertexItem{ \n"), std::string::npos) << ir.vs;
+    EXPECT_NE(ir.fs.find("layout(buffer_reference, scalar, buffer_reference_align = 16) buffer PixelOut{ \n"), std::string::npos) << ir.fs;
     EXPECT_NE(ir.vs.find("ApplyExposure_float_float"), std::string::npos) << ir.vs;
     EXPECT_NE(ir.fs.find("ApplyExposure_float_float"), std::string::npos) << ir.fs;
     EXPECT_NE(ir.vs.find("float w = ApplyExposure_float_float(pc.uniformData.inVertices[0].weight,pc.uniformData.exposure);\n"),
@@ -1071,7 +1071,7 @@ TEST(ParseFilePassShadersTest, SinglePassInlineComputeShader) {
     ASSERT_EQ(ir.csUniformDataBindings.size(), 3u);
 
     EXPECT_NE(ir.cs.find("layout(local_size_x = 64, local_size_y = 4, local_size_z = 1) in;\n"), std::string::npos);
-    EXPECT_NE(ir.cs.find("layout(buffer_reference, scalar) buffer Particle{ \n"), std::string::npos);
+    EXPECT_NE(ir.cs.find("layout(buffer_reference, scalar, buffer_reference_align = 4) buffer Particle{ \n"), std::string::npos);
     EXPECT_NE(ir.cs.find("uint idx = gl_GlobalInvocationID.x;\n"), std::string::npos);
     EXPECT_NE(ir.cs.find("pc.uniformData.inOutParticles[idx].pos = (pc.uniformData.inOutParticles[idx].pos + (pc.uniformData.gravity * pc.uniformData.dt))"), std::string::npos);
 }

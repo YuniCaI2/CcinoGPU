@@ -9,8 +9,11 @@
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/TypeBase.h>
 #include <clang/AST/ASTContext.h>
+#include <clang/AST/RecordLayout.h>
 #include <llvm/Support/Casting.h>
+#include <algorithm>
 #include <memory>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -20,6 +23,35 @@ namespace {
     bool IsBuiltinType(clang::QualType type) {
         auto* record = type.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl();
         return Ccino::SignatureFlattener::FlattenRecord(record) != Ccino::SignatureFlattener::FlattenType(type).name;
+    }
+
+    //ref[i] 的步长是 scalar 块大小向上取整到 buffer_reference_align, 要让它等于 CPU 端 sizeof(T):
+    //alignof(T) 保证尾部填充被取整覆盖, sizeof 的最低位 1 (上限 16) 让纯 vec4 结构体也能用 16 字节宽访存.
+    //两者都整除 sizeof(T), 每个元素地址 base + i * sizeof(T) 都满足对齐承诺. 前提是 GPU scalar 大小等于 C++ 数据大小
+    uint32_t GetBufferReferenceAlign(const clang::CXXRecordDecl* def, const std::string& name) {
+        if (def->isDependentType() || def->isInvalidDecl()) {
+            throw std::invalid_argument("Buffer element type must be a complete, non-dependent type: " + name);
+        }
+        for (const clang::FieldDecl* field : def->fields()) {
+            clang::QualType type = field->getType().getCanonicalType();
+            while (const auto* arr = llvm::dyn_cast<clang::ConstantArrayType>(type.getTypePtr())) {
+                type = arr->getElementType().getCanonicalType();
+            }
+            if (type->isBooleanType()) {
+                throw std::invalid_argument("Buffer element type cannot contain bool (C++ 1 byte, GLSL 4 bytes): " +
+                                            name + "::" + field->getNameAsString());
+            }
+        }
+
+        const clang::ASTRecordLayout& layout = def->getASTContext().getASTRecordLayout(def);
+        const uint64_t size = static_cast<uint64_t>(layout.getSize().getQuantity());
+        const uint64_t align = static_cast<uint64_t>(layout.getAlignment().getQuantity());
+        if (size % 4 != 0) {
+            throw std::invalid_argument("Buffer element size must be a multiple of 4 bytes: " + name +
+                                        " (sizeof = " + std::to_string(size) + ")");
+        }
+        const uint64_t sizeLowBit = size & (~size + 1);
+        return static_cast<uint32_t>(std::max<uint64_t>(align, std::min<uint64_t>(16, sizeLowBit)));
     }
     std::string GetInout(clang::QualType type) {
         if (type->isLValueReferenceType() || type->isPointerType()) {
@@ -135,14 +167,39 @@ namespace Ccino {
             return; //直接返回
         }
 
+        auto* memberFuncDecl = llvm::dyn_cast<clang::CXXMethodDecl>(functionDecl);
+        clang::CXXRecordDecl* parent = memberFuncDecl ? memberFuncDecl->getParent()->getCanonicalDecl() : nullptr;
+        if (memberFuncDecl && (!parent || IsBuiltinType(parent->getASTContext().getCanonicalTagType(parent)))) {
+            return; //内建变量的函数通通不实现
+        }
+
+        const clang::FunctionDecl* canonical = functionDecl->getCanonicalDecl();
+        if (m_functionsEmitted.contains(canonical)) {
+            return;
+        }
+        if (m_functionsInProgress.contains(canonical)) {
+            llvm::errs() << "Error: GLSL does not support recursive function calls: "
+                         << SignatureFlattener::FlattenFunction(functionDecl) << "\n";
+            return;
+        }
+        m_functionsInProgress.insert(canonical);
+
+        //被调函数的参数和返回值里的结构体可能只在这里出现, 不会被 lambda 体里的 DeclStmt 收集到
+        for (const clang::ParmVarDecl* param : functionDecl->parameters()) {
+            InsertRecordTypeToGraph(param->getType());
+        }
+        InsertRecordTypeToGraph(functionDecl->getReturnType());
+
         auto glslFunc = std::make_unique<GLSL::FunctionDecl>();
         //首先判断当前的function是否是member
         glslFunc->fields = GetFunctionDeclFields(functionDecl);
         glslFunc->name = SignatureFlattener::FlattenFunction(functionDecl);
         glslFunc->returnType = SignatureFlattener::FlattenType(functionDecl->getReturnType()).name;
         glslFunc->depDeclNames = GetFuncDep(functionDecl);
-        
-        if (auto* memberFuncDecl = llvm::dyn_cast<clang::CXXMethodDecl>(functionDecl)) {
+
+        //函数体里的调用会递归进来改写 m_currentStructDecl, 处理完自己的函数体后要还原成外层函数的上下文
+        clang::CXXRecordDecl* outerStructDecl = m_currentStructDecl;
+        if (memberFuncDecl) {
             //这里是类函数所有这里的函数需要调整
             //这里特殊处理构造和析构 
             /*
@@ -155,28 +212,31 @@ namespace Ccino {
             */
 
 
-            std::string name = SignatureFlattener::FlattenFunction(memberFuncDecl, true);
-            auto* parent = memberFuncDecl->getParent()->getCanonicalDecl(); //这里是实例化的结果
-            if (!parent) return; //这里没有父类直接撤回
-            if (IsBuiltinType(parent->getASTContext().getCanonicalTagType(parent))) return; //内建变量的函数通通不实现
-
-
             m_currentStructDecl = parent; //这里记录下当前的函数是
-            auto* stmt = memberFuncDecl->getBody();
-            auto glslBodyStmt = ProcessClangStmt(stmt);
-            glslFunc->body = std::move(glslBodyStmt);
-
-
-            m_currentStructDecl = nullptr;
+            glslFunc->body = ProcessClangStmt(memberFuncDecl->getBody());
         } else {
-            auto* stmt = functionDecl->getBody();
-            auto glslBodyStmt = ProcessClangStmt(stmt);
-            glslFunc->body = std::move(glslBodyStmt);
+            m_currentStructDecl = nullptr;
+            glslFunc->body = ProcessClangStmt(functionDecl->getBody());
         }
+        m_currentStructDecl = outerStructDecl;
+        m_functionsInProgress.erase(canonical);
 
         if (glslFunc->body && !glslFunc->name.empty() && !glslFunc->returnType.empty()) {
             InsertGLSLFunc(std::move(glslFunc));
+            m_functionsEmitted.insert(canonical);
         }
+    }
+
+    void ASTGenerator::InsertRecordTypeToGraph(clang::QualType type) {
+        if (IsBuiltinType(type)) return;
+        if (type.isNull()) return;
+        clang::QualType canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
+        while (const auto* arr = llvm::dyn_cast<clang::ConstantArrayType>(canonical.getTypePtr())) {
+            canonical = arr->getElementType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
+        }
+        auto* record = canonical->getAsCXXRecordDecl();
+        if (!record) return;
+        InsertCXXRecordDeclToGraph(record);
     }
 
     void ASTGenerator::InsertCXXRecordDeclToGraph(clang::CXXRecordDecl* recordDecl, bool isBufferRef) {
@@ -191,6 +251,9 @@ namespace Ccino {
         auto glslStruct = std::make_unique<GLSL::StructDecl>();
         glslStruct->name = SignatureFlattener::FlattenRecord(recordDecl);
         glslStruct->isBufferReference = isBufferRef;
+        if (isBufferRef) {
+            glslStruct->bufferReferenceAlign = GetBufferReferenceAlign(def, glslStruct->name);
+        }
         for (const clang::FieldDecl* field : def->fields()) {
             auto glslField = std::make_unique<GLSL::DeclField>();
             auto [typeName, dimensions] = SignatureFlattener::FlattenType(field->getType());

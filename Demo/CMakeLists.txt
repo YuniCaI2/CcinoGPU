@@ -1,2 +1,3 @@
 add_subdirectory(OfflineTriangle)
 add_subdirectory(SwapchainTriangle)
+add_subdirectory(ParticleGalaxy)

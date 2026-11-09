@@ -302,6 +302,10 @@ namespace Ccino::RHI {
                 m_timelines[i]->Wait(waitValues[i]);
             }
         }
+        //每帧重绑纹理时旧 View 进了这一飞行帧的回收桶, 现在这一帧的提交已经完成, 可以腾出描述符索引
+        if (m_descriptorSlot != nullptr) {
+            m_descriptorSlot->Update();
+        }
         for (RID rid : expired) {
             DestroyResource(rid);
         }
@@ -1855,7 +1859,9 @@ namespace Ccino::RHI {
         //保证异步的上传队列上传完毕后再进行提交
 
         std::vector<VkSemaphoreSubmitInfo> waits = userWaits;
+        //TODO: P0: 这里导致了GPU资源变成了串行, 这里的同步太粗糙了
         appendWait(waits, timeline->GetSemaphore(), signal.previous);
+        //TODO: 设置为资源维度
         appendWait(waits, transferSemaphore, transferValue);
 
         std::vector<VkSemaphoreSubmitInfo> signals;

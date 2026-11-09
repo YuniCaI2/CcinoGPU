@@ -62,6 +62,7 @@ namespace Ccino {
 
         //Tool
         static const clang::APValue* ExtractStructuralAPValue(const clang::TemplateArgument& arg);
+        void SetInGlobalFunction(bool flag) {isInGlobalFunctionBody = flag;}
 
     private:
         //Stmt
@@ -90,6 +91,7 @@ namespace Ccino {
 
         //Tool
         std::unordered_set<std::string> GetStructMember(clang::CXXRecordDecl* decl);
+        void InsertRecordTypeToGraph(clang::QualType type); //剥掉引用和数组后, 自定义结构体入图; 内建类型、Accessor、Viewer 跳过
         void InsertGLSLFunc(std::unique_ptr<GLSL::FunctionDecl>&& funcDecl);
         void InsertGLSLStruct(std::unique_ptr<GLSL::StructDecl>&& structDecl);
 
@@ -104,5 +106,8 @@ namespace Ccino {
         //当前状态记录, 记录当前处理的指针是否属于成员
         clang::CXXRecordDecl* m_currentStructDecl = nullptr;
         bool isFrag = false; //如果是frag 则部分索引需要处理成flat 防止被插值
+        bool isInGlobalFunctionBody = false; //用来递归InsertFunction的定义
+        std::unordered_set<const clang::FunctionDecl*> m_functionsInProgress; //正在翻译函数体的函数, 再次遇到说明是递归
+        std::unordered_set<const clang::FunctionDecl*> m_functionsEmitted;    //已经入图的函数, 菱形调用时不重复翻译
     };
 }

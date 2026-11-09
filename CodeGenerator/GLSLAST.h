@@ -144,6 +144,7 @@ namespace Ccino::GLSL {
         virtual std::string EmitGLSL() override;
         std::vector<std::unique_ptr<DeclField>> fields;
         bool isBufferReference = false; //是否是SSBO的BufferReference
+        uint32_t bufferReferenceAlign = 16; //buffer_reference_align, 决定 ref[i] 的步长: 块大小向上取整到它的倍数
     };
 
     struct BufferRefDecl : StructDecl {

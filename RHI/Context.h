@@ -237,6 +237,7 @@ namespace Ccino::RHI {
             const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
         //一帧的顺序: PrepareFrame -> 录制 -> BlitToSwapchain -> SubmitFrame -> PresentFrame
         bool PrepareFrame(); //Acquire 交换链图像, 返回false 表示交换链已重建或窗口最小化, 本帧需要跳过. 帧槽位的复用由上一帧末尾的Tick 保证
+        //这里使用Copy的方案，可以避免我为Swapchain单独绑定一一个ImageView，并且集中在Context中处理Swapchain的Image， 减少在RenderGraph层计算依赖时的特判, 代替用户GetSwapchain Image再操作
         void BlitToSwapchain(VkCommandBuffer commandBuffer, RID srcTexture); //src 需要TransferSrc usage, 交换链图像最终转到PRESENT_SRC
         void SubmitFrame(CommandContext::CommandBuffer& commandBuffer); //等待ImageReady, 完成后Signal PresentReady
         void PresentFrame();

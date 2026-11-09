@@ -147,7 +147,9 @@ namespace {
 
         bool VisitCallExpr(clang::CallExpr* expr) {
             if (auto* funcDecl = expr->getDirectCallee()) {
+                m_astGenerator->SetInGlobalFunction(true);
                 m_astGenerator->InsertFunctionDeclToGraph(funcDecl);
+                m_astGenerator->SetInGlobalFunction(false);
             }
 
             return true;

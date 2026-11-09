@@ -293,7 +293,7 @@ namespace Ccino::GLSL {
     std::string StructDecl::EmitGLSL() {
         std::string out = {};
         if (isBufferReference) {
-            out += "layout(buffer_reference, scalar) buffer " + name + "{ \n";
+            out += "layout(buffer_reference, scalar, buffer_reference_align = " + std::to_string(bufferReferenceAlign) + ") buffer " + name + "{ \n";
             for (int i = 0; i < fields.size(); i++) {
                 out += fields[i]->EmitGLSL() + ";\n";
             }

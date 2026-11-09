@@ -149,6 +149,11 @@ namespace Ccino {
                 }
             }
 
+            //lambda 体里的局部结构体由 CppParser 的 LambdaInnerCollector 收集, 被递归翻译的函数体只能在这里收集
+            if (isInGlobalFunctionBody) {
+                InsertRecordTypeToGraph(canonical);
+            }
+
             auto [typeName, dimensions] = SignatureFlattener::FlattenType(canonical);
             if (typeName.empty()) return {};
 

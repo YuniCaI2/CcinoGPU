@@ -790,7 +790,7 @@ TEST_F(ProcessClangDeclTest, GenerateUniformDataReference_BufferRefAndRecursiveS
     // 2. 验证 EmitDeclGraph 中 SubMeta 排在 buffer BufferPayload 之前，且 BufferPayload 生成为 buffer_reference
     const std::string emittedDecls = generator.EmitDeclGraph();
     const size_t subMetaPos = emittedDecls.find("struct SubMeta{\n");
-    const size_t payloadPos = emittedDecls.find("layout(buffer_reference, scalar) buffer BufferPayload{ \n");
+    const size_t payloadPos = emittedDecls.find("layout(buffer_reference, scalar, buffer_reference_align = 4) buffer BufferPayload{ \n");
     const size_t cfgPos     = emittedDecls.find("struct CapturedConfig{\n");
 
     ASSERT_NE(subMetaPos, std::string::npos) << emittedDecls;

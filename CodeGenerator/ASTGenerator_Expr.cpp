@@ -258,6 +258,7 @@ namespace Ccino {
     std::unique_ptr<GLSL::LoweringStmt> ASTGenerator::ProcessCallExpr(clang::CallExpr* expr) {
         if (!expr) return nullptr;
         if (auto* FD = expr->getDirectCallee()) {
+            if (isInGlobalFunctionBody) InsertFunctionDeclToGraph(FD);
             std::string funcName = SignatureFlattener::FlattenFunction(FD);
             std::string rawName = FD->getNameAsString();
             std::string lowerName = rawName;
@@ -299,6 +300,7 @@ namespace Ccino {
 
         clang::CXXMethodDecl* method = expr->getMethodDecl();
         if (!method) return {};   // 比如通过成员函数指针 .* / ->* 调用
+        if (isInGlobalFunctionBody) InsertFunctionDeclToGraph(method);
 
         // Viewer 特殊处理
         if (const auto* spec = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(method->getParent())) {
