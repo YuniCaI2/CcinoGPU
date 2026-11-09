@@ -66,22 +66,21 @@ namespace {
 
             // 不使用顶点缓冲, 按 VertexIndex 生成三个顶点; Vulkan 裁剪空间 y 向下, 第一个顶点在上方
             auto vs = [=](Ccino::Vec4& color) {
-                float x = 0.0f;
-                float y = -0.5f;
+                Ccino::Vec2 pos(0.0f, -0.5f);
                 color = red;
                 if (Ccino::VertexIndex == 1) {
-                    x = 0.5f;
-                    y = 0.5f;
+                    pos = Ccino::Vec2(0.5f, 0.5f);
                     color = green;
                 }
                 if (Ccino::VertexIndex == 2) {
-                    x = -0.5f;
-                    y = 0.5f;
+                    pos = Ccino::Vec2(-0.5f, 0.5f);
                     color = blue;
                 }
                 float c = Ccino::Cos(angle);
                 float s = Ccino::Sin(angle);
-                Ccino::Position = Ccino::Vec4(x * c - y * s, x * s + y * c, 0.0f, 1.0f);
+                // 旋转矩阵: GLSL mat2 按列优先构造, 列 0 为 (c, s), 列 1 为 (-s, c)
+                Ccino::Mat2 rot(c, s, -s, c);
+                Ccino::Position = Ccino::Vec4(rot * pos, 0.0f, 1.0f);
             };
             auto fs = [=](const Ccino::Vec4& color, Ccino::Vec4& outColor) {
                 outColor = color;

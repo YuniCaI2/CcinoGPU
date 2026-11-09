@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <iostream>
@@ -344,8 +345,13 @@ namespace Ccino {
         m_textureBarriers.clear();
         std::vector<RID> currentLayer;
 
+        //这一帧没有任何读写边的Pass 不产出东西, 直接裁剪(比如func 里被if 跳过的Pass); 依赖只在有边的Pass 之间建立, 裁剪不影响其他Pass
+        std::unordered_set<RID> activePasses;
+        for (const auto& edge : m_edges) {
+            activePasses.insert(edge.passRID);
+        }
         for (const auto& passRID : m_passes.GetAllRIDs()) {
-            if (passInDegrees[passRID] == 0) {
+            if (activePasses.contains(passRID) && passInDegrees[passRID] == 0) {
                 currentLayer.push_back(passRID);
             }
         }
@@ -408,7 +414,7 @@ namespace Ccino {
 
         }
 
-        if (scheduledCount < m_passes.Size()) {
+        if (scheduledCount < activePasses.size()) {
             for (const auto& [passRID, inDegree] : passInDegrees) {
                 if (inDegree > 0) {
                     std::cerr << "RenderGraph build failed, Build a cycle dependency pass: " << passRID.index << std::endl;

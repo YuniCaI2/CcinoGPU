@@ -25,6 +25,18 @@ namespace {
     };
     template struct AccessPrivate<ResourcesTag, &Ccino::RGBuilder::m_resources>;
 
+    struct RecordPassesTag {
+        using type = void (Ccino::RGBuilder::*)();
+        friend type GetPrivate(RecordPassesTag);
+    };
+    template struct AccessPrivate<RecordPassesTag, &Ccino::RGBuilder::RecordPasses>;
+
+    //模拟LoopRun 的每一帧: 重新调用所有Pass 的func 再建图
+    void RecordAndBuild(Ccino::RGBuilder& builder) {
+        (builder.*GetPrivate(RecordPassesTag{}))();
+        builder.BuildGraph();
+    }
+
     const std::vector<std::vector<RID>>& GetTimeline(const Ccino::RGBuilder& builder) {
         return builder.*GetPrivate(TimelineTag{});
     }
@@ -436,5 +448,48 @@ TEST(RenderGraphTimeline, IndependentRenderTargetsJoin) {
     ExpectTimelineEquals(timeline, {
         {p0, p1},
         {p2}
+    });
+}
+
+// 13. func 里用 if 跳过全部访问的 Pass 没有边, 每帧建图时被裁剪, 条件恢复后重新参与调度
+TEST(RenderGraphTimeline, PassWithoutEdgesIsCulledPerFrame) {
+    Ccino::RGBuilder builder;
+    RID resA = CreateDummyBufferResource(builder);
+    RID resB = CreateDummyBufferResource(builder);
+
+    bool enableP1 = true;
+    RID p0, p1, p2;
+    builder.AddPass<"P0">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p0 = passRID;
+        rg.Write<uint32_t>(resA, passRID);
+    }).AddPass<"P1">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p1 = passRID;
+        if (enableP1) {
+            rg.Read<uint32_t>(resA, passRID);
+            rg.Write<uint32_t>(resB, passRID);
+        }
+    }).AddPass<"P2">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        p2 = passRID;
+        rg.Read<uint32_t>(resA, passRID);
+    });
+
+    RecordAndBuild(builder);
+    ExpectTimelineEquals(GetTimeline(builder), {
+        {p0},
+        {p1, p2}
+    });
+
+    enableP1 = false;
+    RecordAndBuild(builder);
+    ExpectTimelineEquals(GetTimeline(builder), {
+        {p0},
+        {p2}
+    });
+
+    enableP1 = true;
+    RecordAndBuild(builder);
+    ExpectTimelineEquals(GetTimeline(builder), {
+        {p0},
+        {p1, p2}
     });
 }
