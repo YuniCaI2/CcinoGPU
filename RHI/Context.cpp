@@ -3,6 +3,7 @@
 #include "RHI/Core.h"
 #include "RHI/DescriptorSlot.h"
 #include "RHI/Swapchain.h"
+#include "RHI/TimelineSemaphore.h"
 #include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
 #include <algorithm>
 #include <cstdint>
@@ -257,7 +258,16 @@ namespace Ccino::RHI {
         m_flightFrameCount = settings.flightFrameCount; //飞行帧数用来处理资源和同步的分配
 
         m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
-        m_descriptorSlot->Init(this);        
+        m_descriptorSlot->Init(this);
+        m_swapchain->Init(this);
+        m_swapchain->Create(settings.windowWidth, settings.windowHeight, settings.bVsync);
+
+        m_settings = settings;
+
+        //Global Semaphore
+        CreateGlobalBinarySemaphores();
+        //FrameNums
+        m_frameFenceNums.resize(m_flightFrameCount, 0);
     }
 
     void Context::Tick() {
@@ -273,6 +283,9 @@ namespace Ccino::RHI {
     }
 
     void Context::Destroy() {
+        //Global Semaphore Destroy
+        DestroyGlobalBinarySemaphores();
+
         VkDevice device = m_core->GetVkDevice();
         if (device != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device);
@@ -339,14 +352,14 @@ namespace Ccino::RHI {
         if (!rid) {
             return;
         }
-        //类型匹配 
+        //类型匹配
         if (m_flightFrameCount <= 1)  {
             for (const auto& timeline : m_timelines) {
                 if (timeline != nullptr) {
                     timeline->Wait(timeline->ReadValue()); //这里的ReadValue是timeline的目标值，可以理解是最后一次提交时Command记录的值
                 }
             }
-            DestroyResource(rid); 
+            DestroyResource(rid);
         } else {
             std::lock_guard lock(m_deletionMutex);
             m_bufferDeletionQueue[m_currentFrameIndex].push_back(rid);
@@ -519,7 +532,7 @@ namespace Ccino::RHI {
 
         WaitResource_Impl(source);
         WaitResource_Impl(destination);
-        
+
 
 
         CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::TRANSFER);
@@ -726,6 +739,32 @@ namespace Ccino::RHI {
         m_semaphores.Remove(rid);
     }
 
+    void Context::CreateGlobalBinarySemaphores() {
+        int n = m_swapchain->m_images.size();
+        m_imageReadySemaphores.resize(n);
+        m_presentCompletedSemaphores.resize(n);
+
+        auto Create = [this](VkSemaphore& semaphore) {
+            VkSemaphoreCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            VULKAN_CHECK(vkCreateSemaphore(m_core->GetVkDevice(), &createInfo, nullptr, &semaphore));
+        };
+
+        for (int i = 0; i < n; i++) {
+            Create(m_imageReadySemaphores[i]);
+            Create(m_presentCompletedSemaphores[i]);
+        }
+
+        return;
+    }
+    void Context::DestroyGlobalBinarySemaphores() {
+        int n = m_imageReadySemaphores.size();
+        for (int i = 0; i < n; i++) {
+            vkDestroySemaphore(m_core->GetVkDevice(), m_imageReadySemaphores[i], nullptr);
+            vkDestroySemaphore(m_core->GetVkDevice(), m_presentCompletedSemaphores[i], nullptr);
+        }
+    }
+
     void Context::CreateGlobalTimelineSemaphore() {
         DestroyGlobalTimelineSemaphore();
 
@@ -814,7 +853,7 @@ namespace Ccino::RHI {
         return static_cast<uint32_t>(renderDesc.offsetX) + width <= extentW &&
                static_cast<uint32_t>(renderDesc.offsetY) + height <= extentH;
     }
-    
+
     void Context::WaitResource_Impl(VulkanResource* resource) {
         if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(resource->lastQueue));
             timeline != nullptr) {
@@ -838,7 +877,7 @@ namespace Ccino::RHI {
         info.clearValue = attachmentInfo.clearValue;
         return info;
     }
-    
+
     RID Context::CreateTexture(const TextureCreateInfo& createInfo) {
         if (createInfo.arrayLayers > 1) {
             throw std::runtime_error("Texture arrays are not supported");
@@ -1025,8 +1064,8 @@ namespace Ccino::RHI {
         }
 
         CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(CommandQueueType::GRAPHICS);
-        auto barrier = MakeLayoutBarrier(texture->image, texture->format, texture->layout, newLayout, 
-            texture->mipLevels == 0 ? VK_REMAINING_MIP_LEVELS : texture->mipLevels, 
+        auto barrier = MakeLayoutBarrier(texture->image, texture->format, texture->layout, newLayout,
+            texture->mipLevels == 0 ? VK_REMAINING_MIP_LEVELS : texture->mipLevels,
             texture->arrayLayers == 0 ? VK_REMAINING_ARRAY_LAYERS : texture->arrayLayers);
         StartRecording(commandBuffer);
 
@@ -1439,7 +1478,7 @@ namespace Ccino::RHI {
             texture.image = image;
             //Width 和 Height 不用管理，直接取swapchain中获取
             texture.isSwapchain = true;
-            
+
             results.push_back(m_textures.Add(std::move(texture)));
         }
         return results;
@@ -1479,7 +1518,7 @@ namespace Ccino::RHI {
         if (!CheckAndNormalizeRenderDesc(renderingInfo, width, height)) {
             throw std::runtime_error("[RHI Context BeginRendering]: RenderDesc is wrong!");
         }
-        
+
         std::vector<VkRenderingAttachmentInfo> colorAttachments;
         colorAttachments.reserve(renderingInfo.colorAttachments.size());
         for (const AttachmentInfo& color : renderingInfo.colorAttachments) {
@@ -1510,6 +1549,41 @@ namespace Ccino::RHI {
     void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {
         SubmitCommandBufferTracked(queueType, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
     }
+
+    TimelineSemaphore::Signal Context::PrepareFrame() {
+        if (!m_settings.bUseSwapChain) {
+            throw std::runtime_error("bUseSwapChain is false");
+        }
+
+        //这里需要特判第一帧
+        //如果是第一帧，直接等待graphics管线的任务，如果不是第一帧，则需要等待先前的任务
+        uint32_t graphicsIndex = m_core->GetGraphicsQueueFamilyIndex();
+        auto& graphicsTimeline = m_timelines[graphicsIndex];
+        TimelineSemaphore::Signal returnSignal = {};
+        if (!m_bRenderStarted) {
+            returnSignal = graphicsTimeline->BeginSignal();
+            m_frameFenceNums[m_currentFrameIndex] = returnSignal.current;
+        } else {
+            graphicsTimeline->Wait(m_frameFenceNums[m_currentFrameIndex]);
+            returnSignal =  graphicsTimeline->BeginSignal();
+        }
+
+        //Swapchain
+        uint32_t imageIndex = 0;
+        m_swapchain->AcquireNextImage(m_presentCompletedSemaphores[m_currentFrameIndex], imageIndex);
+
+
+        return returnSignal;
+    }
+
+    void Context::PresentFrame(TimelineSemaphore::Signal&& signal) {
+        if (!m_settings.bUseSwapChain) {
+            std::cerr << "bUseSwapChain is false" << std::endl;
+            return;
+        }
+
+    }
+
 
     void Context::DestroyResource(RID rid) {
         if (!rid) {

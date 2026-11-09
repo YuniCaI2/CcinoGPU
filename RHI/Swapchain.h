@@ -1,12 +1,15 @@
 #pragma once
-#include "Core.h"
+#include <stdint.h>
+#include <vulkan/vulkan_core.h>
+#include <vector>
+#include <RHI/RHIStruct.h>
 
 namespace Ccino::RHI {
     class Core;
     class Context;
     class Swapchain {
     public:
-        void Init(RHI::Context* m_core);
+        void Init(RHI::Context* context);
         void Destroy();
 
         //此处负责Swapchain的建立和重建
@@ -14,7 +17,10 @@ namespace Ccino::RHI {
 
         std::vector<RID>& GetTextures() {return m_textures;}
 
-        VkResult GetNextImage(RID presentCompleteSemaphore, uint32_t& imageIndex); //获取下一个可用的交换链索引
+        VkResult GetNextImage(VkSemaphore presentCompleteSemaphore, uint32_t& imageIndex); //获取下一个可用的交换链索引,这里不使用RID，减少索引开销
+        //处理当前的Present
+        void PresentFrame(uint32_t imageIndex, VkSemaphore imageReadySemaphore);
+        VkResult AcquireNextImage(VkSemaphore presentCompleteSemaphore, uint32_t& imageIndex);
 
     private:
         friend class RHI::Context;

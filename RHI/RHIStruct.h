@@ -19,6 +19,7 @@ struct RHISettings {
 
     uint32_t windowHeight = 0;
     uint32_t windowWidth = 0;
+    bool bVsync = false;
 };
 
 struct RID {

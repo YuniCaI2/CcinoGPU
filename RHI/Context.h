@@ -40,7 +40,7 @@ namespace Ccino::RHI {
     struct BufferCreateInfo {
         uint32_t size = 0;
         VkBufferUsageFlags2 usage = 0;
-        HostAccess access = HostAccess::None; 
+        HostAccess access = HostAccess::None;
         bool requireHostCoherent = false; //要求落在 HOST_VISIBLE | HOST_COHERENT 内存上，选不到时创建失败，不做降级
     };
 
@@ -157,7 +157,7 @@ namespace Ccino::RHI {
 
         //Buffer 默认使用BDA
         RID CreateBuffer(const BufferCreateInfo& createInfo); //这里使用新的的BufferUsageFlags2
-        RID CreateUniformBuffer(uint32_t size, const void* data); //Uniform Buffer 
+        RID CreateUniformBuffer(uint32_t size, const void* data); //Uniform Buffer
         RID CreateStorageBuffer(uint32_t size, const void* data);
         RID CreateTransferBuffer(uint32_t size, const void* data); //StagingBuffer用来上传
         RID CreateReadbackBuffer(uint32_t size); //CPU 可见，用来把 Local Buffer 读回
@@ -184,6 +184,9 @@ namespace Ccino::RHI {
         //Semphore
         RID CreateSemaphore();
         void DestroySemaphore(RID rid);
+        VkSemaphore* GetVkSemaphore(RID rid) { return m_semaphores.Get(rid); }
+        void CreateGlobalBinarySemaphores();
+        void DestroyGlobalBinarySemaphores();
 
         //Global Timeline Semaphore
         void CreateGlobalTimelineSemaphore(); //尽可能不让外部感知到这个信号量，这里不用RID管理
@@ -215,16 +218,16 @@ namespace Ccino::RHI {
 
         //Command
         CommandContext::CommandBuffer& GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex = 0);
-
         void StartRecording(CommandContext::CommandBuffer& commandBuffer);
         void EndRecording(CommandContext::CommandBuffer& commandBuffer);
         //返回本次渲染的 renderArea 尺寸, 供 Viewport / Scissor 使用
         VkExtent2D BeginRendering(VkCommandBuffer commandBuffer, const RenderDesc& renderingInfo);
         void EndRendering(VkCommandBuffer commandBuffer);
-
-        void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0, 
+        void SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue = 0,
             const std::vector<RID>& waitSemaphores = {}, const std::vector<RID>& signalSemaphores = {}, const std::vector<VkPipelineStageFlags2> pipelineStageFlags = {});
-       
+        TimelineSemaphore::Signal PrepareFrame();
+        void PresentFrame(TimelineSemaphore::Signal&& signal);
+
         template<typename Fn>
         requires std::invocable<Fn, CommandContext::CommandBuffer&>
         void ExecuteCommand(Fn&& fn, CommandQueueType queueType) {
@@ -261,8 +264,9 @@ namespace Ccino::RHI {
         //meta
         uint32_t m_flightFrameCount = 0;
         uint32_t m_currentFrameIndex = 0;
+        uint32_t m_currentImageIndex = 0;
 
-
+        RHISettings m_settings;
 
 
         //其实这里需要使用unique比较合适，然后前向声明
@@ -286,9 +290,19 @@ namespace Ccino::RHI {
         // 按队列家族索引。每个 TimelineSemaphore 自己保护目标值。
         std::vector<std::unique_ptr<TimelineSemaphore>> m_timelines;
 
+        //Raster
+        //内部管理两个信号量,这个信号量处理需要
+        std::vector<VkSemaphore> m_imageReadySemaphores;
+        std::vector<VkSemaphore> m_presentCompletedSemaphores;
+        std::vector<uint64_t> m_frameFenceNums;
+        //这个bool值记录当前的对象是否开始渲染了
+        bool m_bRenderStarted = false;
 
-        void DestroyResource(RID rid); 
-        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, 
+
+
+
+        void DestroyResource(RID rid);
+        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers,
             uint64_t signalValue, const std::vector<RID>& waitSemaphores, const std::vector<RID>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
         void ReleaseUploadStaging(VulkanBuffer& buffer);
         TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);

@@ -1,7 +1,9 @@
 #include "RHI/Swapchain.h"
 #include "Core.h"
 #include "RHI/Context.h"
+#include "RHI/RHIStruct.h"
 #include <algorithm>
+#include <vulkan/vulkan_core.h>
 
 
 namespace Ccino::RHI {
@@ -129,5 +131,22 @@ namespace Ccino::RHI {
         m_images.resize(imageCount);
         VULKAN_CHECK(vkGetSwapchainImagesKHR(m_core->GetVkDevice(), m_vulkanSwapchain, &imageCount, m_images.data()));
         m_textures = m_context->RegisterSwapchainImages(m_images); //获得注册
+    }
+
+    void Swapchain::PresentFrame(uint32_t imageIndex, VkSemaphore imageReadySemaphore) {
+        VkPresentInfoKHR presentInfo = {};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &imageReadySemaphore;
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &m_vulkanSwapchain;
+        presentInfo.pImageIndices = &imageIndex;
+
+        vkQueuePresentKHR(m_core->GetVkQueue(CommandQueueType::GRAPHICS), &presentInfo);
+    }
+
+    VkResult Swapchain::AcquireNextImage(VkSemaphore presentCompleteSemaphore, uint32_t& imageIndex) {
+        auto result = vkAcquireNextImageKHR(m_core->GetVkDevice(), m_vulkanSwapchain, UINT64_MAX, presentCompleteSemaphore, VK_NULL_HANDLE, &imageIndex);
+        return result;
     }
 }
