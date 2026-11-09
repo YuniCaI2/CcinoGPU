@@ -16,6 +16,9 @@ namespace Ccino::RHI {
         void Create(uint32_t width, uint32_t height, bool vsync); //先使用这三个选项
 
         std::vector<RID>& GetTextures() {return m_textures;}
+        VkFormat GetColorFormat() const { return m_colorFormat; }
+        VkColorSpaceKHR GetColorSpace() const { return m_colorSpace; }
+        VkExtent2D GetExtent() const { return m_extent; }
 
         VkResult GetNextImage(VkSemaphore presentCompleteSemaphore, uint32_t& imageIndex); //获取下一个可用的交换链索引,这里不使用RID，减少索引开销
         //处理当前的Present
@@ -24,6 +27,8 @@ namespace Ccino::RHI {
 
     private:
         friend class RHI::Context;
+
+        void SelectSurfaceFormat();
 
         RHI::Core* m_core{};
         RHI::Context* m_context;

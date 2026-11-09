@@ -1495,8 +1495,10 @@ namespace Ccino::RHI {
         for (const auto& image : images) {
             VulkanTexture texture = {};
             texture.image = image;
-            //Width 和 Height 不用管理，直接取swapchain中获取
             texture.isSwapchain = true;
+            texture.format = m_swapchain->GetColorFormat();
+            texture.width = m_swapchain->GetExtent().width;
+            texture.height = m_swapchain->GetExtent().height;
 
             results.push_back(m_textures.Add(std::move(texture)));
         }

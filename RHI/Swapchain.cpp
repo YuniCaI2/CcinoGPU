@@ -3,6 +3,8 @@
 #include "RHI/Context.h"
 #include "RHI/RHIStruct.h"
 #include <algorithm>
+#include <stdexcept>
+#include <vector>
 #include <vulkan/vulkan_core.h>
 
 
@@ -11,8 +13,48 @@ namespace Ccino::RHI {
         m_context = context;
         m_core = &context->GetCore();
         m_surface = m_core->GetSurface();
-        //创建Swapchain和Surface
+        if (m_surface == VK_NULL_HANDLE) {
+            throw std::runtime_error("Swapchain requires a valid surface");
+        }
+        SelectSurfaceFormat();
+    }
 
+    //优先SRGB 格式, 着色器输出线性颜色由硬件做Gamma 编码; 都不支持时退回设备返回的第一个格式
+    void Swapchain::SelectSurfaceFormat() {
+        const VkPhysicalDevice physicalDevice = m_core->GetVkPhysicalDevice();
+        uint32_t formatCount = 0;
+        VULKAN_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, m_surface, &formatCount, nullptr));
+        if (formatCount == 0) {
+            throw std::runtime_error("Surface does not report any supported format");
+        }
+        std::vector<VkSurfaceFormatKHR> formats(formatCount);
+        VULKAN_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, m_surface, &formatCount, formats.data()));
+
+        //只返回一个UNDEFINED 表示Surface 不限制格式
+        if (formatCount == 1 && formats[0].format == VK_FORMAT_UNDEFINED) {
+            m_colorFormat = VK_FORMAT_B8G8R8A8_SRGB;
+            m_colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+            return;
+        }
+
+        constexpr VkFormat preferredFormats[] = {
+            VK_FORMAT_B8G8R8A8_SRGB,
+            VK_FORMAT_R8G8B8A8_SRGB,
+            VK_FORMAT_B8G8R8A8_UNORM,
+            VK_FORMAT_R8G8B8A8_UNORM,
+        };
+        for (VkFormat preferred : preferredFormats) {
+            for (const VkSurfaceFormatKHR& format : formats) {
+                if (format.format == preferred && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                    m_colorFormat = format.format;
+                    m_colorSpace = format.colorSpace;
+                    return;
+                }
+            }
+        }
+
+        m_colorFormat = formats[0].format;
+        m_colorSpace = formats[0].colorSpace;
     }
 
     void Swapchain::Destroy() {
