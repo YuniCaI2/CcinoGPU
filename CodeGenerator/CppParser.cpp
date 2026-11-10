@@ -1,5 +1,6 @@
 #include "CppParser.h"
 #include "ASTGenerator.h"
+#include "Core/ThreadPoo.h"
 #include "GLSLAST.h"
 #include "ShaderStruct/ShaderCommon.h"
 #include "ShaderStruct/UniformData.h"
@@ -23,6 +24,7 @@
 #include <clang/Tooling/JSONCompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <iterator>
 #include <llvm/Support/Casting.h>
@@ -248,87 +250,106 @@ namespace Ccino
             return {};
         }
 
-        clang::tooling::ClangTool tool(*compilationDB, sourceFiles);
-        tool.appendArgumentsAdjuster(
-            [](const clang::tooling::CommandLineArguments& args, llvm::StringRef /*filename*/) {
-                clang::tooling::CommandLineArguments adjusted;
-                adjusted.reserve(args.size() + 2);
-                bool hasResourceDir = false;
-                bool afterSeparator = false;
-                for (const auto& arg : args) {
-                    if (arg == "--") {
-                        afterSeparator = true;
-                    }
-                    if (afterSeparator) {
-                        adjusted.push_back(arg);
-                        continue;
-                    }
-                    if (arg == "-resource-dir" || arg.starts_with("-resource-dir=")) {
-                        hasResourceDir = true;
-                    }
-                    if (arg == "-std:c++latest" || arg == "/std:c++latest") {
-                        adjusted.push_back("-std:c++20");
-                        adjusted.push_back("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH");
-                    } else {
-                        adjusted.push_back(arg);
-                    }
-                }
-                if (!hasResourceDir) {
-                    // Insert before a possible "--" separator so this remains a driver option.
-                    adjusted = clang::tooling::getInsertArgumentAdjuster(
-                        "-resource-dir=" CCINO_CLANG_RESOURCE_DIR,
-                        clang::tooling::ArgumentInsertPosition::END)(adjusted, "");
-                }
-                return adjusted;
-            });
+        //使用线程池加速
+        ThreadPool threadPool(8);
+        std::mutex shaderIRMutex;
+        std::vector<ShaderIR> shaderIRs;
 
-        ComputePassShaderCollector collector;
-        GraphicsPassShaderCollector graphicsCollector;
-        MatchFinder finder;
-        //这里 设置Matcher的对象，这里设置了它的调用者和参数绑定
-        auto csCallMatcher = cxxMemberCallExpr(
-            callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder"))).bind("addCSMethod")), // 这里的bind相当于把addCSMethod贴上了标签
-            hasAncestor(cxxMemberCallExpr( //上层调用者 ,并且打上标签
-                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod"))
-            )),
-            hasArgument(0, anyOf( //检查AddCS的第一个参数
-                ignoringImplicit(lambdaExpr().bind("csLambda")), //直接塞进来一个Lambda
-                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("csLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
-            ))
-        );
+        auto processSourceFile = [&](const std::string& sourceFile) {
+            clang::tooling::ClangTool tool(*compilationDB, sourceFile);
+            tool.appendArgumentsAdjuster(
+                [](const clang::tooling::CommandLineArguments& args, llvm::StringRef /*filename*/) {
+                    clang::tooling::CommandLineArguments adjusted;
+                    adjusted.reserve(args.size() + 2);
+                    bool hasResourceDir = false;
+                    bool afterSeparator = false;
+                    for (const auto& arg : args) {
+                        if (arg == "--") {
+                            afterSeparator = true;
+                        }
+                        if (afterSeparator) {
+                            adjusted.push_back(arg);
+                            continue;
+                        }
+                        if (arg == "-resource-dir" || arg.starts_with("-resource-dir=")) {
+                            hasResourceDir = true;
+                        }
+                        if (arg == "-std:c++latest" || arg == "/std:c++latest") {
+                            adjusted.push_back("-std:c++20");
+                            adjusted.push_back("-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH");
+                        } else {
+                            adjusted.push_back(arg);
+                        }
+                    }
+                    if (!hasResourceDir) {
+                        // Insert before a possible "--" separator so this remains a driver option.
+                        adjusted = clang::tooling::getInsertArgumentAdjuster(
+                            "-resource-dir=" CCINO_CLANG_RESOURCE_DIR,
+                            clang::tooling::ArgumentInsertPosition::END)(adjusted, "");
+                    }
+                    return adjusted;
+                });
 
-        auto vsAndFsMatcher = cxxMemberCallExpr(
-            callee(cxxMethodDecl(hasName("AddVSAndFS"), ofClass(hasName("RGBuilder"))).bind("addVSAndFSMethod")),
-            hasAncestor(cxxMemberCallExpr(
-                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod"))
-            )),
-            hasArgument(0, anyOf( //检查AddCS的第一个参数
-                ignoringImplicit(lambdaExpr().bind("vsLambda")), //直接塞进来一个Lambda
-                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("vsLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
-            )),
-            hasArgument(1, anyOf( //检查AddCS的第一个参数
-                ignoringImplicit(lambdaExpr().bind("fsLambda")), //直接塞进来一个Lambda
-                ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("fsLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
-            ))
-        );
+            ComputePassShaderCollector collector;
+            GraphicsPassShaderCollector graphicsCollector;
+            MatchFinder finder;
+            //这里 设置Matcher的对象，这里设置了它的调用者和参数绑定
+            auto csCallMatcher = cxxMemberCallExpr(
+                callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder"))).bind("addCSMethod")), // 这里的bind相当于把addCSMethod贴上了标签
+                hasAncestor(cxxMemberCallExpr( //上层调用者 ,并且打上标签
+                    callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod"))
+                )),
+                hasArgument(0, anyOf( //检查AddCS的第一个参数
+                    ignoringImplicit(lambdaExpr().bind("csLambda")), //直接塞进来一个Lambda
+                    ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("csLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
+                ))
+            );
 
-        finder.addMatcher(csCallMatcher, &collector);
-        finder.addMatcher(vsAndFsMatcher, &graphicsCollector);
+            auto vsAndFsMatcher = cxxMemberCallExpr(
+                callee(cxxMethodDecl(hasName("AddVSAndFS"), ofClass(hasName("RGBuilder"))).bind("addVSAndFSMethod")),
+                hasAncestor(cxxMemberCallExpr(
+                    callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod"))
+                )),
+                hasArgument(0, anyOf( //检查AddCS的第一个参数
+                    ignoringImplicit(lambdaExpr().bind("vsLambda")), //直接塞进来一个Lambda
+                    ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("vsLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
+                )),
+                hasArgument(1, anyOf( //检查AddCS的第一个参数
+                    ignoringImplicit(lambdaExpr().bind("fsLambda")), //直接塞进来一个Lambda
+                    ignoringImplicit(declRefExpr(to(varDecl(hasInitializer(ignoringImplicit(lambdaExpr().bind("fsLambda"))))))) //赋值变量表达式 ，从变量引用表达式到变量声明的位置然后得到它的初始化逻辑然后蜕壳得到Lambda
+                ))
+            );
 
-        // 4. 运行 Clang 前端并触发回调
-        if (tool.run(clang::tooling::newFrontendActionFactory(&finder).get()) != 0) {
-            llvm::errs() << "ClangTool failed on file: " << compileCommandJsonPath << "\n";
-            return {};
+            finder.addMatcher(csCallMatcher, &collector);
+            finder.addMatcher(vsAndFsMatcher, &graphicsCollector);
+
+            // 4. 运行 Clang 前端并触发回调
+            if (tool.run(clang::tooling::newFrontendActionFactory(&finder).get()) != 0) {
+                llvm::errs() << "ClangTool failed on file: " << compileCommandJsonPath << "\n";
+                return;
+            }
+
+            if (globalFunctions) {
+                *globalFunctions = {}; //在生成代码的时候已经生成了依赖
+            }
+
+            // 5. 返回收集好的所有 ShaderIR
+            std::lock_guard lock(shaderIRMutex);
+            for (auto& shaderIR : graphicsCollector.shaderIRs) {
+                shaderIRs.push_back(std::move(shaderIR));
+            }
+            for (auto& shaderIR : collector.shaderIRs) {
+                shaderIRs.push_back(std::move(shaderIR));
+            }
+        };
+        std::vector<std::future<void>> futures;
+
+        for (auto& sourceFile : sourceFiles) {
+            auto future = threadPool.Enqueue(processSourceFile, sourceFile);
+            futures.push_back(std::move(future));
         }
-
-        if (globalFunctions) {
-            *globalFunctions = {}; //在生成代码的时候已经生成了依赖
-        }
-
-        // 5. 返回收集好的所有 ShaderIR
-        std::vector<ShaderIR> shaderIRs = std::move(collector.shaderIRs);
-        for (auto& shaderIR : graphicsCollector.shaderIRs) {
-            shaderIRs.push_back(std::move(shaderIR));
+        for (auto& future : futures) {
+            future.get();
         }
         return shaderIRs;
     }
