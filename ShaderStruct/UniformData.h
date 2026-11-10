@@ -17,6 +17,7 @@ namespace Ccino {
         SampledImage, //全局DescriptorSet 中的数组索引 uint32_t
         StorageImage, //全局DescriptorSet 中的数组索引 uint32_t
         Sampler, //全局DescriptorSet 中的数组索引 uint32_t
+        //Struct, //常规的全局Struct
 
         //Param 标量
         Bool, //GLSL bool 占4字节, BindParam 传入bool 时自动展开成uint32_t

@@ -23,6 +23,7 @@
 #include <clang/Tooling/CompilationDatabase.h>
 #include <clang/Tooling/JSONCompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
+#include <exception>
 #include <fstream>
 #include <mutex>
 #include <stdexcept>
@@ -348,8 +349,12 @@ namespace Ccino
             auto future = threadPool.Enqueue(processSourceFile, sourceFile);
             futures.push_back(std::move(future));
         }
-        for (auto& future : futures) {
-            future.get();
+        try {
+            for (auto& future : futures) {
+                future.get();
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "GLSL Generate Error :" << e.what() << std::endl;
         }
         return shaderIRs;
     }
