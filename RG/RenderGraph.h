@@ -11,6 +11,7 @@
 #include "RefCounted.hpp"
 #include "ShaderStruct/ShaderCommon.h"
 #include "Texture2D.h"
+#include <algorithm>
 #include <concepts>
 #include <cstring>
 #include <functional>
@@ -27,7 +28,7 @@ namespace Ccino {
         RID resourceRID;
         RID passRID;
         uint32_t version;
-        ResourceAccessFlags resourceAccessFlags;   
+        ResourceAccessFlags resourceAccessFlags;
     };
 
     struct RGPassDependency {
@@ -56,8 +57,23 @@ namespace Ccino {
         RID resourceRID;
     };
 
+
+    class IRGScheduler {
+    public:
+        virtual ~IRGScheduler() = default;
+
+        template <typename F>
+        std::future<void> Enqueue(F&& f) {
+            return EnqueueImpl(std::function<void()>(std::forward<F>(f)));
+        }
+
+    protected:
+        virtual std::future<void> EnqueueImpl(std::function<void()>&& fn) = 0;
+    };
+
     class RGBuilder {
     public:
+        void Init(RHI::Context* context, std::unique_ptr<IRGScheduler>&& sheduler);
         void Init(RHI::Context* context);
         void Destroy();
 
@@ -91,7 +107,7 @@ namespace Ccino {
             if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
                 auto& shaderIR = ShaderIRRegistry::Instance()[pass->passName];
                 if (pass->m_pipleineRID == RID::Invalid()) {
-                    pass->m_pipleineRID = m_context->CreateGraphicsShaderObject(pass->passName, reinterpret_cast<char*>(shaderIR.vs.data()), shaderIR.vs.size(), 
+                    pass->m_pipleineRID = m_context->CreateGraphicsShaderObject(pass->passName, reinterpret_cast<char*>(shaderIR.vs.data()), shaderIR.vs.size(),
                     reinterpret_cast<char*>(shaderIR.fs.data()), shaderIR.fs.size());
                 }
                 if (pass->m_descriptorSlotRID == RID::Invalid()) {
@@ -295,19 +311,21 @@ namespace Ccino {
         //线程不安全，考虑是否加锁
         RID m_currentPass = RID::Invalid();
         std::vector<RGEdge> m_edges;  //当前的Edge可能对应多个资源
-        std::unordered_map<RID, uint32_t> m_edgeNums; 
+        std::unordered_map<RID, uint32_t> m_edgeNums;
 
         std::vector<std::vector<RID>> m_timeline;
 
 
         //类型粒度分开
         std::vector<std::vector<RGBufferBarrier>> m_bufferBarriers; //这个和timeline需要对齐 | timeline 0 || barrier 0 || timeline 1 || barrier 1 || timeline2
-        std::vector<std::vector<RGTextureBarrier>> m_textureBarriers; 
+        std::vector<std::vector<RGTextureBarrier>> m_textureBarriers;
 
         //RenderTarget由RGBuilder管理View
         std::vector<RID> m_renderTargetViews;
 
-
         RHI::Context* m_context = nullptr;
+
+        //调度器
+        std::unique_ptr<IRGScheduler> m_scheduler;
     };
 }

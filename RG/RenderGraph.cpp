@@ -228,6 +228,12 @@ namespace Ccino {
 
     void RGBuilder::Init(RHI::Context* context) {
         m_context = context;
+        m_scheduler = nullptr; //这里直接使用空代表串行
+    }
+
+    void RGBuilder::Init(RHI::Context* context, std::unique_ptr<IRGScheduler>&& sheduler) {
+        m_context = context;
+        m_scheduler = std::move(sheduler);
     }
 
     void RGBuilder::Destroy() {
@@ -262,7 +268,7 @@ namespace Ccino {
                     passDependencies.push_back(RGPassDependency{writer.first, readerPassRID, resourceRID, version + 1, writer.second, readerAccessFlags});
                 }
             }
-        }        
+        }
 
         //RAW
         for (auto& [resourceRID, versionMap] : readers) {
@@ -284,13 +290,13 @@ namespace Ccino {
                     passDependencies.push_back(RGPassDependency{writer.first, nextWriter.first, resourceRID, version + 1, writer.second, nextWriter.second});
                 }
             }
-        }        
-        
+        }
+
         //Buffer & Texture Barrier
-        std::unordered_map<RID, std::vector<RGBufferBarrier>> bufferBarrierMap; 
+        std::unordered_map<RID, std::vector<RGBufferBarrier>> bufferBarrierMap;
         std::unordered_map<RID, std::vector<RGTextureBarrier>> textureBarrierMap;
 
-        // 初始化所有的Pass的入度 
+        // 初始化所有的Pass的入度
         for (const auto& dependency : passDependencies) {
             if (dependency.srcPassRID != RID::Invalid() && dependency.dstPassRID != RID::Invalid()) {
                 dependecyGraph[dependency.srcPassRID].push_back(dependency.dstPassRID);
@@ -304,7 +310,7 @@ namespace Ccino {
                             bufferBarrier.dstFlags = resourceFlags;
                         }
                     }, dependency.dstAccessFlags);
-                    
+
                     std::visit([&](const auto& resourceFlags){
                         if constexpr (std::is_same_v<BufferAccessFlags, std::decay_t<decltype(resourceFlags)>>) {
                             bufferBarrier.srcFlags = resourceFlags;
@@ -421,7 +427,7 @@ namespace Ccino {
                     return;
                 }
             }
-        }   
+        }
     }
 
     void RGBuilder::Run() {
