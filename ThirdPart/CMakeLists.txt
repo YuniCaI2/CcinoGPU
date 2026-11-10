@@ -29,6 +29,34 @@ set(SDL_TESTS         OFF)
 set(SDL_EXAMPLES      OFF)
 add_subdirectory(SDL)
 
+# Dear ImGui —— 调试 UI
+# 上游没有可直接 add_subdirectory 的库目标，这里只编核心、SDL3 平台后端和 Vulkan 渲染后端。
+# 搜索路径包含仓库根和 backends/，所以可以这样包含：
+#   #include "imgui.h"
+#   #include "imgui_impl_sdl3.h"
+#   #include "imgui_impl_vulkan.h"
+# 链接: target_link_libraries(<target> PRIVATE imgui::imgui)
+find_package(Vulkan REQUIRED)
+set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
+add_library(imgui STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+)
+add_library(imgui::imgui ALIAS imgui)
+target_include_directories(imgui SYSTEM PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+target_link_libraries(imgui PUBLIC
+    SDL3::SDL3-static
+    Vulkan::Vulkan
+)
+
 # LLVM / Clang (LibTooling) 配置
 # LLVM/Clang 子模块跟踪 release/23.x；实际版本由父仓库记录的子模块提交决定。
 # LLVM 子项目使用其要求的 C++17，避免继承主工程的 C++23。
