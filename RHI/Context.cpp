@@ -594,7 +594,7 @@ namespace Ccino::RHI {
         vkCmdPipelineBarrier2(commandBuffer.commandBuffer, &dependency);
         EndRecording(commandBuffer);
 
-        const uint64_t value = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+        const uint64_t value = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, true,{commandBuffer}, 0, {}, {}, {});
         destination = m_buffers.Get(dst);
         if (destination == nullptr) {
             throw std::runtime_error("Readback buffer was destroyed");
@@ -637,7 +637,7 @@ namespace Ccino::RHI {
             vkCmdCopyBuffer(commandBuffer.commandBuffer, src, dst, 1, &region);
             EndRecording(commandBuffer);
 
-            const uint64_t value = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+            const uint64_t value = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, true,{commandBuffer}, 0, {}, {}, {});
             submitted = true;
 
             destination = m_buffers.Get(rid);
@@ -806,7 +806,7 @@ namespace Ccino::RHI {
     }
 
     void Context::RecreateGlobalBinarySemaphores() {
-        DestroyGlobalBinarySemaphores(); 
+        DestroyGlobalBinarySemaphores();
         CreateGlobalBinarySemaphores();
     }
 
@@ -1129,7 +1129,7 @@ namespace Ccino::RHI {
         dependency.pImageMemoryBarriers = &barrier;
         vkCmdPipelineBarrier2(commandBuffer.commandBuffer, &dependency);
         EndRecording(commandBuffer);
-        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::GRAPHICS, {commandBuffer}, 0, {}, {}, {});
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::GRAPHICS, true,{commandBuffer}, 0, {}, {}, {});
 
         texture = m_textures.Get(rid);
         if (texture == nullptr) {
@@ -1252,7 +1252,7 @@ namespace Ccino::RHI {
         vkCmdCopyBufferToImage2(commandBuffer.commandBuffer, &copyInfo);
 
         EndRecording(commandBuffer);
-        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, true,{commandBuffer}, 0, {}, {}, {});
 
         texture = m_textures.Get(dstTex);
         if (texture != nullptr) {
@@ -1386,7 +1386,7 @@ namespace Ccino::RHI {
         }
 
         EndRecording(commandBuffer);
-        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, true,{commandBuffer}, 0, {}, {}, {});
 
         texture = m_textures.Get(srcTex);
         if (texture != nullptr) {
@@ -1506,7 +1506,7 @@ namespace Ccino::RHI {
         vkCmdCopyImage2(commandBuffer.commandBuffer, &copyInfo);
 
         EndRecording(commandBuffer);
-        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, {commandBuffer}, 0, {}, {}, {});
+        const uint64_t signalValue = SubmitCommandBufferTracked(CommandQueueType::TRANSFER, true,{commandBuffer}, 0, {}, {}, {});
 
         srcTexture = m_textures.Get(srcTex);
         if (srcTexture != nullptr) {
@@ -1637,13 +1637,13 @@ namespace Ccino::RHI {
             }
             return semaphores;
         };
-        SubmitCommandBufferTracked(queueType, commandBuffers, signalValue,
+        SubmitCommandBufferTracked(queueType, true, commandBuffers, signalValue,
             resolve(waitSemaphores, "Invalid wait semaphore"),
             resolve(signalSemaphores, "Invalid signal semaphore"),
             pipelineStageFlags);
     }
     void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {
-        SubmitCommandBufferTracked(queueType, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
+        SubmitCommandBufferTracked(queueType,true, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
     }
 
 
@@ -1742,8 +1742,9 @@ namespace Ccino::RHI {
         dst->layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     }
 
+
     void Context::SubmitFrame(CommandContext::CommandBuffer& commandBuffer) {
-        SubmitCommandBufferTracked(CommandQueueType::GRAPHICS, {commandBuffer}, 0,
+        SubmitCommandBufferTracked(CommandQueueType::GRAPHICS, false, {commandBuffer}, 0,
             {m_imageReadySemaphores[m_currentFrameIndex]}, {m_presentReadySemaphores[m_currentImageIndex]},
             {VK_PIPELINE_STAGE_2_BLIT_BIT});
     }
@@ -1785,7 +1786,8 @@ namespace Ccino::RHI {
         }
     }
 
-    uint64_t Context::SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags) {
+    uint64_t Context::SubmitCommandBufferTracked(CommandQueueType queueType, bool waitQueue,const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores,
+        const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags) {
         if (commandBuffers.empty()) {
             return 0;
         }
@@ -1859,9 +1861,10 @@ namespace Ccino::RHI {
         //保证异步的上传队列上传完毕后再进行提交
 
         std::vector<VkSemaphoreSubmitInfo> waits = userWaits;
-        //TODO: P0: 这里导致了GPU资源变成了串行, 这里的同步太粗糙了
-        appendWait(waits, timeline->GetSemaphore(), signal.previous);
-        //TODO: 设置为资源维度
+        if (waitQueue) {
+            appendWait(waits, timeline->GetSemaphore(), signal.previous);
+        }
+        //TODO: 设置为资源维度 ,但是如果资源维度本质也是录制时阻塞某个Pass的录制，并无法流式处理， 如果需要流式处理，需要有一个流式的专门的接口，流式没有成功有两个选项一个是fallback 一个是 阻塞，但是当前的图形模型没这个办法
         appendWait(waits, transferSemaphore, transferValue);
 
         std::vector<VkSemaphoreSubmitInfo> signals;

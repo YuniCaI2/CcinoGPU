@@ -239,6 +239,7 @@ namespace Ccino::RHI {
         bool PrepareFrame(); //Acquire 交换链图像, 返回false 表示交换链已重建或窗口最小化, 本帧需要跳过. 帧槽位的复用由上一帧末尾的Tick 保证
         //这里使用Copy的方案，可以避免我为Swapchain单独绑定一一个ImageView，并且集中在Context中处理Swapchain的Image， 减少在RenderGraph层计算依赖时的特判, 代替用户GetSwapchain Image再操作
         void BlitToSwapchain(VkCommandBuffer commandBuffer, RID srcTexture); //src 需要TransferSrc usage, 交换链图像最终转到PRESENT_SRC
+        //这个Submit 不使用Tracked ，因为Tracked中会直接等待整个Queue中的任务完成才会开始录制，这会导致飞行帧直接失效，并且在Tick中的类似Fence操作已经保证了飞行帧安全
         void SubmitFrame(CommandContext::CommandBuffer& commandBuffer); //等待ImageReady, 完成后Signal PresentReady
         void PresentFrame();
 
@@ -320,7 +321,7 @@ namespace Ccino::RHI {
 
 
         void DestroyResource(RID rid);
-        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers,
+        uint64_t SubmitCommandBufferTracked(CommandQueueType queueType, bool waitQueue,const std::vector<CommandContext::CommandBuffer>& commandBuffers,
             uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2>& pipelineStageFlags);
         void ReleaseUploadStaging(VulkanBuffer& buffer);
         TimelineSemaphore* GetTimeline(uint32_t queueFamilyIndex);
