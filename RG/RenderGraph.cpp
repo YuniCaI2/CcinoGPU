@@ -11,6 +11,7 @@
 #include "ThreadPoo.h"
 #include "Viewer.h"
 #include <algorithm>
+#include <chrono>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -443,7 +444,83 @@ namespace Ccino {
         ReleaseRenderTargetViews();
     }
 
+    void RGBuilder::LoopRun(RID presentTexture, const LoopHooks& hooks) {
+        if (m_context == nullptr || !CheckResourceType(presentTexture, ResourceType::Texture, "LoopRun")) {
+            return;
+        }
+        CreateGPUResource();
 
+        LoopHooks activeHooks = m_loopHooks;
+        if (hooks.onEvent) activeHooks.onEvent = hooks.onEvent;
+        if (hooks.onResize) activeHooks.onResize = hooks.onResize;
+        if (hooks.onUpdate) activeHooks.onUpdate = hooks.onUpdate;
+        if (hooks.onPostFrame) activeHooks.onPostFrame = hooks.onPostFrame;
+
+        FrameContext frame{};
+        const auto startTime = std::chrono::steady_clock::now();
+        auto lastTime = startTime;
+
+        // Hook 1: 框架统一轮询 SDL 事件队列, 默认处理关窗事件并将事件分发给 onEvent
+        while (!m_context->PollEvents(activeHooks.onEvent)) {
+            bool resized = false;
+            if (!m_context->SyncSwapchain(&resized)) {
+                lastTime = std::chrono::steady_clock::now(); // 窗口最小化休眠期间重置计时起点, 恢复后不产生突变的 dt
+                continue;
+            }
+
+            const VkExtent2D extent = m_context->GetSwapchainExtent();
+            frame.width = extent.width;
+            frame.height = extent.height;
+            frame.flightIndex = m_context->GetCurrentFrameIndex();
+
+            // Hook 2: 交换链尺寸变化时通知外部更新资源或视口状态(在 onUpdate 与 RecordPasses 之前)
+            if (resized && activeHooks.onResize) {
+                activeHooks.onResize(frame.width, frame.height);
+                if (!CheckResourceType(presentTexture, ResourceType::Texture, "LoopRun")) {
+                    break;
+                }
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            frame.dt = std::chrono::duration<float>(now - lastTime).count();
+            frame.totalTime = std::chrono::duration<float>(now - startTime).count();
+            lastTime = now;
+
+            // Hook 3: 在 Acquire 和 RecordPasses 前更新本帧状态; 若请求退出则不 Acquire 本帧图像直接退出
+            if (activeHooks.onUpdate) {
+                activeHooks.onUpdate(frame);
+                if (frame.shouldExit) {
+                    break;
+                }
+            }
+
+            if (!m_context->PrepareFrame()) {
+                continue; // Acquire 时遇到 OUT_OF_DATE 已重建交换链, 下一轮触发 onResize 后重新录制
+            }
+
+            RecordPasses();
+            BuildGraph();
+            auto& commandBuffer = m_context->GetCommandBuffer(CommandQueueType::GRAPHICS, m_context->GetCurrentFrameIndex());
+            m_context->StartRecording(commandBuffer);
+            GenerateCommands(commandBuffer.commandBuffer);
+            m_context->BlitToSwapchain(commandBuffer.commandBuffer, m_resources.Get(presentTexture)->GetRHI());
+            m_context->EndRecording(commandBuffer);
+            m_context->SubmitFrame(commandBuffer);
+            m_context->PresentFrame();
+            ReleaseRenderTargetViews();
+            m_context->Tick();
+
+            ++frame.frameIndex;
+
+            // Hook 4: 帧尾回调, 当前帧已完整提交并推进飞行帧槽位
+            if (activeHooks.onPostFrame) {
+                activeHooks.onPostFrame(frame);
+                if (frame.shouldExit) {
+                    break;
+                }
+            }
+        }
+    }
 
     RID RGBuilder::CreateTransientBuffer(typename Buffer::CreateArgs createArgs) {
         return m_resources.Add(RGResource::TransientBuffer(std::move(createArgs)));
@@ -453,12 +530,38 @@ namespace Ccino {
         return m_resources.Add(RGResource::ExternalBuffer(buffer));
     }
 
+    bool RGBuilder::UpdateExternalBuffer(RID resourceRID, const Ref<Buffer>& buffer) {
+        if (!buffer.IsValid() || !CheckResourceType(resourceRID, ResourceType::Buffer, "UpdateExternalBuffer")) {
+            return false;
+        }
+        auto* resource = m_resources.Get(resourceRID);
+        if (!resource->isExternal) {
+            std::cerr << "RGBuilder::UpdateExternalBuffer: target resource is not external\n";
+            return false;
+        }
+        *resource = RGResource::ExternalBuffer(buffer);
+        return true;
+    }
+
     RID RGBuilder::CreateTransientTexture2D(typename Texture2D::CreateArgs createArgs) {
         return m_resources.Add(RGResource::TransientTexture2D(std::move(createArgs)));
     }
 
     RID RGBuilder::CreateExternalTexture2D(const Ref<Texture2D>& texture) {
         return m_resources.Add(RGResource::ExternalTexture2D(texture));
+    }
+
+    bool RGBuilder::UpdateExternalTexture2D(RID resourceRID, const Ref<Texture2D>& texture) {
+        if (!texture.IsValid() || !CheckResourceType(resourceRID, ResourceType::Texture, "UpdateExternalTexture2D")) {
+            return false;
+        }
+        auto* resource = m_resources.Get(resourceRID);
+        if (!resource->isExternal) {
+            std::cerr << "RGBuilder::UpdateExternalTexture2D: target resource is not external\n";
+            return false;
+        }
+        *resource = RGResource::ExternalTexture2D(texture);
+        return true;
     }
 
     void RGBuilder::CreateGPUResource() {
@@ -653,6 +756,7 @@ namespace Ccino {
 
     void RGBuilder::ReleasePass() {
         m_passRecorders.clear();
+        m_loopHooks = {};
         m_passes.ForEach([this](RGPass& pass){
             pass.lambda.clear();
             if (m_context != nullptr) {

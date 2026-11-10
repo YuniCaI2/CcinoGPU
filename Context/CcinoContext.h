@@ -10,6 +10,7 @@ namespace Ccino {
     public:
         bool Init(const RHISettings& settings); //必须要初始化
         bool Run(const std::string& rgBuilderName);
+        bool LoopRun(const std::string& rgBuilderName, RID presentTexture, const LoopHooks& hooks = {});
         void Destroy();
 
 

@@ -21,6 +21,14 @@ namespace Ccino {
         return false;
     }
 
+    bool Context::LoopRun(const std::string& rgBuilderName, RID presentTexture, const LoopHooks& hooks) {
+        if (m_rgBuilders.contains(rgBuilderName) && m_rgBuilders[rgBuilderName] != nullptr) {
+            m_rgBuilders[rgBuilderName]->LoopRun(presentTexture, hooks);
+            return true;
+        }
+        return false;
+    }
+
     bool Context::Init(const RHISettings& settings) {
         hasInit = true;
         m_rhiContext.Init(settings);

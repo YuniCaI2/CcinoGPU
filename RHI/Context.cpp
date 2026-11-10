@@ -5,6 +5,7 @@
 #include "RHI/Swapchain.h"
 #include "RHI/TimelineSemaphore.h"
 #include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
+#include <SDL3/SDL_events.h>
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -268,6 +269,7 @@ namespace Ccino::RHI {
 
         bVsync = settings.bVsync;
         bUseSwapChain = settings.bUseSwapChain;
+        m_swapchainResized = false;
         if (bUseSwapChain) {
             m_swapchain->Init(this);
             m_swapchain->Create(settings.windowWidth, settings.windowHeight, settings.bVsync);
@@ -1555,10 +1557,58 @@ namespace Ccino::RHI {
         const size_t oldImageCount = m_swapchain->m_images.size();
         m_swapchain->Create(width, height, bVsync);
         m_swapchainWindowWidth = width;
-        m_swapchainWindowHeight = height;        //PresentReady 可能仍被呈现引擎等待, vkDeviceWaitIdle 管不到呈现, 图像数量不变时不重建
+        m_swapchainWindowHeight = height;
+        m_swapchainResized = true;
+        //PresentReady 可能仍被呈现引擎等待, vkDeviceWaitIdle 管不到呈现, 图像数量不变时不重建
         if (m_swapchain->m_images.size() != oldImageCount) {
             RecreateGlobalBinarySemaphores();
         }
+    }
+
+    VkExtent2D Context::GetSwapchainExtent() const {
+        if (m_swapchain != nullptr) {
+            return m_swapchain->GetExtent();
+        }
+        return {0, 0};
+    }
+
+    bool Context::PollEvents(const std::function<bool(SDL_Event&)>& onEvent) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
+                return true;
+            }
+            if (onEvent && onEvent(event)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool Context::SyncSwapchain(bool* outResized) {
+        if (outResized != nullptr) {
+            *outResized = false;
+        }
+        if (!bUseSwapChain) {
+            throw std::runtime_error("bUseSwapChain is false");
+        }
+
+        //有的平台调整窗口大小时不会报OUT_OF_DATE, 主动比较窗口尺寸
+        const auto [windowWidth, windowHeight] = m_core->GetWindowExtent();
+        if (windowWidth == 0 || windowHeight == 0) { //最小化时不空转
+            std::this_thread::sleep_for(std::chrono::milliseconds(10)); //最小化时不渲染, 也不要空转
+            return false;
+        }
+
+        //如果尺寸不对就直接更改,主导操作
+        if (windowWidth != m_swapchainWindowWidth || windowHeight != m_swapchainWindowHeight) {
+            RecreateSwapchain();
+        }
+
+        if (outResized != nullptr) {
+            *outResized = std::exchange(m_swapchainResized, false);
+        }
+        return true;
     }
 
     CommandContext::CommandBuffer& Context::GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex) {
@@ -1648,20 +1698,8 @@ namespace Ccino::RHI {
 
 
     bool Context::PrepareFrame() {
-        if (!bUseSwapChain) {
-            throw std::runtime_error("bUseSwapChain is false");
-        }
-
-        //有的平台调整窗口大小时不会报OUT_OF_DATE, 主动比较窗口尺寸
-        const auto [windowWidth, windowHeight] = m_core->GetWindowExtent();
-        if (windowWidth == 0 || windowHeight == 0) { //最小化时不空转
-            std::this_thread::sleep_for(std::chrono::milliseconds(10)); //最小化时不渲染, 也不要空转
+        if (!SyncSwapchain()) {
             return false;
-        }
-
-        //如果尺寸不对就直接更改,主导操作
-        if (windowWidth != m_swapchainWindowWidth || windowHeight != m_swapchainWindowHeight) {
-            RecreateSwapchain();
         }
 
         //SUBOPTIMAL 时ImageReady 已经被Signal, 这一帧照常渲染, 交给PresentFrame 去重建

@@ -17,19 +17,6 @@ namespace {
     constexpr uint32_t kHeight = 600;
     constexpr Ccino::ClearColor kClearColor{{0.1f, 0.1f, 0.1f, 1.0f}};
 
-    bool ShouldQuit() {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
-                return true;
-            }
-            if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     int RunDemo(uint64_t maxFrames) {
         Ccino::Context ctx;
         RHISettings settings{};
@@ -91,11 +78,18 @@ namespace {
         });
 
         uint64_t frameCount = 0;
-        builder->LoopRun(targetRID, [&]() {
-            if (ShouldQuit() || (maxFrames != 0 && frameCount >= maxFrames)) {
-                return true;
-            }            ++frameCount;
-            return false;
+        builder->LoopRun(targetRID, Ccino::LoopHooks{
+            .onEvent = [](SDL_Event& event) {
+                return event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE;
+            },
+            .onUpdate = [&](Ccino::FrameContext& frame) {
+                if (maxFrames != 0 && frame.frameIndex >= maxFrames) {
+                    frame.shouldExit = true;
+                }
+            },
+            .onPostFrame = [&](Ccino::FrameContext& frame) {
+                frameCount = frame.frameIndex;
+            },
         });
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         std::cout << "Rendered " << frameCount << " frames in " << seconds << " s";

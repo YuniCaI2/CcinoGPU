@@ -9,6 +9,7 @@
 #include "ShaderStruct/UniformData.h"
 
 #include <concepts>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -17,6 +18,8 @@
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
+
+union SDL_Event;
 
 
 namespace Ccino::RHI {
@@ -222,6 +225,11 @@ namespace Ccino::RHI {
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
         void UnRegisterSwapchainImages(const std::vector<RID>& imageRIDs);
         void RecreateSwapchain();
+        VkExtent2D GetSwapchainExtent() const;
+        //轮询 SDL 事件队列: 收到 SDL_EVENT_QUIT 或窗口关闭事件时返回 true; 其余事件交给 onEvent 处理(返回 true 同样退出)
+        bool PollEvents(const std::function<bool(SDL_Event&)>& onEvent = {});
+        //检查窗口最小化与尺寸变化: 最小化时休眠并返回 false; 尺寸变化时重建交换链并将 *outResized 置为 true
+        bool SyncSwapchain(bool* outResized = nullptr);
 
         //Command
         CommandContext::CommandBuffer& GetCommandBuffer(CommandQueueType queueType, uint32_t frameIndex = 0);
@@ -283,6 +291,7 @@ namespace Ccino::RHI {
 
         bool bVsync = false;
         bool bUseSwapChain = false;
+        bool m_swapchainResized = false;
         int m_swapchainWindowWidth = 0; //交换链最近一次创建时的窗口像素尺寸, 和当前窗口不一致就重建
         int m_swapchainWindowHeight = 0;
 

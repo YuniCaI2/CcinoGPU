@@ -13,7 +13,6 @@
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_mouse.h>
-#include <SDL3/SDL_video.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -98,7 +97,7 @@ namespace {
         return v;
     }
 
-    // 每帧在 LoopRun 的 exitFunc 中更新, 各 Pass 的 func 在录制时按值捕获进 Shader Lambda
+    // 每帧在 LoopRun 的 onUpdate Hook 中更新, 各 Pass 的 func 在录制时按值捕获进 Shader Lambda
     struct DemoState {
         float time = 0.0f;
         float dt = 0.0f;
@@ -137,17 +136,6 @@ namespace {
         std::cout << "Attractor: " << kAttractorNames[mode] << std::endl;
     }
 
-    void UpdateWindowSize(DemoState& state, SDL_WindowID windowID) {
-        if (SDL_Window* window = SDL_GetWindowFromID(windowID)) {
-            int w = 0;
-            int h = 0;
-            if (SDL_GetWindowSize(window, &w, &h) && w > 0 && h > 0) {
-                state.windowWidth = static_cast<float>(w);
-                state.windowHeight = static_cast<float>(h);
-            }
-        }
-    }
-
     // 鼠标射线与过原点、垂直于视线的平面求交
     Ccino::Vec3 MouseToWorld(const DemoState& state) {
         const float ndcX = 2.0f * state.mouseX / state.windowWidth - 1.0f;
@@ -164,56 +152,48 @@ namespace {
         return origin + dir * (-glm::dot(origin, state.viewDir) / denom);
     }
 
-    bool PollInput(DemoState& state) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            switch (event.type) {
-            case SDL_EVENT_QUIT:
-            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+    bool HandleEvent(DemoState& state, const SDL_Event& event) {
+        switch (event.type) {
+        case SDL_EVENT_KEY_DOWN:
+            if (event.key.repeat) {
+                break;
+            }
+            if (event.key.key == SDLK_ESCAPE) {
                 return true;
-            case SDL_EVENT_KEY_DOWN:
-                if (event.key.repeat) {
-                    break;
-                }
-                if (event.key.key == SDLK_ESCAPE) {
-                    return true;
-                } else if (event.key.key >= SDLK_1 && event.key.key < SDLK_1 + kAttractorCount) {
-                    SwitchAttractor(state, static_cast<int>(event.key.key - SDLK_1));
-                } else if (event.key.key == SDLK_TAB) {
-                    SwitchAttractor(state, state.modeTo + 1);
-                } else if (event.key.key == SDLK_SPACE) {
-                    state.shock = Ccino::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
-                } else if (event.key.key == SDLK_R) {
-                    state.pendingReset = true;
-                } else if (event.key.key == SDLK_UP || event.key.key == SDLK_DOWN) {
-                    state.exposure = std::clamp(state.exposure * (event.key.key == SDLK_UP ? 1.2f : 1.0f / 1.2f), 0.1f, 10.0f);
-                    std::cout << "Exposure: " << state.exposure << std::endl;
-                }
-                break;
-            case SDL_EVENT_MOUSE_MOTION:
-                state.mouseX = event.motion.x;
-                state.mouseY = event.motion.y;
-                UpdateWindowSize(state, event.motion.windowID);
-                break;
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            case SDL_EVENT_MOUSE_BUTTON_UP: {
-                state.mouseX = event.button.x;
-                state.mouseY = event.button.y;
-                UpdateWindowSize(state, event.button.windowID);
-                const bool down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
-                if (event.button.button == SDL_BUTTON_LEFT) {
-                    state.holeActive = down;
-                } else if (event.button.button == SDL_BUTTON_RIGHT && down) {
-                    state.shock = Ccino::Vec4(MouseToWorld(state), 1.0f);
-                }
-                break;
+            } else if (event.key.key >= SDLK_1 && event.key.key < SDLK_1 + kAttractorCount) {
+                SwitchAttractor(state, static_cast<int>(event.key.key - SDLK_1));
+            } else if (event.key.key == SDLK_TAB) {
+                SwitchAttractor(state, state.modeTo + 1);
+            } else if (event.key.key == SDLK_SPACE) {
+                state.shock = Ccino::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            } else if (event.key.key == SDLK_R) {
+                state.pendingReset = true;
+            } else if (event.key.key == SDLK_UP || event.key.key == SDLK_DOWN) {
+                state.exposure = std::clamp(state.exposure * (event.key.key == SDLK_UP ? 1.2f : 1.0f / 1.2f), 0.1f, 10.0f);
+                std::cout << "Exposure: " << state.exposure << std::endl;
             }
-            case SDL_EVENT_MOUSE_WHEEL:
-                state.distance = std::clamp(state.distance * std::pow(0.9f, event.wheel.y), 1.8f, 12.0f);
-                break;
-            default:
-                break;
+            break;
+        case SDL_EVENT_MOUSE_MOTION:
+            state.mouseX = event.motion.x;
+            state.mouseY = event.motion.y;
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP: {
+            state.mouseX = event.button.x;
+            state.mouseY = event.button.y;
+            const bool down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            if (event.button.button == SDL_BUTTON_LEFT) {
+                state.holeActive = down;
+            } else if (event.button.button == SDL_BUTTON_RIGHT && down) {
+                state.shock = Ccino::Vec4(MouseToWorld(state), 1.0f);
             }
+            break;
+        }
+        case SDL_EVENT_MOUSE_WHEEL:
+            state.distance = std::clamp(state.distance * std::pow(0.9f, event.wheel.y), 1.8f, 12.0f);
+            break;
+        default:
+            break;
         }
         return false;
     }
@@ -507,28 +487,42 @@ namespace {
                   << "  1-4 / Tab: switch attractor | Space: burst | Up/Down: exposure | R: reset | Esc: quit" << std::endl;
 
         const auto start = std::chrono::steady_clock::now();
-        auto last = start;
         auto lastReport = start;
         uint64_t frameCount = 0;
         uint64_t reportFrames = 0;
-        builder->LoopRun(presentRID, [&]() {
-            if (PollInput(state) || (maxFrames != 0 && frameCount >= maxFrames)) {
-                return true;
-            }
-            const auto now = std::chrono::steady_clock::now();
-            const float dt = std::clamp(std::chrono::duration<float>(now - last).count(), 0.0f, 1.0f / 30.0f);
-            last = now;
-            UpdateFrame(state, dt);
-
-            ++frameCount;
-            ++reportFrames;
-            const double sinceReport = std::chrono::duration<double>(now - lastReport).count();
-            if (sinceReport > 2.0) {
-                std::cout << "FPS: " << reportFrames / sinceReport << std::endl;
-                lastReport = now;
-                reportFrames = 0;
-            }
-            return false;
+        builder->LoopRun(presentRID, Ccino::LoopHooks{
+            .onEvent = [&](SDL_Event& event) {
+                return HandleEvent(state, event);
+            },
+            .onResize = [&](uint32_t width, uint32_t height) {
+                if (width > 0 && height > 0) {
+                    state.windowWidth = static_cast<float>(width);
+                    state.windowHeight = static_cast<float>(height);
+                }
+            },
+            .onUpdate = [&](Ccino::FrameContext& frame) {
+                if (maxFrames != 0 && frame.frameIndex >= maxFrames) {
+                    frame.shouldExit = true;
+                    return;
+                }
+                if (frame.width > 0 && frame.height > 0) {
+                    state.windowWidth = static_cast<float>(frame.width);
+                    state.windowHeight = static_cast<float>(frame.height);
+                }
+                const float dt = std::clamp(frame.dt, 0.0f, 1.0f / 30.0f);
+                UpdateFrame(state, dt);
+            },
+            .onPostFrame = [&](Ccino::FrameContext& frame) {
+                frameCount = frame.frameIndex;
+                ++reportFrames;
+                const auto now = std::chrono::steady_clock::now();
+                const double sinceReport = std::chrono::duration<double>(now - lastReport).count();
+                if (sinceReport > 2.0) {
+                    std::cout << "FPS: " << reportFrames / sinceReport << std::endl;
+                    lastReport = now;
+                    reportFrames = 0;
+                }
+            },
         });
 
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();

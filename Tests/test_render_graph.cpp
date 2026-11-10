@@ -31,6 +31,12 @@ namespace {
     };
     template struct AccessPrivate<RecordPassesTag, &Ccino::RGBuilder::RecordPasses>;
 
+    struct LoopHooksTag {
+        using type = Ccino::LoopHooks Ccino::RGBuilder::*;
+        friend type GetPrivate(LoopHooksTag);
+    };
+    template struct AccessPrivate<LoopHooksTag, &Ccino::RGBuilder::m_loopHooks>;
+
     //模拟LoopRun 的每一帧: 重新调用所有Pass 的func 再建图
     void RecordAndBuild(Ccino::RGBuilder& builder) {
         (builder.*GetPrivate(RecordPassesTag{}))();
@@ -492,4 +498,48 @@ TEST(RenderGraphTimeline, PassWithoutEdgesIsCulledPerFrame) {
         {p0},
         {p1, p2}
     });
+}
+
+// 14. LoopHooks 链式注册: OnEvent / OnResize / OnUpdate / OnPostFrame 均能正确绑定与触发
+TEST(RenderGraphTimeline, LoopHooksChainRegistration) {
+    Ccino::RGBuilder builder;
+    uint32_t resizedW = 0;
+    uint32_t resizedH = 0;
+    uint64_t updatedFrame = 0;
+    uint64_t postFrameIndex = 0;
+
+    builder.OnEvent([](const SDL_Event&) {
+        return true;
+    }).OnResize([&](uint32_t w, uint32_t h) {
+        resizedW = w;
+        resizedH = h;
+    }).OnUpdate([&](Ccino::FrameContext& frame) {
+        updatedFrame = frame.frameIndex;
+        return frame.frameIndex >= 2;
+    }).OnPostFrame([&](const Ccino::FrameContext& frame) {
+        postFrameIndex = frame.frameIndex;
+    });
+
+    auto& hooks = builder.*GetPrivate(LoopHooksTag{});
+    ASSERT_TRUE(static_cast<bool>(hooks.onEvent));
+    ASSERT_TRUE(static_cast<bool>(hooks.onResize));
+    ASSERT_TRUE(static_cast<bool>(hooks.onUpdate));
+    ASSERT_TRUE(static_cast<bool>(hooks.onPostFrame));
+
+    hooks.onResize(1920, 1080);
+    EXPECT_EQ(resizedW, 1920u);
+    EXPECT_EQ(resizedH, 1080u);
+
+    Ccino::FrameContext frame{.frameIndex = 1};
+    hooks.onUpdate(frame);
+    EXPECT_EQ(updatedFrame, 1u);
+    EXPECT_FALSE(frame.shouldExit);
+
+    frame.frameIndex = 2;
+    hooks.onUpdate(frame);
+    EXPECT_EQ(updatedFrame, 2u);
+    EXPECT_TRUE(frame.shouldExit);
+
+    hooks.onPostFrame(frame);
+    EXPECT_EQ(postFrameIndex, 2u);
 }
