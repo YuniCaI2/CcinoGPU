@@ -217,7 +217,7 @@ namespace Ccino {
                 lowering->fields.push_back(std::move(f));
             }
             auto opExpr = std::make_unique<GLSL::Expr>();
-            opExpr->text = (expr->getNumArgs() == 2)
+            opExpr->text = (expr->getNumArgs() == 2) //如果参数为2 ，但是为-- 或者 ++ 则为后置， 不然为左置
                                ? "(" + operand->expr->text + op + ")"
                                : "(" + op + operand->expr->text + ")";
             lowering->expr = std::move(opExpr);

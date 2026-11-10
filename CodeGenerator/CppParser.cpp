@@ -34,7 +34,6 @@
 #include <utility>
 
 namespace {
-
     inline std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
         if (!passMethod) return {};
         std::string result = "";
@@ -146,6 +145,17 @@ namespace {
         LambdaInnerCollector(Ccino::ASTGenerator* astGen) : m_astGenerator(astGen) {}
 
         bool VisitCallExpr(clang::CallExpr* expr) {
+            if (auto* opCall = llvm::dyn_cast<clang::CXXOperatorCallExpr>(expr)) {
+                bool allBuiltin = opCall->getNumArgs() > 0;
+                for (unsigned i = 0; i < opCall->getNumArgs(); ++i) {
+                    if (!Ccino::SignatureFlattener::IsBuiltinType(opCall->getArg(i)->getType())) {
+                        allBuiltin = false;
+                        break;
+                    }
+                }
+                if (allBuiltin) return true;
+            }
+
             if (auto* funcDecl = expr->getDirectCallee()) {
                 m_astGenerator->SetInGlobalFunction(true);
                 m_astGenerator->InsertFunctionDeclToGraph(funcDecl);
@@ -277,9 +287,9 @@ namespace Ccino
         MatchFinder finder;
         //这里 设置Matcher的对象，这里设置了它的调用者和参数绑定
         auto csCallMatcher = cxxMemberCallExpr(
-            callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder"))).bind("addCSMethod")), // 这里的bind相当于把addCSMethod贴上了标签 
+            callee(cxxMethodDecl(hasName("AddCS"), ofClass(hasName("RGBuilder"))).bind("addCSMethod")), // 这里的bind相当于把addCSMethod贴上了标签
             hasAncestor(cxxMemberCallExpr( //上层调用者 ,并且打上标签
-                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod")) 
+                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod"))
             )),
             hasArgument(0, anyOf( //检查AddCS的第一个参数
                 ignoringImplicit(lambdaExpr().bind("csLambda")), //直接塞进来一个Lambda
@@ -290,7 +300,7 @@ namespace Ccino
         auto vsAndFsMatcher = cxxMemberCallExpr(
             callee(cxxMethodDecl(hasName("AddVSAndFS"), ofClass(hasName("RGBuilder"))).bind("addVSAndFSMethod")),
             hasAncestor(cxxMemberCallExpr(
-                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod")) 
+                callee(cxxMethodDecl(hasName("AddPass"), ofClass(hasName("RGBuilder"))).bind("addPassMethod"))
             )),
             hasArgument(0, anyOf( //检查AddCS的第一个参数
                 ignoringImplicit(lambdaExpr().bind("vsLambda")), //直接塞进来一个Lambda
@@ -377,7 +387,7 @@ namespace Ccino
 
     ShaderIR CppParser::ProcessGraphicsShader(const clang::LambdaExpr* vsLambda, const clang::LambdaExpr* fsLambda, clang::ASTContext& context, const std::string& passName) {
         ASTGenerator astGenerator;
-        ShaderIR shaderIR; 
+        ShaderIR shaderIR;
         auto vsDescriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(vsLambda, context);
         auto fsDescriptorSlotLayout = astGenerator.GetDescriptorSlotLayout(fsLambda, context);
         std::string vsGLSL = kGLSLHeader.data();
@@ -388,10 +398,10 @@ namespace Ccino
         std::unordered_map<std::string, UniformData> uniformDataSet;
         DescriptorSlotLayout descriptorSlotLayout{};
         for (auto& data : vsDescriptorSlotLayout) {
-            uniformDataSet[data.name] = data; 
+            uniformDataSet[data.name] = data;
         }
         for (auto& data : fsDescriptorSlotLayout) {
-            uniformDataSet[data.name] = data; 
+            uniformDataSet[data.name] = data;
         }
         for (auto& [_, data] : uniformDataSet) {
             descriptorSlotLayout.push_back(std::move(data));
@@ -405,7 +415,7 @@ namespace Ccino
         shaderIR.descriptorSlotLayout = descriptorSlotLayout;
 
         //Uniform Bind
-        auto vsUniformBindGLSL = astGenerator.GenerateUniformDataReference(vsLambda, context); 
+        auto vsUniformBindGLSL = astGenerator.GenerateUniformDataReference(vsLambda, context);
         auto fsUniformBindGLSL = astGenerator.GenerateUniformDataReference(fsLambda, context);
         auto allUniformBindGLSL = std::make_unique<GLSL::UniformBinding>();
         auto findField = [](const std::unique_ptr<GLSL::UniformBinding>& binding, const std::string& name) -> GLSL::DeclField* {

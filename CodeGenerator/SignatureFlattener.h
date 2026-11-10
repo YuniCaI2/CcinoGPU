@@ -32,6 +32,7 @@ namespace Ccino {
         // 展平类型为合法的基础类型名与数组维度（如 {"float", "[2][4]"}）
         static FlattenedType FlattenType(clang::QualType type);
 
+        static bool IsBuiltinType(clang::QualType type);
     private:
         static std::string FlattenTypeAsIdentifier(clang::QualType type);
         static std::string FormatDeclOwnName(const clang::NamedDecl* decl);

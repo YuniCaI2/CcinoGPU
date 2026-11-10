@@ -224,7 +224,7 @@ namespace Ccino {
                     return inner;
                 }
 
-                //Ccino::Viewer<Flags, ViewType> 
+                //Ccino::Viewer<Flags, ViewType>
                 if (tmplName == "Viewer" && IsInNamespace(spec, "Ccino") && args.size() >= 1) {
                     return {"uint", dimensions};
                 }
@@ -335,5 +335,10 @@ namespace Ccino {
             result.pop_back();
         }
         return result;
+    }
+
+    bool SignatureFlattener::IsBuiltinType(clang::QualType type) {
+        auto* record = type.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl();
+        return Ccino::SignatureFlattener::FlattenRecord(record) != Ccino::SignatureFlattener::FlattenType(type).name;
     }
 }
