@@ -295,6 +295,9 @@ namespace Ccino::RHI {
         int m_swapchainWindowWidth = 0; //交换链最近一次创建时的窗口像素尺寸, 和当前窗口不一致就重建
         int m_swapchainWindowHeight = 0;
 
+        //Imgui
+        bool bUseImgui = false;
+
 
         //其实这里需要使用unique比较合适，然后前向声明
         std::unique_ptr<Core> m_core;
@@ -341,5 +344,8 @@ namespace Ccino::RHI {
 
         VkRenderingAttachmentInfo GetAttachmentInfo(const AttachmentInfo& attachmentInfo);
 
+        //使用 InitImgui
+        void InitImgui();
+        void DestroyImgui();
     };
 }

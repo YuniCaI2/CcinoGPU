@@ -2,9 +2,6 @@
 #include "RHI/DescriptorSlotBinding.h"
 #include "RHI/RHIStruct.h"
 #include "RHI/Core.h"
-#include "ShaderStruct/UniformData.h"
-#include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
-
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -65,6 +62,7 @@ namespace Ccino::RHI {
 
     private:
         friend class DescriptorSlotBinding;
+        friend class Context;
 
         uint32_t GetSamplerIndex(SamplerType type) const;
         void WriteAllSampler(); //把全局Sampler 写进这个DescriptorSet 的Sampler 数组, 索引就是SamplerType 的枚举值

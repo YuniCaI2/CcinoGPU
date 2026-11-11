@@ -67,6 +67,7 @@ namespace Ccino::RHI {
         const VkPhysicalDeviceProperties& GetPhysicalDeviceProperties() const { return m_properties; }
 
         std::tuple<int, int> GetWindowExtent() const;
+        SDL_Window* GetWindow() const {return m_window;}
 
         // VK_EXT_shader_object & Dynamic State 扩展函数指针
         PFN_vkCreateShadersEXT              vkCreateShadersEXT              = nullptr;
@@ -106,7 +107,7 @@ namespace Ccino::RHI {
 
         //Window 作为Core的一部分
         SDL_Window* m_window = nullptr;
-        bool m_sdlInitialized = false; 
+        bool m_sdlInitialized = false;
 
 #if USE_VALIDATION_LAYERS
         PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessengerEXT = nullptr;

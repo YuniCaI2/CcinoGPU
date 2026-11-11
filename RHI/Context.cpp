@@ -2,6 +2,7 @@
 #include "RHI/ComputePipeline.h"
 #include "RHI/Core.h"
 #include "RHI/DescriptorSlot.h"
+#include "RHI/RHIStruct.h"
 #include "RHI/Swapchain.h"
 #include "RHI/TimelineSemaphore.h"
 #include "ThirdPart/SDL/src/video/khronos/vulkan/vulkan_core.h"
@@ -18,6 +19,10 @@
 #include <utility>
 #include <vector>
 #include <vulkan/vulkan_core.h>
+
+#include "imgui.h"
+#include "imgui_impl_sdl3.h"
+#include "imgui_impl_vulkan.h"
 
 namespace Ccino::RHI {
     namespace {
@@ -267,6 +272,7 @@ namespace Ccino::RHI {
         m_deletionWaitValues.assign(m_flightFrameCount, {});
         m_descriptorSlot->Init(this);
 
+        bUseImgui = settings.bUseImgui;
         bVsync = settings.bVsync;
         bUseSwapChain = settings.bUseSwapChain;
         m_swapchainResized = false;
@@ -276,6 +282,10 @@ namespace Ccino::RHI {
             std::tie(m_swapchainWindowWidth, m_swapchainWindowHeight) = m_core->GetWindowExtent();
             //Global Semaphore
             CreateGlobalBinarySemaphores();
+
+            if (bUseImgui) {
+                InitImgui();
+            }
         }
     }
 
@@ -318,6 +328,10 @@ namespace Ccino::RHI {
         if (device != VK_NULL_HANDLE) {
             vkDeviceWaitIdle(device);
             DestroyGlobalBinarySemaphores();
+            if (bUseImgui){
+                DestroyImgui();
+            }
+
             m_computePipelines.ForEach([&](ComputePipeline& pipeline) {
                 pipeline.Destroy();
             });
@@ -931,6 +945,60 @@ namespace Ccino::RHI {
         info.storeOp = attachmentInfo.storeOp;
         info.clearValue = attachmentInfo.clearValue;
         return info;
+    }
+
+    void Context::InitImgui() {
+        // Setup Dear ImGui context
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+        //现在没有必要用Docker，本身不是引擎
+        // io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;         // IF using Docking Branch
+
+        // Setup Platform/Renderer backends
+        ImGui_ImplSDL3_InitForVulkan(m_core->GetWindow());
+        // 这个格式必须和后续调 ImGui_ImplVulkan_RenderDrawData 时绑定的 Color Attachment 格式完全一致
+        VkFormat colorFormat = m_swapchain->GetColorFormat();
+
+        ImGui_ImplVulkan_InitInfo init_info = {};
+        init_info.ApiVersion     = VK_API_VERSION_1_4; // 与你在 Core.cpp 中的版本一致
+        init_info.Instance       = m_core->GetVkInstance();
+        init_info.PhysicalDevice = m_core->GetVkPhysicalDevice();
+        init_info.Device         = m_core->GetVkDevice();
+        init_info.QueueFamily    = m_core->GetQueueFamilyIndex(CommandQueueType::GRAPHICS);
+        init_info.Queue          = m_core->GetVkQueue(CommandQueueType::GRAPHICS);
+
+        // 交换链图像数（内部有 IM_ASSERT(MinImageCount >= 2)，注意不要传 1）
+        uint32_t imageCount      = static_cast<uint32_t>(m_swapchain->GetTextures().size());
+        init_info.MinImageCount  = std::max(2u, imageCount);
+        init_info.ImageCount     = std::max(2u, imageCount);
+
+        // 让后端自动创建了，DescriptorSlot的池可能不适配imgui
+        init_info.DescriptorPoolSize = 16;
+
+        // --- 动态渲染关键配置 ---
+        init_info.UseDynamicRendering = true;
+        init_info.PipelineInfoMain.RenderPass  = VK_NULL_HANDLE; // 必须为空
+        init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        init_info.PipelineInfoMain.PipelineRenderingCreateInfo = {
+            .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+            .pNext                   = nullptr,
+            .colorAttachmentCount    = 1,
+            .pColorAttachmentFormats = &colorFormat, // 后端内部会深拷贝这个数组，局部变量安全
+            .depthAttachmentFormat   = VK_FORMAT_UNDEFINED,
+            .stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
+        };
+
+        ImGui_ImplVulkan_Init(&init_info);
+    }
+
+    void Context::DestroyImgui() {
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
     }
 
     RID Context::CreateTexture(const TextureCreateInfo& createInfo) {
@@ -1563,6 +1631,11 @@ namespace Ccino::RHI {
         if (m_swapchain->m_images.size() != oldImageCount) {
             RecreateGlobalBinarySemaphores();
         }
+
+       // 处理 imgui
+       if (bUseImgui) {
+           ImGui_ImplVulkan_SetMinImageCount(std::max(2u, m_swapchain->m_minImageCount));
+       }
     }
 
     VkExtent2D Context::GetSwapchainExtent() const {
@@ -1578,6 +1651,10 @@ namespace Ccino::RHI {
             if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
                 return true;
             }
+            //注入Imgui的event处理
+            if (bUseImgui && bUseSwapChain)
+                ImGui_ImplSDL3_ProcessEvent(&event);
+
             if (onEvent && onEvent(event)) {
                 return true;
             }
@@ -1693,7 +1770,7 @@ namespace Ccino::RHI {
             pipelineStageFlags);
     }
     void Context::SubmitCommandBuffer(CommandQueueType queueType, const std::vector<CommandContext::CommandBuffer>& commandBuffers, uint64_t signalValue, const std::vector<VkSemaphore>& waitSemaphores, const std::vector<VkSemaphore>& signalSemaphores, const std::vector<VkPipelineStageFlags2> pipelineStageFlags) {
-        SubmitCommandBufferTracked(queueType,true, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
+            SubmitCommandBufferTracked(queueType,true, commandBuffers, signalValue, waitSemaphores, signalSemaphores, pipelineStageFlags);
     }
 
 
@@ -1702,7 +1779,7 @@ namespace Ccino::RHI {
             return false;
         }
 
-        //SUBOPTIMAL 时ImageReady 已经被Signal, 这一帧照常渲染, 交给PresentFrame 去重建
+
         const VkResult acquireResult = m_swapchain->AcquireNextImage(m_imageReadySemaphores[m_currentFrameIndex], m_currentImageIndex);
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
             RecreateSwapchain();
@@ -1710,6 +1787,15 @@ namespace Ccino::RHI {
         }
         if (acquireResult != VK_SUBOPTIMAL_KHR) {
             VULKAN_CHECK(acquireResult);
+        }
+        //SUBOPTIMAL 时ImageReady 已经被Signal, 这一帧照常渲染, 交给PresentFrame 去重建
+        if (bUseImgui) {
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplSDL3_NewFrame();
+            ImGui::NewFrame();
+            //Test Demo
+            bool bShowDemo = true;
+            ImGui::ShowDemoWindow(&bShowDemo);
         }
         return true;
     }
@@ -1775,6 +1861,12 @@ namespace Ccino::RHI {
         dependencyInfo.imageMemoryBarrierCount = 1;
         dependencyInfo.pImageMemoryBarriers = &toPresent;
         vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+
+        //Imgui
+        if (bUseImgui) {
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+        }
 
         src->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         dst->layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;

@@ -14,6 +14,7 @@
 
 struct RHISettings {
     bool bUseSwapChain = false;
+    bool bUseImgui = false;
     //TODO:增加别的特性
     uint32_t flightFrameCount = 1;
 
@@ -109,7 +110,7 @@ public:
         std::shared_lock lock(m_mutex);
         if (id.index >= m_data.size() || !m_data[id.index].isAlive || id.generation != m_data[id.index].generation || id.type != RID::GetIndex<T>()) {
             return nullptr;
-        } 
+        }
         return &m_data[id.index].value;
     }
 

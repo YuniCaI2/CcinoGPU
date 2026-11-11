@@ -234,6 +234,7 @@ namespace {
         settings.windowWidth = kWidth;
         settings.windowHeight = kHeight;
         settings.bVsync = false;
+        settings.bUseImgui = true;
         if (!ctx.Init(settings)) {
             std::cerr << "Failed to initialize Ccino context\n";
             return 1;
