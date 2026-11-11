@@ -70,7 +70,7 @@ namespace Ccino {
         bool shouldExit = false;   // 置为 true 时退出 LoopRun
     };
 
-    // LoopRun 四个阶段的 Hook 回调集合
+    // LoopRun 五个阶段的 Hook 回调集合
     struct LoopHooks {
         // Hook 1: 事件回调, 框架每帧轮询 SDL 事件队列并逐条分发; 返回 true 立即退出循环
         std::function<bool(SDL_Event&)> onEvent;
@@ -78,7 +78,9 @@ namespace Ccino {
         std::function<void(uint32_t, uint32_t)> onResize;
         // Hook 3: 帧更新回调, 在每帧录制 Pass 前触发(用于更新被 Pass 捕获的 Uniform 状态)
         std::function<void(FrameContext&)> onUpdate;
-        // Hook 4: 帧尾回调, 在每帧 PresentFrame 与 Tick 完成后触发(用于 FPS 统计、回读或帧数限制退出)
+        // Hook 4: PrepareFrame之后，录制之前，这个回调用来插入GUI的信息，如果没有使用imgui，这只是一个简单的回调点
+        std::function<void(FrameContext&)> onGUI;
+        // Hook 5: 帧尾回调, 在每帧 PresentFrame 与 Tick 完成后触发(用于 FPS 统计、回读或帧数限制退出)
         std::function<void(FrameContext&)> onPostFrame;
     };
 
@@ -315,7 +317,24 @@ namespace Ccino {
             return *this;
         }
 
-        // Hook 4: 注册每帧 PresentFrame 与 Tick 完成后的帧尾回调(支持返回 void, 或返回 bool 表示是否退出 LoopRun)
+        // Hook 4
+        template<typename Func>
+        requires std::is_invocable_v<Func, FrameContext&>
+        RGBuilder& OnGUI(Func&& func) {
+            using ReturnType = std::invoke_result_t<Func, FrameContext&>;
+            if constexpr (std::is_same_v<ReturnType, bool>) {
+                m_loopHooks.onGUI = [fn = std::forward<Func>(func)](FrameContext& frame) mutable {
+                    if (fn(frame)) {
+                        frame.shouldExit = true;
+                    }
+                };
+            } else {
+                m_loopHooks.onGUI = std::forward<Func>(func);
+            }
+            return *this;
+        }
+
+        // Hook 5: 注册每帧 PresentFrame 与 Tick 完成后的帧尾回调(支持返回 void, 或返回 bool 表示是否退出 LoopRun)
         template<typename Func>
         requires std::is_invocable_v<Func, FrameContext&>
         RGBuilder& OnPostFrame(Func&& func) {

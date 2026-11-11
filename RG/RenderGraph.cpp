@@ -498,6 +498,14 @@ namespace Ccino {
                 continue; // Acquire 时遇到 OUT_OF_DATE 已重建交换链, 下一轮触发 onResize 后重新录制
             }
 
+            // Hook 4: 在 PrepareFrame 后， 也就是GUI的NewFrame后
+            if (activeHooks.onGUI) {
+                activeHooks.onGUI(frame);
+                if (frame.shouldExit) {
+                    break;
+                }
+            }
+
             RecordPasses();
             BuildGraph();
             auto& commandBuffer = m_context->GetCommandBuffer(CommandQueueType::GRAPHICS, m_context->GetCurrentFrameIndex());
@@ -512,7 +520,7 @@ namespace Ccino {
 
             ++frame.frameIndex;
 
-            // Hook 4: 帧尾回调, 当前帧已完整提交并推进飞行帧槽位
+            // Hook 5: 帧尾回调, 当前帧已完整提交并推进飞行帧槽位
             if (activeHooks.onPostFrame) {
                 activeHooks.onPostFrame(frame);
                 if (frame.shouldExit) {
