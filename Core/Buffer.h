@@ -26,6 +26,8 @@ namespace Ccino {
             BufferUsage usage = BufferUsage::Storage;
             //None: Copy/Readback 走 Transfer 队列中转; 带 Write 的 Copy、带 Read 的 Readback 直接映射
             RHI::HostAccess hostAccess = RHI::HostAccess::None;
+
+            bool operator==(const CreateArgs&) const = default;
         };
 
         //两种构造方式
@@ -65,4 +67,21 @@ namespace Ccino {
         CreateArgs m_createArgs{}; //中转访问描述
     };
 
+}
+
+//处理CreateArgs Hash
+namespace std {
+    template<>
+    struct hash<Ccino::Buffer::CreateArgs> {
+        size_t operator()(const Ccino::Buffer::CreateArgs& args) const noexcept {
+            auto combine = [](uint64_t seed, uint64_t value) noexcept {
+                return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+            };
+
+            uint64_t h = args.size;
+            h = combine(h, static_cast<uint64_t>(args.usage));
+            h = combine(h, static_cast<uint64_t>(args.hostAccess));
+            return static_cast<size_t>(h);
+        }
+    };
 }

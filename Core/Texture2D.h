@@ -48,6 +48,8 @@ namespace Ccino {
             uint32_t mipLevels = 1;
             TextureFormat format = TextureFormat::RGBA8_sRGB;
             TextureUsage usage = TextureUsage::Sampled | TextureUsage::TransferDst;
+
+            bool operator==(const CreateArgs&) const = default;
         };
 
         static Ref<Texture2D> Create(RHI::Context& context, const CreateArgs& createArgs) {
@@ -72,5 +74,24 @@ namespace Ccino {
         RID m_rhiTexture = RID::Invalid();
         RHI::Context* m_context = nullptr;
         CreateArgs m_createArgs{};
+    };
+}
+
+//处理CreateArgs Hash
+namespace std {
+    template<>
+    struct hash<Ccino::Texture2D::CreateArgs> {
+        size_t operator()(const Ccino::Texture2D::CreateArgs& args) const noexcept {
+            auto combine = [](uint64_t seed, uint64_t value) noexcept {
+                return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+            };
+
+            uint64_t h = args.width;
+            h = combine(h, args.height);
+            h = combine(h, args.mipLevels);
+            h = combine(h, static_cast<uint64_t>(args.format));
+            h = combine(h, static_cast<uint64_t>(args.usage));
+            return static_cast<size_t>(h);
+        }
     };
 }
