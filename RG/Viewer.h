@@ -5,6 +5,7 @@
 #include "Texture2D.h"
 #include <array>
 #include <stdexcept>
+#include <variant>
 
 namespace Ccino {
     using RHI::AspectMask;
@@ -117,6 +118,13 @@ namespace Ccino {
         std::array<float, 4> color{};
     };
 
+    struct ClearDepthStencil {
+        float depth;
+        uint32_t stencil;
+    };
+
+    using ClearValue = std::variant<ClearColor, ClearDepthStencil>;
+
     //颜色附件, 只能由 RGBuilder::RTView 创建, 交给 AddVSAndFS 消费
     class RenderTarget {
     public:
@@ -132,6 +140,7 @@ namespace Ccino {
         LoadOp m_loadOp = LoadOp::Load;
         StoreOp m_storeOp = StoreOp::Store;
         ClearColor m_clear{}; //只在 m_loadOp 为 Clear 时生效
+        ClearValue m_clearValue{}; //这里是为了处理两种不同的Depth
     };
 
 }

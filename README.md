@@ -205,7 +205,7 @@ CcinoGPU 目前正处于活跃迭代阶段，核心的计算与图形渲染闭�
 - [x] **RenderGraph 核心调度**：Buffer 与 2D Texture 读写版本追踪、自动 `VkBufferMemoryBarrier2` / `VkImageMemoryBarrier2` 注入
 - [x] **图形管线与窗口呈现**：基于 `VK_EXT_shader_object` + Dynamic Rendering 的单轮图形 Pass、SDL3 窗口管理与交换链自适应重建
 - [ ] **图形管线能力扩展**：RenderGraph 深度附件（`DepthAttachment`）接入、顶点/索引缓冲绑定、实例化（Instancing）与 Indirect Draw 支持
-- [ ] **瞬态资源池（Transient Pool）**：实现 RenderGraph 内部瞬态纹理与缓冲区的生命周期复用及内存别名（Memory Aliasing）
+- [x] **瞬态资源池（Transient Pool）**：实现 RenderGraph 内部瞬态纹理与缓冲区的生命周期复用
 - [ ] **更细粒度的同步与并行录制**：完善跨队列资源级 Timeline 回写，支持多线程 Command Buffer 并行录制
 - [ ] **纹理特性补全**：支持多 Mipmap / Array Layer 拷贝、视图格式重解释（Format Reinterpretation）与着色器侧纹理数组访问
 

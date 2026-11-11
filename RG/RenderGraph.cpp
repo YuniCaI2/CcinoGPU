@@ -460,6 +460,7 @@ namespace Ccino {
         if (hooks.onEvent) activeHooks.onEvent = hooks.onEvent;
         if (hooks.onResize) activeHooks.onResize = hooks.onResize;
         if (hooks.onUpdate) activeHooks.onUpdate = hooks.onUpdate;
+        if (hooks.onGUI) activeHooks.onGUI = hooks.onGUI;
         if (hooks.onPostFrame) activeHooks.onPostFrame = hooks.onPostFrame;
 
         FrameContext frame{};

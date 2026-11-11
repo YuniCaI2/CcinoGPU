@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <imgui.h>
 #include <iostream>
 
 namespace {
@@ -513,25 +514,15 @@ namespace {
                 const float dt = std::clamp(frame.dt, 0.0f, 1.0f / 30.0f);
                 UpdateFrame(state, dt);
             },
-            .onPostFrame = [&](Ccino::FrameContext& frame) {
+            .onGUI = [&](Ccino::FrameContext& frame) {
                 frameCount = frame.frameIndex;
-                ++reportFrames;
-                const auto now = std::chrono::steady_clock::now();
-                const double sinceReport = std::chrono::duration<double>(now - lastReport).count();
-                if (sinceReport > 2.0) {
-                    std::cout << "FPS: " << reportFrames / sinceReport << std::endl;
-                    lastReport = now;
-                    reportFrames = 0;
-                }
-            },
+                bool open = true;
+                ImGui::Begin("Panel", &open, ImGuiWindowFlags_MenuBar);
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                ImGui::Text("FPS: %f", frameCount / seconds);
+                ImGui::End();
+            }
         });
-
-        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-        std::cout << "Rendered " << frameCount << " frames in " << seconds << " s";
-        if (seconds > 0.0) {
-            std::cout << " (" << frameCount / seconds << " FPS)";
-        }
-        std::cout << std::endl;
 
         particleBuffer.Reset();
         hdrTarget.Reset();

@@ -17,8 +17,8 @@ target_link_libraries(RHI
         GPUOpen::VulkanMemoryAllocator
         glm::glm
         nlohmann_json::nlohmann_json
+        imgui::imgui
     PRIVATE
         SDL3::SDL3-static
-        imgui::imgui
 )
 target_include_directories(RHI PUBLIC ${CMAKE_SOURCE_DIR})

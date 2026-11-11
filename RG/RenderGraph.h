@@ -353,7 +353,7 @@ namespace Ccino {
 
         //按注册或传入的 LoopHooks 运行交换链渲染循环:
         //  1. PollEvents(onEvent)  -> 2. SyncSwapchain(onResize) -> 3. onUpdate
-        //  -> 4. PrepareFrame + RecordPasses + BuildGraph + Blit + Present + Tick -> 5. onPostFrame
+        //  -> 4. PrepareFrame + onGUI + RecordPasses + BuildGraph + Blit + Present + Tick -> 5. onPostFrame
         void LoopRun(RID presentTexture, const LoopHooks& hooks = {});
 
         //兼容仅传入无参退出判断 Lambda 的简写形式: exitFunc 每帧录制前调用一次, 返回 true 退出

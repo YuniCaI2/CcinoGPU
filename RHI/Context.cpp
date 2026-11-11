@@ -1794,8 +1794,8 @@ namespace Ccino::RHI {
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
             //Test Demo
-            bool bShowDemo = true;
-            ImGui::ShowDemoWindow(&bShowDemo);
+            // bool bShowDemo = false;
+            // ImGui::ShowDemoWindow(&bShowDemo);
         }
         return true;
     }
