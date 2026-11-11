@@ -205,11 +205,12 @@ namespace Ccino::RHI {
         RID CreateTexture(const TextureCreateInfo& createInfo);
         void DestroyTexture(RID rid);
         void TransitionTextureLayout(RID rid, VkImageLayout newLayout);
-        VkImage GetVkImage(RID rid) { return m_textures.Get(rid)->image; }
+        VkImage GetVkImage(const RID& rid) { return m_textures.Get(rid)->image; }
         uint32_t GetTextureSize(RID rid);
-        VkFormat GetFormat(RID textureRID) {return m_textures.Get(textureRID)->format;}
+        VkFormat GetFormat(const RID& textureRID) {return m_textures.Get(textureRID)->format;}
+        bool isDepthTexture(const RID& textureRID) {return m_textures.Get(textureRID)->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;}
         VkImageLayout GetTextureLayout(RID textureRID) { return m_textures.Get(textureRID)->layout; }
-        void SetTextureLayout(RID textureRID, VkImageLayout layout) { m_textures.Get(textureRID)->layout = layout; }
+        void SetTextureLayout(const RID& textureRID, VkImageLayout layout) { m_textures.Get(textureRID)->layout = layout; }
 
         //不支持多MipmapLevel TODO：完善对多格式和布局的TextureCopy的支持
         bool CopyTexFromBuffer(RID dstTex, RID srcBuffer); //先只支持全量copy

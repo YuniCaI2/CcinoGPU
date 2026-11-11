@@ -85,15 +85,11 @@ namespace {
         return bufferBarrier;
     }
 
-    bool IsDepthFormat(VkFormat format) {
-        return format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM || format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+    VkImageAspectFlags ToVkImageAspectFlags(bool isDepth) {
+        return isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
     }
 
-    VkImageAspectFlags ImageAspectFromVkFormat(VkFormat format) {
-        return IsDepthFormat(format) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-    }
-
-    VkAccessFlags2 ToVkTextureAccessFlags2(TextureAccessFlags flags, VkFormat format) {
+    VkAccessFlags2 ToVkTextureAccessFlags2(TextureAccessFlags flags, bool isDepth) {
         VkAccessFlags2 access = VK_ACCESS_2_NONE;
         if (HasTextureAccess(flags, TextureAccessFlagBits::Sampled)) {
             access |= VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
@@ -105,7 +101,7 @@ namespace {
             access |= VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
         }
         if (HasTextureAccess(flags, TextureAccessFlagBits::RenderTarget)) {
-            if (IsDepthFormat(format)) {
+            if (isDepth) {
                 access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             } else {
                 access |= VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
@@ -114,7 +110,7 @@ namespace {
         return access;
     }
 
-    VkImageLayout ToVkImageLayout(TextureAccessFlags flags, VkFormat format) {
+    VkImageLayout ToVkImageLayout(TextureAccessFlags flags, bool isDepth) {
         if (HasTextureAccess(flags, TextureAccessFlagBits::StorageRead) ||
             HasTextureAccess(flags, TextureAccessFlagBits::StorageWrite)) {
             return VK_IMAGE_LAYOUT_GENERAL;
@@ -123,7 +119,7 @@ namespace {
             return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         }
         if (HasTextureAccess(flags, TextureAccessFlagBits::RenderTarget)) {
-            return IsDepthFormat(format) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            return isDepth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
                                          : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         }
         return VK_IMAGE_LAYOUT_GENERAL;
@@ -136,9 +132,9 @@ namespace {
         RID textureID,
         Ccino::RGPassTypeFlags srcPassType = Ccino::RGPassTypeFlagBits::Compute,
         Ccino::RGPassTypeFlags dstPassType = Ccino::RGPassTypeFlagBits::Compute) {
-        const VkFormat format = context->GetFormat(textureID);
+        const bool isDepth = context->isDepthTexture(textureID);
         const VkImageLayout oldLayout = context->GetTextureLayout(textureID);
-        const VkImageLayout newLayout = ToVkImageLayout(dstFlags, format);
+        const VkImageLayout newLayout = ToVkImageLayout(dstFlags, isDepth);
 
         VkImageMemoryBarrier2 imageBarrier{};
         imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -148,15 +144,15 @@ namespace {
                                         : ToVkPipelineStageFlags2(srcPassType);
         imageBarrier.srcAccessMask = (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED)
                                          ? VK_ACCESS_2_NONE
-                                         : ToVkTextureAccessFlags2(srcFlags, format);
+                                         : ToVkTextureAccessFlags2(srcFlags, isDepth);
         imageBarrier.dstStageMask = ToVkPipelineStageFlags2(dstPassType);
-        imageBarrier.dstAccessMask = ToVkTextureAccessFlags2(dstFlags, format);
+        imageBarrier.dstAccessMask = ToVkTextureAccessFlags2(dstFlags, isDepth);
         imageBarrier.oldLayout = oldLayout;
         imageBarrier.newLayout = newLayout;
         imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         imageBarrier.image = context->GetVkImage(textureID);
-        imageBarrier.subresourceRange.aspectMask = ImageAspectFromVkFormat(format);
+        imageBarrier.subresourceRange.aspectMask = ToVkImageAspectFlags(isDepth);
         imageBarrier.subresourceRange.baseMipLevel = 0;
         imageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
         imageBarrier.subresourceRange.baseArrayLayer = 0;
@@ -660,7 +656,7 @@ namespace Ccino {
                     std::visit([&](const auto& flags) {
                         if constexpr (std::is_same_v<TextureAccessFlags, std::decay_t<decltype(flags)>>) {
                             const VkImageLayout oldLayout = m_context->GetTextureLayout(rhiTex);
-                            if (oldLayout == ToVkImageLayout(flags, m_context->GetFormat(rhiTex))) {
+                            if (oldLayout == ToVkImageLayout(flags, m_context->isDepthTexture(rhiTex))) {
                                 return;
                             }
                             VkImageMemoryBarrier2 barrier = GenerateVkTextureBarrier(
@@ -740,7 +736,7 @@ namespace Ccino {
                         std::visit([&](auto& value){
                             if constexpr (std::is_same_v<ClearDepthStencil, std::remove_cvref_t<decltype(value)>>) {
                                 std::memset(&attachment.clearValue.color.float32, 0, sizeof(attachment.clearValue.color.float32));
-                            } 
+                            }
                             if constexpr (std::is_same_v<ClearColor, std::remove_cvref_t<decltype(value)>>) {
                                 std::copy_n(value.color.begin(), 4, attachment.clearValue.color.float32);
                             }

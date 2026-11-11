@@ -140,6 +140,9 @@ int RunDemo() {
         camera.Update(event);
         return false;
     });
+    builder->OnUpdate([&](Ccino::FrameContext& frame) {
+        camera.UpdateMovement(frame.dt);
+    });
 
     Ccino::GraphicsSetting graphicsSetting{
         .drawCounts = static_cast<uint32_t>(kCubeIndices.size()),

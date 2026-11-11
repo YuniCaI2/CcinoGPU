@@ -19,14 +19,45 @@ public:
     }
 
     void Update(const SDL_Event& event) {
-        if (event.type != SDL_EVENT_MOUSE_MOTION) {
+        if (event.type == SDL_EVENT_MOUSE_MOTION) {
+            constexpr float kSensitivity = 0.002f;
+            m_yaw += event.motion.xrel * kSensitivity;
+            m_pitch -= event.motion.yrel * kSensitivity;
+            const float pitchLimit = glm::radians(89.0f);
+            m_pitch = std::clamp(m_pitch, -pitchLimit, pitchLimit);
+            RebuildView();
+        } else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
+            const bool pressed = event.type == SDL_EVENT_KEY_DOWN;
+            switch (event.key.scancode) {
+            case SDL_SCANCODE_W: m_moveForward = pressed; break;
+            case SDL_SCANCODE_S: m_moveBackward = pressed; break;
+            case SDL_SCANCODE_A: m_moveLeft = pressed; break;
+            case SDL_SCANCODE_D: m_moveRight = pressed; break;
+            default: break;
+            }
+        } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            // 切出窗口时可能收不到 KEY_UP, 清除状态避免持续移动
+            m_moveForward = m_moveBackward = m_moveLeft = m_moveRight = false;
+        }
+    }
+
+    // 按键事件只记录状态, 每帧根据 dt 移动, 不依赖系统的按键重复频率
+    void UpdateMovement(float dt) {
+        if (dt <= 0.0f) {
             return;
         }
-        constexpr float kSensitivity = 0.002f;
-        m_yaw += event.motion.xrel * kSensitivity;
-        m_pitch -= event.motion.yrel * kSensitivity;
-        const float pitchLimit = glm::radians(89.0f);
-        m_pitch = std::clamp(m_pitch, -pitchLimit, pitchLimit);
+
+        const float forward = static_cast<float>(m_moveForward) - static_cast<float>(m_moveBackward);
+        const float strafe = static_cast<float>(m_moveRight) - static_cast<float>(m_moveLeft);
+        if (forward == 0.0f && strafe == 0.0f) {
+            return;
+        }
+
+        // 右手相机默认朝 +Z, 此时屏幕右方为世界 -X
+        const Ccino::Vec3 right = glm::normalize(glm::cross(m_lookAtVec, Ccino::Vec3(0.0f, 1.0f, 0.0f)));
+        const Ccino::Vec3 direction = glm::normalize(m_lookAtVec * forward + right * strafe);
+        constexpr float kMoveSpeed = 2.5f; // 世界单位 / 秒
+        m_position += direction * kMoveSpeed * dt;
         RebuildView();
     }
 
@@ -61,6 +92,10 @@ private:
     float m_aspect = 1.0f;
     float m_yaw = 0.0f;
     float m_pitch = 0.0f;
+    bool m_moveForward = false;
+    bool m_moveBackward = false;
+    bool m_moveLeft = false;
+    bool m_moveRight = false;
     Ccino::Mat4 m_view{1.0f};
     Ccino::Mat4 m_perspective{1.0f};
     Ccino::Vec3 m_position{};
