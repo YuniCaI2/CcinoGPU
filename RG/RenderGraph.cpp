@@ -12,6 +12,7 @@
 #include "Viewer.h"
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -730,8 +731,31 @@ namespace Ccino {
                         attachment.textureView = CreateRenderTargetView(m_resources.Get(renderTarget.m_resource)->GetRHI(), renderTarget.m_viewRange);
                         attachment.loadOp = ToVkLoadOp(renderTarget.m_loadOp);
                         attachment.storeOp = ToVkStoreOp(renderTarget.m_storeOp);
-                        std::copy_n(renderTarget.m_clear.color.begin(), 4, attachment.clearValue.color.float32);
+                        std::visit([&](auto& value){
+                            if constexpr (std::is_same_v<ClearDepthStencil, std::remove_cvref_t<decltype(value)>>) {
+                                std::memset(&attachment.clearValue.color.float32, 0, sizeof(attachment.clearValue.color.float32));
+                            } 
+                            if constexpr (std::is_same_v<ClearColor, std::remove_cvref_t<decltype(value)>>) {
+                                std::copy_n(value.color.begin(), 4, attachment.clearValue.color.float32);
+                            }
+                        }, renderTarget.m_clearValue);
                     }
+                    if (pass->depthRenderTarget.has_value()) {
+                        auto& attachment = renderDesc.depthAttachment;
+                        auto& renderTarget = pass->depthRenderTarget.value();
+                        attachment.textureView = CreateRenderTargetView(m_resources.Get(renderTarget.m_resource)->GetRHI(), renderTarget.m_viewRange);
+                        attachment.loadOp = ToVkLoadOp(renderTarget.m_loadOp);
+                        attachment.storeOp = ToVkStoreOp(renderTarget.m_storeOp);
+                        std::visit([&](auto& value){
+                            if constexpr (std::is_same_v<ClearDepthStencil, std::remove_cvref_t<decltype(value)>>) {
+                                attachment.clearValue.depthStencil.depth = value.depth;
+                                attachment.clearValue.depthStencil.stencil = value.stencil;
+                            } else {
+                                std::memset(&attachment.clearValue.depthStencil, 0, sizeof(attachment.clearValue.depthStencil));
+                            }
+                        }, renderTarget.m_clearValue);
+                    }
+
 
                     const VkExtent2D extent = m_context->BeginRendering(commandBuffer, renderDesc);
                     RHI::ShaderObjectBindingSetting bindingSetting = ToShaderObjectBindingSetting(pass->graphicsSetting);

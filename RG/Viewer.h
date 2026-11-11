@@ -132,14 +132,13 @@ namespace Ccino {
 
     private:
         friend class RGBuilder;
-        RenderTarget(RID resource, ViewRange viewRange, LoadOp loadOp, StoreOp storeOp, ClearColor clear)
-            : m_resource(resource), m_viewRange(viewRange), m_loadOp(loadOp), m_storeOp(storeOp), m_clear(clear) {}
+        RenderTarget(RID resource, ViewRange viewRange, LoadOp loadOp, StoreOp storeOp, ClearValue clear)
+            : m_resource(resource), m_viewRange(viewRange), m_loadOp(loadOp), m_storeOp(storeOp), m_clearValue(clear) {}
 
         RID m_resource = RID::Invalid();
         ViewRange m_viewRange{};
         LoadOp m_loadOp = LoadOp::Load;
         StoreOp m_storeOp = StoreOp::Store;
-        ClearColor m_clear{}; //只在 m_loadOp 为 Clear 时生效
         ClearValue m_clearValue{}; //这里是为了处理两种不同的Depth
     };
 

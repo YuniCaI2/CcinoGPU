@@ -122,13 +122,16 @@ namespace Ccino {
 
         //这里VS和PS VS的输入类型就是out FS的输入类型就是in, 这里规定如果传值就是说in 传引用就是out. fs的out作为renderTarget的一部分，直接写到RenderTarget中. 两者需要对齐. 处理输入的RenderTarget
         template<typename VS, typename FS>
-        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<RenderTarget>& renderTargets) { //RenderTarget 由 RTView 创建, 写依赖已经在 RTView 中建好
+        void AddVSAndFS(VS&& vs, FS&& fs ,const GraphicsSetting& setting, const std::vector<RenderTarget>& renderTargets, RenderTarget* depthRenderTarget = nullptr) { //RenderTarget 由 RTView 创建, 写依赖已经在 RTView 中建好
             //处理VS和PS的翻译和绑定
             auto pass = m_passes.Get(m_currentPass);
             pass->passType = RGPassTypeFlagBits::Graphics;
             pass->graphicsSetting = setting;
             //此时 transient 纹理还没有创建 RHI 对象, View 在 GenerateCommands 中创建
             pass->renderTargets = renderTargets;
+            if (depthRenderTarget) {
+                pass->depthRenderTarget = *depthRenderTarget;
+            }
 
             //此处直接短路即可
             if (m_context != nullptr && ShaderIRRegistry::Instance().Contains(pass->passName)) {
@@ -263,7 +266,7 @@ namespace Ccino {
 
         //RenderTarget 写访问, 产生新版本. clear 只在 loadOp 为 Clear 时生效
         template<ViewType viewType = ViewType::Float>
-        RenderTarget RTView(RID& resource, RID& passRID, LoadOp loadOp, ClearColor clear = {},
+        RenderTarget RTView(RID& resource, RID& passRID, LoadOp loadOp, ClearValue clear = {},
                             StoreOp storeOp = StoreOp::Store, ViewRange viewRange = {}) {
             if (!CheckResourceType(resource, ResourceType::Texture, "RTView") ||
                 !CheckTextureFormat(resource, viewType, "RTView")) {

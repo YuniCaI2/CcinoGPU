@@ -191,6 +191,6 @@ namespace Ccino {
         //Graphics Info
         GraphicsSetting graphicsSetting{};
         std::vector<RenderTarget> renderTargets; //下标对应FS 的 out location
-        RenderTarget depthRenderTarget; //这里区别上述的颜色
+        std::optional<RenderTarget> depthRenderTarget; //这里区别上述的颜色
     };
 }
