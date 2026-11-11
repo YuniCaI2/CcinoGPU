@@ -240,6 +240,7 @@ namespace Ccino {
     void RGBuilder::Destroy() {
         ReleaseRenderTargetViews();
         ReleaseGPUResource();
+        m_transientPool.ReleaseAll();
         ReleasePass();
     }
 
@@ -256,6 +257,7 @@ namespace Ccino {
         for (auto& edge : m_edges) {
             if (IsWritable(edge.resourceAccessFlags)) {
                 producers[edge.resourceRID][edge.version] = {edge.passRID, edge.resourceAccessFlags};
+                m_transientPool.ReleaseAll();
             } else if (IsReadable(edge.resourceAccessFlags)) {
                 readers[edge.resourceRID][edge.version].push_back({edge.passRID, edge.resourceAccessFlags});
             }
@@ -448,7 +450,6 @@ namespace Ccino {
         if (m_context == nullptr || !CheckResourceType(presentTexture, ResourceType::Texture, "LoopRun")) {
             return;
         }
-        CreateGPUResource();
 
         LoopHooks activeHooks = m_loopHooks;
         if (hooks.onEvent) activeHooks.onEvent = hooks.onEvent;
@@ -462,6 +463,7 @@ namespace Ccino {
 
         // Hook 1: 框架统一轮询 SDL 事件队列, 默认处理关窗事件并将事件分发给 onEvent
         while (!m_context->PollEvents(activeHooks.onEvent)) {
+            CreateGPUResource();
             bool resized = false;
             if (!m_context->SyncSwapchain(&resized)) {
                 lastTime = std::chrono::steady_clock::now(); // 窗口最小化休眠期间重置计时起点, 恢复后不产生突变的 dt
@@ -520,6 +522,9 @@ namespace Ccino {
 
             ++frame.frameIndex;
 
+            //资源释放
+            ReleaseGPUResource();
+
             // Hook 5: 帧尾回调, 当前帧已完整提交并推进飞行帧槽位
             if (activeHooks.onPostFrame) {
                 activeHooks.onPostFrame(frame);
@@ -577,14 +582,27 @@ namespace Ccino {
         if (m_context == nullptr) return;
         m_resources.ForEach([this](RGResource& resource){
             if (resource.isExternal) return;
-            resource.Create(*m_context);
+            auto hash = resource.GetHash();
+            if (auto handle = m_transientPool.GetResource(hash)) {
+                //两种情况
+                if (auto preHandle = resource.MoveOutHandle()) {
+                    m_transientPool.InputResource(std::move(preHandle)); //这个不会出现，这里用来保险
+                } else {
+                    resource.m_handle = std::move(handle);
+                }
+            } else {
+                resource.Create(*m_context);
+            }
         });
     }
 
     void RGBuilder::ReleaseGPUResource() {
-        m_resources.ForEach([](RGResource& resource){
+        //先释放当前的transientPool
+        m_transientPool.ReleaseAll();
+        m_resources.ForEach([this](RGResource& resource){
             if (resource.isExternal) return;
-            resource.Release();
+            auto handle = resource.MoveOutHandle();
+            m_transientPool.InputResource(std::move(handle));
         });
     }
 

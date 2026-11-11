@@ -5,17 +5,17 @@
 #include "RHI/Context.h"
 
 #include <memory>
-#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
 namespace Ccino {
     //运行期多态接口: RG 内部只通过这组虚函数访问资源, 不关心具体是 Buffer 还是 Texture2D
     struct IRGResource {
-        virtual ~IRGResource() = default;
+        virtual ~IRGResource();
         virtual ResourceType Type() const = 0;
         virtual RID GetRHI() const = 0;
         virtual void Create(RHI::Context& context) = 0; //已持有对象(外部资源/已创建)时不重复创建
+        virtual size_t GetCreateArgsHash() const = 0;
         virtual void Release() = 0;
     };
 
@@ -52,7 +52,12 @@ namespace Ccino {
             }
         }
 
+        size_t GetCreateArgsHash() const override {
+            return std::hash<typename T::CreateArgs>{}(m_createArgs);
+        }
+
         void Release() override { m_ref.UnRef(); }
+
 
         const typename T::CreateArgs& GetCreateArgs() const { return m_createArgs; }
         Ref<T> GetRef() const { return m_ref; }
@@ -65,70 +70,22 @@ namespace Ccino {
     //类型擦除外壳: TRIDArray 里存的就是这个, 移动语义(unique_ptr), 不可拷贝
     struct RGResource {
         RGResource() = default;
-        RGResource(std::unique_ptr<IRGResource> handle, bool external)
-            : m_handle(std::move(handle)), isExternal(external) {}
+        RGResource(std::unique_ptr<IRGResource> handle, bool external);
 
         //兼容按 (类型, 描述, 是否外部) 直接构造 transient 资源
-        RGResource(ResourceType type, Buffer::CreateArgs createArgs, bool external)
-            : m_handle(std::make_unique<RGResourceHandle<Buffer>>(std::move(createArgs), Ref<Buffer>{})),
-              isExternal(external) {
-            if (type != ResourceType::Buffer) {
-                throw std::invalid_argument("RGResource type does not match Buffer create args");
-            }
-        }
+        RGResource(ResourceType type, Buffer::CreateArgs createArgs, bool external);
+        RGResource(ResourceType type, Texture2D::CreateArgs createArgs, bool external);
 
-        RGResource(ResourceType type, Texture2D::CreateArgs createArgs, bool external)
-            : m_handle(std::make_unique<RGResourceHandle<Texture2D>>(std::move(createArgs), Ref<Texture2D>{})),
-              isExternal(external) {
-            if (type != ResourceType::Texture) {
-                throw std::invalid_argument("RGResource type does not match Texture2D create args");
-            }
-        }
+        static RGResource TransientBuffer(Buffer::CreateArgs createArgs);
+        static RGResource ExternalBuffer(const Ref<Buffer>& buffer);
+        static RGResource TransientTexture2D(Texture2D::CreateArgs createArgs);
+        static RGResource ExternalTexture2D(const Ref<Texture2D>& texture);
 
-        static RGResource TransientBuffer(Buffer::CreateArgs createArgs) {
-            return RGResource{std::make_unique<RGResourceHandle<Buffer>>(std::move(createArgs), Ref<Buffer>{}), false};
-        }
-
-        static RGResource ExternalBuffer(const Ref<Buffer>& buffer) {
-            if (!buffer.IsValid()) {
-                throw std::invalid_argument("External buffer is null");
-            }
-            return RGResource{std::make_unique<RGResourceHandle<Buffer>>(buffer->GetCreateArgs(), buffer), true};
-        }
-
-        static RGResource TransientTexture2D(Texture2D::CreateArgs createArgs) {
-            return RGResource{std::make_unique<RGResourceHandle<Texture2D>>(std::move(createArgs), Ref<Texture2D>{}), false};
-        }
-
-        static RGResource ExternalTexture2D(const Ref<Texture2D>& texture) {
-            if (!texture.IsValid()) {
-                throw std::invalid_argument("External texture is null");
-            }
-            return RGResource{std::make_unique<RGResourceHandle<Texture2D>>(texture->GetCreateArgs(), texture), true};
-        }
-
-        ResourceType GetResourceType() const {
-            if (m_handle == nullptr) {
-                throw std::runtime_error("RGResource has no handle");
-            }
-            return m_handle->Type();
-        }
-
-        RID GetRHI() const {
-            return m_handle != nullptr ? m_handle->GetRHI() : RID::Invalid();
-        }
-
-        void Create(RHI::Context& context) {
-            if (m_handle != nullptr) {
-                m_handle->Create(context);
-            }
-        }
-
-        void Release() {
-            if (m_handle != nullptr) {
-                m_handle->Release();
-            }
-        }
+        ResourceType GetResourceType() const;
+        RID GetRHI() const;
+        void Create(RHI::Context& context);
+        void Release();
+        size_t GetHash() const;
 
         //TODO:有RTTI，可能需要优化
         //按具体类型取回句柄(类型不对返回nullptr), 供需要描述/强类型校验的地方用
@@ -142,6 +99,8 @@ namespace Ccino {
             return dynamic_cast<const RGResourceHandle<T>*>(m_handle.get());
         }
 
+        std::unique_ptr<IRGResource> MoveOutHandle();
+
         template<typename T>
         const typename T::CreateArgs* GetCreateArgs() const {
             const auto* handle = GetHandle<T>();
@@ -150,6 +109,21 @@ namespace Ccino {
 
         std::unique_ptr<IRGResource> m_handle;
         bool isExternal = false; //是否是外部资源 如果是外部资源这里的仅仅为占位
+    };
+
+    //资源缓冲池，用来管理待释放资源
+    //这里的资源池的目的是为了存储即将释放的资源，并且防止其重复的多次的创建，他会保留一个飞行帧周期
+    class RGTransientResourceReleasePool {
+    public:
+        std::unique_ptr<IRGResource> GetResource(const size_t& hash);
+
+        void InputResource(std::unique_ptr<IRGResource>&& resource);
+
+        void ReleaseAll();
+
+    private:
+        //这里会存储一个回合
+        std::unordered_map<size_t, std::unique_ptr<IRGResource>> m_resources;
     };
 
 }

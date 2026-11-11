@@ -405,6 +405,7 @@ namespace Ccino {
         TRIDArray<RGResource> m_resources;
         std::vector<std::pair<RID, std::function<void(RGBuilder&, RID&)>>> m_passRecorders;
 
+        RGTransientResourceReleasePool m_transientPool;
 
         //线程不安全，考虑是否加锁
         RID m_currentPass = RID::Invalid();
