@@ -16,6 +16,7 @@ namespace Ccino {
         virtual RID GetRHI() const = 0;
         virtual void Create(RHI::Context& context) = 0; //已持有对象(外部资源/已创建)时不重复创建
         virtual size_t GetCreateArgsHash() const = 0;
+        virtual std::unique_ptr<IRGResource> TakeResource() = 0; //移出底层GPU对象用于回收池, 原句柄保留CreateArgs空壳
         virtual void Release() = 0;
     };
 
@@ -54,6 +55,13 @@ namespace Ccino {
 
         size_t GetCreateArgsHash() const override {
             return std::hash<typename T::CreateArgs>{}(m_createArgs);
+        }
+
+        std::unique_ptr<IRGResource> TakeResource() override {
+            if (!m_ref.IsValid()) {
+                return nullptr;
+            }
+            return std::make_unique<RGResourceHandle<T>>(m_createArgs, std::move(m_ref));
         }
 
         void Release() override { m_ref.UnRef(); }
@@ -115,6 +123,10 @@ namespace Ccino {
     //这里的资源池的目的是为了存储即将释放的资源，并且防止其重复的多次的创建，他会保留一个飞行帧周期
     class RGTransientResourceReleasePool {
     public:
+        void Init(uint32_t frameCount);
+        void Update(); //需要在获取资源前更新
+        void Destroy();
+
         std::unique_ptr<IRGResource> GetResource(const size_t& hash);
 
         void InputResource(std::unique_ptr<IRGResource>&& resource);
@@ -122,8 +134,10 @@ namespace Ccino {
         void ReleaseAll();
 
     private:
-        //这里会存储一个回合
-        std::unordered_map<size_t, std::unique_ptr<IRGResource>> m_resources;
+        //按飞行帧分槽; 同一帧同一CreateArgs可能有多个临时资源, 按hash存成桶避免互相覆盖
+        std::vector<std::unordered_map<size_t, std::vector<std::unique_ptr<IRGResource>>>> m_resources;
+        uint32_t m_frameIndex{};
+        uint32_t m_frameCount{};
     };
 
 }

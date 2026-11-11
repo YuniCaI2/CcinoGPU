@@ -1855,17 +1855,44 @@ namespace Ccino::RHI {
         vkCmdBlitImage(commandBuffer, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             dst->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR);
 
-        const VkImageMemoryBarrier2 toPresent = makeBarrier(dst->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
-        dependencyInfo.imageMemoryBarrierCount = 1;
-        dependencyInfo.pImageMemoryBarriers = &toPresent;
-        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
-
-        //Imgui
         if (bUseImgui) {
+            // 将刚 Blit 完成的交换链图像转为 Color Attachment, 用 LOAD 保留底图叠加绘制 ImGui
+            const VkImageMemoryBarrier2 toColorAttachment = makeBarrier(
+                dst->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            dependencyInfo.imageMemoryBarrierCount = 1;
+            dependencyInfo.pImageMemoryBarriers = &toColorAttachment;
+            vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+            dst->layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            RenderDesc imguiRenderDesc{};
+            imguiRenderDesc.colorAttachments.push_back(AttachmentInfo{
+                .textureView = m_swapchain->m_textureViews[m_currentImageIndex],
+                .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            });
+            BeginRendering(commandBuffer, imguiRenderDesc);
             ImGui::Render();
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+            EndRendering(commandBuffer);
+
+            const VkImageMemoryBarrier2 toPresent = makeBarrier(
+                dst->image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+            dependencyInfo.imageMemoryBarrierCount = 1;
+            dependencyInfo.pImageMemoryBarriers = &toPresent;
+            vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+        } else {
+            const VkImageMemoryBarrier2 toPresent = makeBarrier(
+                dst->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+            dependencyInfo.imageMemoryBarrierCount = 1;
+            dependencyInfo.pImageMemoryBarriers = &toPresent;
+            vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
         }
 
         src->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;

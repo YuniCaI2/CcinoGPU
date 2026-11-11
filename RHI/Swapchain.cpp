@@ -165,7 +165,10 @@ namespace Ccino::RHI {
 
         //如果交换链被重新创建，销毁旧的交换链以及资源
         if (swapchain != VK_NULL_HANDLE) {
-            //这里ImageView不管理
+            for (const RID& viewRID : m_textureViews) {
+                m_context->DestroyImageView(viewRID);
+            }
+            m_textureViews.clear();
             vkDestroySwapchainKHR(m_core->GetVkDevice(), swapchain, nullptr);
             m_context->UnRegisterSwapchainImages(m_textures);
         }
@@ -174,6 +177,10 @@ namespace Ccino::RHI {
         m_images.resize(imageCount);
         VULKAN_CHECK(vkGetSwapchainImagesKHR(m_core->GetVkDevice(), m_vulkanSwapchain, &imageCount, m_images.data()));
         m_textures = m_context->RegisterSwapchainImages(m_images); //获得注册
+        m_textureViews.reserve(m_textures.size());
+        for (const RID& textureRID : m_textures) {
+            m_textureViews.push_back(m_context->CreateTextureView(textureRID, ViewRange{}));
+        }
     }
 
     VkResult Swapchain::PresentFrame(uint32_t imageIndex, VkSemaphore presentReadySemaphore) {

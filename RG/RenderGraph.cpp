@@ -230,17 +230,23 @@ namespace Ccino {
     void RGBuilder::Init(RHI::Context* context) {
         m_context = context;
         m_scheduler = nullptr; //这里直接使用空代表串行
+        if (m_context != nullptr) {
+            m_transientPool.Init(m_context->GetFlightFrameCount());
+        }
     }
 
     void RGBuilder::Init(RHI::Context* context, std::unique_ptr<IRGScheduler>&& sheduler) {
         m_context = context;
         m_scheduler = std::move(sheduler);
+        if (m_context != nullptr) {
+            m_transientPool.Init(m_context->GetFlightFrameCount());
+        }
     }
 
     void RGBuilder::Destroy() {
         ReleaseRenderTargetViews();
         ReleaseGPUResource();
-        m_transientPool.ReleaseAll();
+        m_transientPool.Destroy();
         ReleasePass();
     }
 
@@ -257,7 +263,6 @@ namespace Ccino {
         for (auto& edge : m_edges) {
             if (IsWritable(edge.resourceAccessFlags)) {
                 producers[edge.resourceRID][edge.version] = {edge.passRID, edge.resourceAccessFlags};
-                m_transientPool.ReleaseAll();
             } else if (IsReadable(edge.resourceAccessFlags)) {
                 readers[edge.resourceRID][edge.version].push_back({edge.passRID, edge.resourceAccessFlags});
             }
@@ -524,6 +529,7 @@ namespace Ccino {
 
             //资源释放
             ReleaseGPUResource();
+            m_transientPool.Update();
 
             // Hook 5: 帧尾回调, 当前帧已完整提交并推进飞行帧槽位
             if (activeHooks.onPostFrame) {
@@ -582,14 +588,13 @@ namespace Ccino {
         if (m_context == nullptr) return;
         m_resources.ForEach([this](RGResource& resource){
             if (resource.isExternal) return;
+            if (resource.GetRHI() != RID::Invalid()) return; //本帧跳过重建时已持有有效RHI对象
             auto hash = resource.GetHash();
             if (auto handle = m_transientPool.GetResource(hash)) {
-                //两种情况
                 if (auto preHandle = resource.MoveOutHandle()) {
-                    m_transientPool.InputResource(std::move(preHandle)); //这个不会出现，这里用来保险
-                } else {
-                    resource.m_handle = std::move(handle);
+                    m_transientPool.InputResource(std::move(preHandle));
                 }
+                resource.m_handle = std::move(handle);
             } else {
                 resource.Create(*m_context);
             }

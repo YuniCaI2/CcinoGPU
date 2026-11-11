@@ -44,5 +44,6 @@ namespace Ccino::RHI {
         //这里的Image应该如何管理呢？我认为应该托管到Context 变成RID，但这个RID不会直接释放
         std::vector<VkImage> m_images;
         std::vector<RID> m_textures; //直接是images的RID句柄
+        std::vector<RID> m_textureViews; //交换链图像的View句柄, 供ImGui等叠加Pass做Color Attachment
     };
 }

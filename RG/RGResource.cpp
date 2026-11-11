@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace Ccino {
@@ -72,37 +73,88 @@ namespace Ccino {
     }
 
     size_t RGResource::GetHash() const {
+        if (m_handle == nullptr) {
+            throw std::runtime_error("RGResource has no handle");
+        }
         return m_handle->GetCreateArgsHash();
     }
 
     std::unique_ptr<IRGResource> RGResource::MoveOutHandle() {
-        std::unique_ptr<IRGResource> result{};
-        std::swap(result, m_handle);
-        return result;
+        return m_handle != nullptr ? m_handle->TakeResource() : nullptr;
+    }
+
+    void RGTransientResourceReleasePool::Init(uint32_t frameCount) {
+        // MSVC 的 vector::resize 在元素移动构造非 noexcept 时会实例化拷贝路径。
+        // unordered_map 的移动构造没有 noexcept，拷贝又会碰到 unique_ptr。
+        m_resources = decltype(m_resources)(frameCount);
+        m_frameIndex = 0;
+        m_frameCount = frameCount;
+    }
+
+    void RGTransientResourceReleasePool::Update() {
+        if (m_frameCount == 0) {
+            return;
+        }
+        m_frameIndex = (m_frameIndex + 1) % m_frameCount;
+    }
+
+    void RGTransientResourceReleasePool::Destroy() {
+        for (auto& resources : m_resources) {
+            for (auto& [_, bucket] : resources) {
+                for (auto& r : bucket) {
+                    if (r) {
+                        r->Release();
+                    }
+                }
+            }
+            resources.clear();
+        }
+        m_resources.clear();
+        m_frameIndex = 0;
+        m_frameCount = 0;
     }
 
     std::unique_ptr<IRGResource> RGTransientResourceReleasePool::GetResource(const size_t& hash) {
-        std::unique_ptr<IRGResource> result{};
-        if (m_resources.contains(hash)) {
-            m_resources[hash]->Release(); //资源释放
-            std::swap(result, m_resources[hash]);
+        if (m_resources.empty()) {
+            return nullptr;
+        }
+        auto& framePool = m_resources[m_frameIndex];
+        auto it = framePool.find(hash);
+        if (it == framePool.end() || it->second.empty()) {
+            return nullptr;
+        }
+        std::unique_ptr<IRGResource> result = std::move(it->second.back());
+        it->second.pop_back();
+        if (it->second.empty()) {
+            framePool.erase(it);
         }
         return result;
     }
 
     void RGTransientResourceReleasePool::InputResource(std::unique_ptr<IRGResource>&& resource) {
-        auto hash = resource->GetCreateArgsHash();
-        if (m_resources.contains(hash)) {
-            m_resources[hash]->Release(); //资源释放
-            std::swap(resource, m_resources[hash]);
+        if (!resource) {
+            return;
         }
+        if (m_resources.empty()) {
+            resource->Release();
+            return;
+        }
+        auto hash = resource->GetCreateArgsHash();
+        m_resources[m_frameIndex][hash].push_back(std::move(resource));
     }
 
     void RGTransientResourceReleasePool::ReleaseAll() {
-        for (auto& [_, r] : m_resources){
-            r->Release();
+        if (m_resources.empty()) {
+            return;
         }
-        m_resources.clear();
+        for (auto& [_, bucket] : m_resources[m_frameIndex]) {
+            for (auto& r : bucket) {
+                if (r) {
+                    r->Release();
+                }
+            }
+        }
+        m_resources[m_frameIndex].clear();
     }
 
 }
