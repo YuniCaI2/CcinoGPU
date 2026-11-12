@@ -2,13 +2,14 @@
 #include "Core/CcinoType.h"
 
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_mouse.h>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <cmath>
 
-// yaw / pitch 为 0 时视线沿 +Z. 鼠标水平移动改变 yaw, 垂直移动改变 pitch
+// yaw / pitch 为 0 时视线沿 +Z. 按住右键拖动改变朝向, 期间进入相对鼠标模式并隐藏光标
 class Camera {
 public:
     // fov 为角度
@@ -19,7 +20,12 @@ public:
     }
 
     void Update(const SDL_Event& event) {
-        if (event.type == SDL_EVENT_MOUSE_MOTION) {
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT) {
+            m_window = SDL_GetWindowFromID(event.button.windowID);
+            SetLooking(true);
+        } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_RIGHT) {
+            SetLooking(false);
+        } else if (event.type == SDL_EVENT_MOUSE_MOTION && m_looking) {
             constexpr float kSensitivity = 0.002f;
             m_yaw += event.motion.xrel * kSensitivity;
             m_pitch -= event.motion.yrel * kSensitivity;
@@ -36,8 +42,9 @@ public:
             default: break;
             }
         } else if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
-            // 切出窗口时可能收不到 KEY_UP, 清除状态避免持续移动
+            // 切出窗口时可能收不到 KEY_UP / 右键松开, 清除状态避免持续移动和光标一直隐藏
             m_moveForward = m_moveBackward = m_moveLeft = m_moveRight = false;
+            SetLooking(false);
         }
     }
 
@@ -73,6 +80,16 @@ public:
     const Ccino::Vec3& LookAt() const { return m_lookAtVec; }
 
 private:
+    void SetLooking(bool looking) {
+        if (m_looking == looking) {
+            return;
+        }
+        m_looking = looking;
+        if (m_window != nullptr) {
+            SDL_SetWindowRelativeMouseMode(m_window, looking);
+        }
+    }
+
     void RebuildProjection() {
         m_perspective = glm::perspectiveRH_ZO(glm::radians(m_fov), m_aspect, 0.01f, 100.0f);
         m_perspective[1][1] *= -1.0f; // Vulkan 裁剪空间 y 向下, 深度 [0, 1]
@@ -92,10 +109,12 @@ private:
     float m_aspect = 1.0f;
     float m_yaw = 0.0f;
     float m_pitch = 0.0f;
+    bool m_looking = false;
     bool m_moveForward = false;
     bool m_moveBackward = false;
     bool m_moveLeft = false;
     bool m_moveRight = false;
+    SDL_Window* m_window = nullptr;
     Ccino::Mat4 m_view{1.0f};
     Ccino::Mat4 m_perspective{1.0f};
     Ccino::Vec3 m_position{};

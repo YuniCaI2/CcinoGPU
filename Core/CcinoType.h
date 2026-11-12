@@ -555,6 +555,15 @@ namespace Ccino {
         return glm::findMSB(std::forward<Args>(args)...);
     }
 
+    // 9. 原子操作 (Atomic Memory Functions)
+    // 宿主侧是普通读改写, 只让着色器源码能通过 C++ 编译; 生成时换成 GLSL atomicAdd, 并返回加之前的值
+    template <typename T>
+    constexpr T AtomicAdd(T& mem, T data) {
+        T previous = mem;
+        mem += data;
+        return previous;
+    }
+
     // glm 内部函数名 / GLSL 标准内置函数白名单
     inline const std::unordered_set<std::string> GLSLBuiltinFuncSet = {
         // 1. 角度与三角函数 (Angle and Trigonometry Functions)
@@ -666,6 +675,10 @@ namespace Ccino {
 
         // 9. 同步与屏障函数 (Shader Invocation Control & Memory Barrier Functions)
         "barrier",
+
+        // 10. 原子操作 (Atomic Memory Functions)
+        // 必须保留 GLSL 原拼写. 全小写 atomicadd 会先命中 lowerName, 发出错误的函数名
+        "atomicAdd",
     };
 
     // Cpp -> GLSL 内建变量映射表
