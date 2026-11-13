@@ -38,6 +38,8 @@ namespace Ccino::RHI {
         deviceFeatures.samplerAnisotropy = VK_TRUE;
         deviceFeatures.fillModeNonSolid = VK_TRUE; //VK_POLYGON_MODE_LINE 线框模式, ShaderObject 的 PolygonMode 才能运行期切换
         deviceFeatures.shaderInt64 = VK_TRUE;  // Shader 里使用uint64_t 参数 (GL_EXT_shader_explicit_arithmetic_types_int64)
+        deviceFeatures.vertexPipelineStoresAndAtomics = VK_TRUE; // Vertex 等图形管线阶段使用 Storage / atomicAdd
+        deviceFeatures.fragmentStoresAndAtomics = VK_TRUE;       // Fragment Shader 使用 Storage / atomicAdd
 
         //Texutre在GLSL不需要处理format ，简化模板参数导致的组合
         deviceFeatures.shaderStorageImageReadWithoutFormat = VK_TRUE;
@@ -52,6 +54,8 @@ namespace Ccino::RHI {
         features12.timelineSemaphore = VK_TRUE;
         features12.bufferDeviceAddress = VK_TRUE; //Buffer 全部通过BDA 访问
         features12.scalarBlockLayout = VK_TRUE;
+        features12.shaderBufferInt64Atomics = VK_TRUE; // 64位整数 Buffer / BDA atomicAdd
+        features12.shaderSharedInt64Atomics = VK_TRUE; // 64位整数 Shared atomicAdd
         //descriptor_indexing: 全局DescriptorSet 中的Sampler / SampledImage / StorageImage 数组
         features12.runtimeDescriptorArray = VK_TRUE;
         features12.descriptorBindingPartiallyBound = VK_TRUE;
@@ -75,14 +79,23 @@ namespace Ccino::RHI {
         shaderObjectFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT;
         shaderObjectFeatures.shaderObject = VK_TRUE;
 
+        VkPhysicalDeviceShaderAtomicFloatFeaturesEXT shaderAtomicFloatFeatures{};
+        shaderAtomicFloatFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+        shaderAtomicFloatFeatures.shaderBufferFloat32Atomics = VK_TRUE;
+        shaderAtomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
+        shaderAtomicFloatFeatures.shaderSharedFloat32Atomics = VK_TRUE;
+        shaderAtomicFloatFeatures.shaderSharedFloat32AtomicAdd = VK_TRUE;
+
         features11.pNext = &features12;
         features12.pNext = &features13;
         features13.pNext = &features14;
         features14.pNext = &shaderObjectFeatures;
+        shaderObjectFeatures.pNext = &shaderAtomicFloatFeatures;
 
         //Bindless 只依赖Vulkan 1.2 核心的bufferDeviceAddress 和descriptor_indexing, 不需要额外的设备扩展
         std::vector<const char*> deviceExtensions = {
             VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+            VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
         };
         if (settings.bUseSwapChain) {
             deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);

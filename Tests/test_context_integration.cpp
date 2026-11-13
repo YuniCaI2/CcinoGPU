@@ -23,6 +23,12 @@ namespace {
         Ccino::Vec4 color;
     };
 
+    struct alignas(16) IntegrationAtomicElem {
+        uint32_t u32Sum;
+        float f32Sum;
+        uint64_t u64Sum;
+    };
+
     int EvaluateIntegrationItem(IntegrationWorkItem item, int scale) {
         return (item.lhs + item.rhs) * scale;
     }
@@ -224,5 +230,50 @@ TEST(CcinoIntegrationTest, GraphicsPassRegisteredAndCreatesShaderObject) {
     });
 
     EXPECT_TRUE(ctx.DestroyRGBuilder("GraphicsShaderObjectGraph"));
+    ctx.Destroy();
+}
+
+TEST(CcinoIntegrationTest, AtomicAddClosedLoop) {
+    DestroyTestContextIfInitialized();
+
+    Ccino::Context ctx;
+    RHISettings settings{};
+    settings.bUseSwapChain = false;
+    settings.flightFrameCount = 1;
+    ASSERT_TRUE(ctx.Init(settings));
+
+    IntegrationAtomicElem initialElem{10u, 1.5f, 100ull};
+    Ccino::Ref<Ccino::Buffer> atomicBuffer = ctx.CreateBuffer(
+        Ccino::Buffer::CreateArgs{.size = sizeof(IntegrationAtomicElem)});
+    ASSERT_TRUE(atomicBuffer.IsValid());
+    atomicBuffer->Copy(&initialElem);
+    atomicBuffer->Flush();
+
+    Ccino::RGBuilder* builder = ctx.CreateRGBuilder("AtomicAddClosedLoopGraph");
+    ASSERT_NE(builder, nullptr);
+
+    RID atomicBufRID = builder->CreateExternalBuffer(atomicBuffer);
+
+    builder->AddPass<"AtomicAddTestPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        auto outBuf = rg.Write<IntegrationAtomicElem>(atomicBufRID, passRID);
+
+        rg.AddCS<Ccino::ThreadGroupSize{16, 1, 1}>([=]() {
+            Ccino::AtomicAdd(outBuf[0].u32Sum, 2u);
+            Ccino::AtomicAdd(outBuf[0].f32Sum, 0.25f);
+            Ccino::AtomicAdd(outBuf[0].u64Sum, 5ull);
+        }, Ccino::WorkGroupSize{1, 1, 1});
+    });
+
+    ASSERT_TRUE(ctx.Run("AtomicAddClosedLoopGraph"));
+
+    IntegrationAtomicElem result{};
+    atomicBuffer->Readback(&result);
+
+    EXPECT_EQ(result.u32Sum, 10u + 16u * 2u);
+    EXPECT_FLOAT_EQ(result.f32Sum, 1.5f + 16.0f * 0.25f);
+    EXPECT_EQ(result.u64Sum, 100ull + 16ull * 5ull);
+
+    atomicBuffer.Reset();
+    EXPECT_TRUE(ctx.DestroyRGBuilder("AtomicAddClosedLoopGraph"));
     ctx.Destroy();
 }
