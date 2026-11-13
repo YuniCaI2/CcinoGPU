@@ -75,14 +75,21 @@ namespace Ccino::RHI {
         shaderObjectFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT;
         shaderObjectFeatures.shaderObject = VK_TRUE;
 
+        VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures{};
+        atomicFloatFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+        atomicFloatFeatures.shaderBufferFloat32Atomics = VK_TRUE;
+        atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
+
         features11.pNext = &features12;
         features12.pNext = &features13;
         features13.pNext = &features14;
         features14.pNext = &shaderObjectFeatures;
+        shaderObjectFeatures.pNext = &atomicFloatFeatures;
 
-        //Bindless 只依赖Vulkan 1.2 核心的bufferDeviceAddress 和descriptor_indexing, 不需要额外的设备扩展
+        //Bindless 只依赖Vulkan 1.2 核心的bufferDeviceAddress 和descriptor_indexing, 浮点原子加依赖 VK_EXT_shader_atomic_float
         std::vector<const char*> deviceExtensions = {
             VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
+            VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
         };
         if (settings.bUseSwapChain) {
             deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
