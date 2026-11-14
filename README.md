@@ -75,9 +75,24 @@ target->Readback(pixels.data());
 
 ## 内置示例（Demos）
 
-`Demo/` 目录下包含三个从简到繁的示例程序，展示了不同场景下的框架用法：
+`Demo/` 目录下包含四个从简到繁的示例程序，展示了不同场景下的框架用法：
 
-### 1. `Demo/ParticleGalaxy` —— 奇异吸引子粒子星系（封面图来源）
+### 1. `Demo/CubeScene` —— GPU 图染色 XPBD 软体模拟
+
+基于 `Demo/CubeScene`（`main.cpp`、`XPBD.h`、`XPBD.cpp`）实现的纯 GPU 软体立方体下落与碰撞模拟，将一个 `8×8×8`（512 质点）立方体拆分为距离弹簧约束（结构边 + 面对角剪切边）与 8 顶点六面体体积约束：
+
+1. **图染色并发求解（Graph Coloring）**：预处理阶段使用 64 位位掩码对 `BounceConstraint` 与 `VolumeConstraint` 自动贪心染色排序；同色批次内绝对无写冲突，无需浮点原子加即可在 Shader 内直接写回位置更新。
+2. **完整 XPBD 流水线**：每帧通过 RenderGraph 自动串联 `PredictParticles`（外力/重力预测）→ 8 轮 `BounceConstraint` / `VolumeConstraint` 迭代（含柔度 $\alpha$、瑞利阻尼 $\beta$ 与每约束持久化 $\lambda$）→ `TerraConstraint`（地面碰撞）→ `UpdateVelocity`（速度反推与地面摩擦），最后由 `CubeScenePass` 通过 BDA 直接拉取物理质点位置与 `GroundPlanePass` 共同渲染（含深度缓冲与 ImGui 实时调参面板）。
+
+**交互与面板操作：**
+| 操作 | 功能 |
+| :--- | :--- |
+| **`W` / `A` / `S` / `D`** | 自由相机前后左右移动 |
+| **鼠标右键（按住拖动）** | 自由视角旋转 |
+| **ImGui `XPBD` 面板** | 实时调节柔度 `Alpha`、瑞利阻尼 `Beta`、重置高度 `Height`，点击 `Reset` 重新下落 |
+| **`Esc`** | 退出程序 |
+
+### 2. `Demo/ParticleGalaxy` —— 奇异吸引子粒子星系（封面图来源）
 
 单文件（`Demo/ParticleGalaxy/main.cpp`）实现的实时交互粒子系统。**262,144（`1 << 18`）个粒子**在四种经典混沌奇异吸引子（**Aizawa**、**Lorenz**、**Thomas**、**Halvorsen**）之间平滑流动与变形。每帧由 RenderGraph 串联四个 Pass 完成：
 
@@ -97,10 +112,10 @@ target->Readback(pixels.data());
 | **`↑` / `↓`** | 调节画面曝光度（Exposure） |
 | **`R` / `Esc`** | 重置所有粒子 / 退出程序 |
 
-### 2. `Demo/SwapchainTriangle` —— 交换链实时渲染
+### 3. `Demo/SwapchainTriangle` —— 交换链实时渲染
 演示带窗口与交换链的帧循环（`RGBuilder::LoopRun`）。每帧重跑 Pass 录制闭包以刷新 Uniform 中的旋转角度 `angle`，将旋转三角形绘制到离屏 `RGBA8_sRGB` 纹理后自动 Blit 到交换链显示，支持窗口大小动态调整与交换链重建。
 
-### 3. `Demo/OfflineTriangle` —— 无窗口离屏渲染
+### 4. `Demo/OfflineTriangle` —— 无窗口离屏渲染
 不创建窗口和交换链（`bUseSwapChain = false`），执行单次 RenderGraph 将彩色三角形绘制到 `Texture2D`，通过 `Readback` 读回像素后直接写出为 `triangle.bmp`，适合做无头测试（Headless CI）与管线验证。
 
 ---
@@ -116,7 +131,7 @@ CcinoGPU/
 ├── GLSLCompiler/    # 基于 shaderc 的 GLSL -> SPIR-V 运行期/构建期编译器
 ├── ShaderStruct/    # CodeGenerator 与运行时共享的 ShaderIR、UniformData 元数据定义
 ├── Context/         # 顶层入口 Ccino::Context，统筹 RHI、ShaderIR 注册表与 RGBuilder 生命周期
-├── Demo/            # 示例程序（OfflineTriangle / SwapchainTriangle / ParticleGalaxy）
+├── Demo/            # 示例程序（OfflineTriangle / SwapchainTriangle / ParticleGalaxy / CubeScene）
 ├── Tests/           # GoogleTest 单元测试与集成测试套件
 └── Docs/            # 核心模块架构文档
 ```
@@ -149,6 +164,9 @@ nix develop
 cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release --parallel
 
+# 运行 CubeScene XPBD 软体模拟 Demo
+./build/release/Demo/CubeScene/CubeScene
+
 # 运行 ParticleGalaxy 粒子星系 Demo
 ./build/release/Demo/ParticleGalaxy/ParticleGalaxy
 
@@ -179,6 +197,10 @@ ctest --test-dir build/release --output-on-failure
 编译并运行单个示例：
 
 ```powershell
+# 运行 XPBD 软体模拟 Demo
+cmake --build build/release --target CubeScene
+./build/release/Demo/CubeScene/CubeScene.exe
+
 # 运行奇异吸引子粒子 Demo
 cmake --build build/release --target ParticleGalaxy
 ./build/release/Demo/ParticleGalaxy/ParticleGalaxy.exe
@@ -203,8 +225,8 @@ CcinoGPU 目前正处于活跃迭代阶段，核心的计算与图形渲染闭�
 - [x] **C++ -> GLSL 四层转译器**：支持 Compute / Vertex / Fragment Lambda、自由函数、自定义结构体、成员函数及依赖拓扑排序
 - [x] **Bindless & BDA 绑定管线**：Buffer 设备地址直访、全局纹理/采样器描述符池、飞行帧延迟回收机制
 - [x] **RenderGraph 核心调度**：Buffer 与 2D Texture 读写版本追踪、自动 `VkBufferMemoryBarrier2` / `VkImageMemoryBarrier2` 注入
-- [x] **图形管线与窗口呈现**：基于 `VK_EXT_shader_object` + Dynamic Rendering 的单轮图形 Pass、SDL3 窗口管理与交换链自适应重建
-- [ ] **图形管线能力扩展**：RenderGraph 深度附件（`DepthAttachment`）接入、顶点/索引缓冲绑定、实例化（Instancing）与 Indirect Draw 支持
+- [x] **图形管线与窗口呈现**：基于 `VK_EXT_shader_object` + Dynamic Rendering、深度缓冲（`DepthAttachment`）与 ImGui 集成的图形 Pass，支持 SDL3 窗口管理与交换链自适应重建
+- [ ] **图形管线能力扩展**：顶点/索引缓冲绑定、实例化（Instancing）与 Indirect Draw 支持
 - [x] **瞬态资源池（Transient Pool）**：实现 RenderGraph 内部瞬态纹理与缓冲区的生命周期复用
 - [ ] **更细粒度的同步与并行录制**：完善跨队列资源级 Timeline 回写，支持多线程 Command Buffer 并行录制
 - [ ] **纹理特性补全**：支持多 Mipmap / Array Layer 拷贝、视图格式重解释（Format Reinterpretation）与着色器侧纹理数组访问
