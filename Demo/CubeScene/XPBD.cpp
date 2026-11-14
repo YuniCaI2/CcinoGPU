@@ -36,7 +36,9 @@ float VolumeConstraint::GetVolume_GPU(Ccino::Vec3 vec1, Ccino::Vec3 vec2, Ccino:
 }
 
 float BounceConstraint::GetConstraint_GPU(Ccino::Accessor<Particle, BufferAccessFlagBits::Read>& particles, BounceConstraint bc) {
-
+    Ccino::Vec3 p0 = particles[bc.particles[0]].pos;
+    Ccino::Vec3 p1 = particles[bc.particles[1]].pos;
+    return Ccino::Length(p0 - p1) - bc.origin;
 }
 
 
