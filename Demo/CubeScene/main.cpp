@@ -23,7 +23,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
-#include <imgui.h>
 #include <iostream>
 
 constexpr uint32_t kWidth = 800;
@@ -118,6 +117,7 @@ int RunDemo() {
             }
             Ccino::Position = Ccino::Vec4(pos, 0.0f, 1.0f);
         };
+
         auto fs = [=](Ccino::Vec4& color) {
             Ccino::Vec2 ndc(Ccino::FragCoord.x / width * 2.0f - 1.0f, Ccino::FragCoord.y / height * 2.0f - 1.0f);
             Ccino::Vec4 worldH = invViewProj * Ccino::Vec4(ndc, 1.0f, 1.0f);
