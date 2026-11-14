@@ -16,6 +16,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "CubeMesh.h"
+#include "XPBD.h"
+
+#include <imgui.h>
 
 #include <algorithm>
 #include <chrono>
@@ -24,6 +27,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <vector>
 
 constexpr uint32_t kWidth = 800;
 constexpr uint32_t kHeight = 600;
@@ -33,6 +37,7 @@ int RunDemo() {
     Ccino::Context ctx;
     RHISettings settings{};
     settings.bUseSwapChain = true;
+    settings.bUseImgui = true;
     settings.flightFrameCount = 2;
     settings.windowWidth = kWidth;
     settings.windowHeight = kHeight;
@@ -53,6 +58,10 @@ int RunDemo() {
     });
     indexBuffer->Copy(kCubeIndices.data());
     indexBuffer->Flush();
+
+    XPBDSystem xpbd(ctx);
+    std::vector<CubeVertex> cubeVertices(kCubeVertices.begin(), kCubeVertices.end());
+    Ccino::Ref<Ccino::Buffer> particleBuffer = xpbd.RegisterObject(cubeVertices);
 
     Ccino::Ref<Ccino::Texture2D> rt = ctx.CreateTexture2D(Ccino::Texture2D::CreateArgs{
             .width = kWidth,
@@ -78,6 +87,7 @@ int RunDemo() {
 
     // 立方体在原点、边长 1, 相机放在 -Z 外侧才能看到朝外的正面
     Camera camera({0.0f, 0.4f, -2.5f}, 90.0f, static_cast<float>(kWidth) / kHeight);
+    Ccino::FrameContext simFrame{};
 
     builder->OnEvent([&](SDL_Event& event) {
         if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) {
@@ -88,7 +98,22 @@ int RunDemo() {
     });
     builder->OnUpdate([&](Ccino::FrameContext& frame) {
         camera.UpdateMovement(frame.dt);
+        simFrame = frame;
+        simFrame.dt = std::clamp(frame.dt, 0.0f, 1.0f / 30.0f);
     });
+    builder->OnGUI([&](Ccino::FrameContext&) {
+        ImGui::Begin("XPBD");
+        ImGui::SliderFloat("Alpha", &xpbd.alpha, 0.0f, 0.005f, "%.6f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Beta", &xpbd.beta, 0.0f, 5.0f, "%.4f");
+        ImGui::SliderFloat("Height", &xpbd.height, 0.2f, 5.0f, "%.2f");
+        if (ImGui::Button("Reset")) {
+            xpbd.RequestReset();
+        }
+        ImGui::End();
+    });
+
+    xpbd.AddPasses(*builder, simFrame);
+    RID particleRID = xpbd.GetParticleRID(0);
 
     Ccino::GraphicsSetting graphicsSetting{
         .drawCounts = static_cast<uint32_t>(kCubeIndices.size()),
@@ -159,12 +184,13 @@ int RunDemo() {
         auto mvp = camera.ViewProj();
         auto vb = rg.Read<CubeVertex>(vertexBufferRID, pass);
         auto ib = rg.Read<CubeIndex>(indexBufferRID, pass);
+        auto particles = rg.Read<Particle>(particleRID, pass);
         auto renderTarget = rg.RTView(targetRID, pass, Ccino::LoadOp::Load);
         auto depthRT = rg.RTView(depthRID, pass, Ccino::LoadOp::Load);
         auto vs = [=](Ccino::Vec3& normal) {
             uint32_t index = ib[Ccino::VertexIndex].index;
             normal = vb[index].normal;
-            Ccino::Position = mvp * Ccino::Vec4(vb[index].position, 1.0f);
+            Ccino::Position = mvp * Ccino::Vec4(particles[index].pos, 1.0f);
         };
         auto fs = [=](const Ccino::Vec3& normal, Ccino::Vec4& color) {
             float light = Ccino::Max(Ccino::Dot(Ccino::Normalize(normal), Ccino::Normalize(Ccino::Vec3(0.4f, 0.8f, 0.5f))), 0.15f);
@@ -175,6 +201,8 @@ int RunDemo() {
     });
 
     builder->LoopRun(targetRID);
+    xpbd.Clear();
+    particleBuffer.Reset();
     vertexBuffer.Reset();
     indexBuffer.Reset();
     rt.Reset();
