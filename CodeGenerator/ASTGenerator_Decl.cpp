@@ -65,9 +65,9 @@ namespace {
         if (!funcDecl) return {};
          
         //处理几种情况成员函数和普通函数
-        //成员函数
+        //非静态成员函数才需要追加隐式 self 参数
         std::vector<std::unique_ptr<Ccino::GLSL::DeclField>> results;
-        if (auto* methodDecl = llvm::dyn_cast<clang::CXXMethodDecl>(funcDecl)) {
+        if (auto* methodDecl = llvm::dyn_cast<clang::CXXMethodDecl>(funcDecl); methodDecl && methodDecl->isInstance()) {
             //Get Class Type
             const auto *parent = methodDecl->getParent()->getCanonicalDecl();
             auto &AST = methodDecl->getASTContext();
@@ -199,7 +199,7 @@ namespace Ccino {
 
         //函数体里的调用会递归进来改写 m_currentStructDecl, 处理完自己的函数体后要还原成外层函数的上下文
         clang::CXXRecordDecl* outerStructDecl = m_currentStructDecl;
-        if (memberFuncDecl) {
+        if (memberFuncDecl && memberFuncDecl->isInstance()) {
             //这里是类函数所有这里的函数需要调整
             //这里特殊处理构造和析构 
             /*

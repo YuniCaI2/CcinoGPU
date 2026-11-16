@@ -1,4 +1,4 @@
-add_executable(CubeScene main.cpp)
+add_executable(CubeScene main.cpp XPBD.cpp)
 # SDL3 用于窗口事件轮询; RHI 对 SDL3 是 PRIVATE 依赖, 头文件不会传递过来
 target_link_libraries(CubeScene PRIVATE Context RHI RG SDL3::SDL3-static)
 target_include_directories(CubeScene PRIVATE ${CMAKE_SOURCE_DIR})

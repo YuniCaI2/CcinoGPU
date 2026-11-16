@@ -311,21 +311,23 @@ namespace Ccino {
 
         auto lowering = std::make_unique<GLSL::LoweringStmt>();
 
-        //对象部分：obj / this / 隐式 this
+        //对象部分：只有非静态成员函数才需要传入 self
         std::string selfText;
-        clang::Expr* obj = expr->getImplicitObjectArgument(); //得到左边的对象
-        clang::Expr* objStripped = obj ? obj->IgnoreParenImpCasts() : nullptr;
+        if (method->isInstance()) {
+            clang::Expr* obj = expr->getImplicitObjectArgument(); //得到左边的对象
+            clang::Expr* objStripped = obj ? obj->IgnoreParenImpCasts() : nullptr;
 
-        if (!objStripped || llvm::isa<clang::CXXThisExpr>(objStripped)) { //跳过this本身，也就是在类成员函数内部的情况
-            // foo() 或 this->foo()
-            selfText = "self";
-        } else {
-            //a.b[i].foo()
-            auto objLowering = ProcessClangExpr(obj);
-            if (objLowering) {
-                for (auto& f : objLowering->fields)
-                    lowering->fields.push_back(std::move(f));
-                if (objLowering->expr) selfText = objLowering->expr->text;
+            if (!objStripped || llvm::isa<clang::CXXThisExpr>(objStripped)) { //跳过this本身，也就是在类成员函数内部的情况
+                // foo() 或 this->foo()
+                selfText = "self";
+            } else {
+                //a.b[i].foo()
+                auto objLowering = ProcessClangExpr(obj);
+                if (objLowering) {
+                    for (auto& f : objLowering->fields)
+                        lowering->fields.push_back(std::move(f));
+                    if (objLowering->expr) selfText = objLowering->expr->text;
+                }
             }
         }
 

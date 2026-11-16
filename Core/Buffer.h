@@ -9,7 +9,7 @@
 namespace Ccino {
     enum class BufferUsage {
         Storage,
-        Uniform 
+        Uniform
     };
 
     //这里的Buffer只是作为存储的媒介，BufferView的功能不包含，减少模板带来的耦合
@@ -34,15 +34,15 @@ namespace Ccino {
         static Ref<Buffer> Create(RHI::Context& context, const CreateArgs& createArgs) {
             auto buffer = Ref<Buffer>::Make();
             buffer->CreateImpl(context, createArgs);
-            return buffer; 
+            return buffer;
         }
 
-        
+
 
 
 
         void Delete();
-        
+
         //刷新对象
         void Flush();
 
@@ -50,10 +50,11 @@ namespace Ccino {
         void Readback(void* data);
 
         RID GetRHI() const { return m_rhiBuffer; }
+        uint32_t GetSize() const {return m_size;}
 
 
         CreateArgs GetCreateArgs() const { return m_createArgs; }
-        
+
     private:
         friend class Ref<Buffer>;
         Buffer() = default;
