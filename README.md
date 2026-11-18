@@ -19,13 +19,15 @@
 - **零样板代码的自动反射与绑定**
   着色器 Lambda 按值捕获的 C++ 变量（标量、向量、矩阵、Buffer 访问器、纹理视图）会在编译期自动反射出内存布局，运行时自动打包上传，不再需要手动声明 `VkDescriptorSetLayout` 或逐字段对齐 `std140`。
 - **全 Bindless 与 BDA（Buffer Device Address）底座**
-  - **Buffer**：全部走 64 位设备地址（`bufferDeviceAddress`），着色器直接通过指针读写内存，不占任何 Descriptor 槽位。
+  - **Buffer & 加速结构（TLAS）**：全部走 64 位设备地址（`bufferDeviceAddress` / `vkGetAccelerationStructureDeviceAddressKHR`），着色器直接通过指针读写内存或构造 `accelerationStructureEXT` 进行硬件光线查询，不占任何 Descriptor 槽位。
   - **Texture & Sampler**：统一收纳在全局 `UPDATE_AFTER_BIND` 描述符数组中，以 32 位索引访问。
   - **8 字节 Push Constant**：每次派发/绘制仅推送当前飞行帧 Uniform Buffer 的 8 字节设备地址。
 - **声明式 RenderGraph**
-  通过 `Read` / `Write` / `ReadWrite`（Buffer）以及 `Sample` / `LoadUAV` / `StoreUAV` / `RTView`（Texture）声明资源读写意图，RenderGraph 自动完成资源版本追踪、Pass 拓扑排序，并生成精确的 `Synchronization2` 内存与布局转换屏障。
+  通过 `Read` / `Write` / `ReadWrite`（Buffer）、`Sample` / `LoadUAV` / `StoreUAV` / `RTView`（Texture）以及 `ReadAS`（只读 `TLAS`）声明资源读写意图，RenderGraph 自动完成资源版本追踪、Pass 拓扑排序，并生成精确的 `Synchronization2` 内存与布局转换屏障。
+- **硬件光线查询（RayQuery）支持**
+  在 `Core` 层提供 `BLAS` / `TLAS` 引用封装，在着色器 Lambda 中可直接使用 `Ccino::RayQueryEXT`、`RayQueryInitializeEXT`、`RayQueryProceedEXT` 等内建接口编写 `GL_EXT_ray_query` 光线查询逻辑。
 - **拥抱现代 Vulkan 扩展**
-  图形管线基于 `VK_KHR_dynamic_rendering` 与 `VK_EXT_shader_object` 构建，告别臃肿的 `VkRenderPass`、`VkFramebuffer` 和管线状态组合爆炸。
+  图形管线基于 `VK_KHR_dynamic_rendering` 与 `VK_EXT_shader_object` 构建，告别臃肿的 `VkRenderPass`、`VkFramebuffer` 和管线状态组合爆炸；光追查询基于 `VK_KHR_acceleration_structure` 与 `VK_KHR_ray_query`。
 
 ---
 
@@ -75,7 +77,7 @@ target->Readback(pixels.data());
 
 ## 内置示例（Demos）
 
-`Demo/` 目录下包含四个从简到繁的示例程序，展示了不同场景下的框架用法：
+`Demo/` 目录下包含五个示例程序，展示了不同场景下的框架用法：
 
 ### 1. `Demo/CubeScene` —— GPU 图染色 XPBD 软体模拟
 
@@ -112,10 +114,15 @@ target->Readback(pixels.data());
 | **`↑` / `↓`** | 调节画面曝光度（Exposure） |
 | **`R` / `Esc`** | 重置所有粒子 / 退出程序 |
 
-### 3. `Demo/SwapchainTriangle` —— 交换链实时渲染
+### 3. `Demo/RayQueryDemo` —— 硬件光线查询（AS + PS）实时可视化
+基于 `VK_KHR_acceleration_structure` 与 `VK_KHR_ray_query` 的端到端光追示例（`Demo/RayQueryDemo/main.cpp`）：
+1. 通过 `CreateBLAS` 构建单位立方体与地面平面两个底层加速结构，并用 `CreateTLAS` 组合成含 3 个带 `customIndex` 实例的顶层加速结构。
+2. 在全屏 Graphics Pass（`RayQueryASPSPass`）中通过 `rg.ReadAS` 绑定 `ASViewer`：Vertex Shader 生成全屏三角形，Fragment Shader（AS + PS）绕场景旋转发射主光线与硬阴影光线，按实例 ID 与重心坐标实时着色并呈现到窗口。
+
+### 4. `Demo/SwapchainTriangle` —— 交换链实时渲染
 演示带窗口与交换链的帧循环（`RGBuilder::LoopRun`）。每帧重跑 Pass 录制闭包以刷新 Uniform 中的旋转角度 `angle`，将旋转三角形绘制到离屏 `RGBA8_sRGB` 纹理后自动 Blit 到交换链显示，支持窗口大小动态调整与交换链重建。
 
-### 4. `Demo/OfflineTriangle` —— 无窗口离屏渲染
+### 5. `Demo/OfflineTriangle` —— 无窗口离屏渲染
 不创建窗口和交换链（`bUseSwapChain = false`），执行单次 RenderGraph 将彩色三角形绘制到 `Texture2D`，通过 `Readback` 读回像素后直接写出为 `triangle.bmp`，适合做无头测试（Headless CI）与管线验证。
 
 ---
@@ -124,14 +131,14 @@ target->Readback(pixels.data());
 
 ```text
 CcinoGPU/
-├── RHI/             # Vulkan 底层封装：Context、Swapchain、BDA Buffer、Bindless DescriptorSlot、Timeline 同步
-├── Core/            # 面向用户的核心资源封装：Buffer、Texture2D、基础数学类型 (CcinoType) 与智能指针
-├── RG/              # RenderGraph：Pass 注册、Accessor/Viewer 资源视图、依赖建图与自动 Barrier 生成
+├── RHI/             # Vulkan 底层封装：Context、Swapchain、BDA Buffer、AS 构建、Bindless DescriptorSlot、Timeline 同步
+├── Core/            # 面向用户的核心资源封装：Buffer、Texture2D、BLAS/TLAS、基础数学类型 (CcinoType) 与智能指针
+├── RG/              # RenderGraph：Pass 注册、Accessor/Viewer/ASViewer 资源视图、依赖建图与自动 Barrier 生成
 ├── CodeGenerator/   # 基于 Clang LibTooling 的 C++ AST -> GLSL 460 源到源转译器与捕获布局反射
 ├── GLSLCompiler/    # 基于 shaderc 的 GLSL -> SPIR-V 运行期/构建期编译器
 ├── ShaderStruct/    # CodeGenerator 与运行时共享的 ShaderIR、UniformData 元数据定义
 ├── Context/         # 顶层入口 Ccino::Context，统筹 RHI、ShaderIR 注册表与 RGBuilder 生命周期
-├── Demo/            # 示例程序（OfflineTriangle / SwapchainTriangle / ParticleGalaxy / CubeScene）
+├── Demo/            # 示例程序（OfflineTriangle / SwapchainTriangle / ParticleGalaxy / CubeScene / RayQueryDemo）
 ├── Tests/           # GoogleTest 单元测试与集成测试套件
 └── Docs/            # 核心模块架构文档
 ```
@@ -205,6 +212,10 @@ cmake --build build/release --target CubeScene
 cmake --build build/release --target ParticleGalaxy
 ./build/release/Demo/ParticleGalaxy/ParticleGalaxy.exe
 
+# 运行 RayQuery 光线查询可视化 Demo（支持传入最大帧数）
+cmake --build build/release --target RayQueryDemo
+./build/release/Demo/RayQueryDemo/RayQueryDemo.exe
+
 # 运行旋转三角形 Demo（可传入渲染帧数，不传则持续运行至按 Esc）
 cmake --build build/release --target SwapchainTriangle
 ./build/release/Demo/SwapchainTriangle/SwapchainTriangle.exe
@@ -226,6 +237,7 @@ CcinoGPU 目前正处于活跃迭代阶段，核心的计算与图形渲染闭�
 - [x] **Bindless & BDA 绑定管线**：Buffer 设备地址直访、全局纹理/采样器描述符池、飞行帧延迟回收机制
 - [x] **RenderGraph 核心调度**：Buffer 与 2D Texture 读写版本追踪、自动 `VkBufferMemoryBarrier2` / `VkImageMemoryBarrier2` 注入
 - [x] **图形管线与窗口呈现**：基于 `VK_EXT_shader_object` + Dynamic Rendering、深度缓冲（`DepthAttachment`）与 ImGui 集成的图形 Pass，支持 SDL3 窗口管理与交换链自适应重建
+- [x] **硬件光线查询（RayQuery / Acceleration Structure）**：支持 `BLAS` / `TLAS` 构建、`ASViewer` 只读接入以及 `GL_EXT_ray_query` C++ -> GLSL 自动转译与 BDA 绑定
 - [ ] **图形管线能力扩展**：顶点/索引缓冲绑定、实例化（Instancing）与 Indirect Draw 支持
 - [x] **瞬态资源池（Transient Pool）**：实现 RenderGraph 内部瞬态纹理与缓冲区的生命周期复用
 - [ ] **更细粒度的同步与并行录制**：完善跨队列资源级 Timeline 回写，支持多线程 Command Buffer 并行录制
