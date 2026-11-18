@@ -165,13 +165,13 @@ namespace Ccino::RHI {
     struct ASGeometryInfo {
         VertexFormat format = VertexFormat::R32G32B32_SFLOAT;
         RID vertexBuffer {};
-        uint32_t vertexOffset;
+        uint32_t vertexOffset = 0;
         uint32_t vertexStride {};
         uint32_t vertexCount {};
         IndexType indexType {};
         RID indexBuffer {};
-        uint32_t indexOffset;
-        uint32_t indexCount;
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
         GeometryFlags flags {};
     };
 
@@ -187,14 +187,7 @@ namespace Ccino::RHI {
         VkAccelerationStructureKHR structure = VK_NULL_HANDLE;
         RID buffer = RID::Invalid(); //加速结构本体所在的 buffer
         VkDeviceAddress address = 0;
-    };
-
-    struct VulkanBLAS : VulkanAS {
-
-    };
-
-    struct VulkanTLAS : VulkanAS {
-
+        VkAccelerationStructureTypeKHR type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR; //这里用来区分BLAS 和 TLAS 等等
     };
 
 
@@ -293,6 +286,7 @@ namespace Ccino::RHI {
         RID CreateBLAS(const ASGeometryInfo& geoInfo, ASFlag flag);
         RID CreateTLAS(const std::vector<ASInstanceInfo>& instanceInfos, ASFlag);
         void DestroyAS(RID rid);
+        uint64_t GetASAddress(RID rid);
 
         //Swapchain
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
@@ -386,12 +380,11 @@ namespace Ccino::RHI {
         TRIDArray<DescriptorSlotBinding> m_descriptorSlots;
         TRIDArray<VulkanTexture> m_textures;
         TRIDArray<GraphicsShaderObject> m_graphicsShaderObjects;
-        TRIDArray<VulkanTLAS> m_tlas;
-        TRIDArray<VulkanBLAS> m_blas;
+        TRIDArray<VulkanAS> m_as;
 
 
-        std::mutex m_deletionMutex; //保护m_bufferDeletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
-        std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列
+        std::mutex m_deletionMutex; //保护m_deletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
+        std::vector<std::vector<RID>> m_deletionQueue; //延迟释放队列
         std::vector<std::vector<uint64_t>> m_deletionWaitValues; //[帧][队列家族] 释放该帧队列前要等到的timeline 值
 
         std::mutex m_commandBufferSubmitMutex;

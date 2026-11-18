@@ -312,7 +312,7 @@ namespace Ccino::RHI {
         CreateGlobalTimelineSemaphore();
         DescriptorSlot::InitGlobal(*m_core); //全局唯一的DescriptorSetLayout / PipelineLayout / DescriptorPool
 
-        m_bufferDeletionQueue.resize(m_flightFrameCount); //初始化队列
+        m_deletionQueue.resize(m_flightFrameCount); //初始化队列
         m_deletionWaitValues.assign(m_flightFrameCount, {});
         m_descriptorSlot->Init(this);
 
@@ -348,7 +348,7 @@ namespace Ccino::RHI {
             }
             m_currentFrameIndex = (m_currentFrameIndex + 1) % m_flightFrameCount;
             enteringFrame = m_currentFrameIndex;
-            expired.swap(m_bufferDeletionQueue[m_currentFrameIndex]); //取出后在锁外销毁, 避免销毁过程中持锁
+            expired.swap(m_deletionQueue[m_currentFrameIndex]); //取出后在锁外销毁, 避免销毁过程中持锁
         }
         //等上一次使用这个飞行帧时的全部提交完成, 之后它的命令缓冲 / ImageReady / UniformBuffer 都可以复用, 排队的资源也可以销毁
         //m_deletionWaitValues 只在Tick 里读写, 不需要锁
@@ -388,16 +388,12 @@ namespace Ccino::RHI {
             m_descriptorSlot->Destroy();
 
             //加速结构引用着存储 buffer，必须先于 buffer 销毁
-            auto destroyAccelerationStructure = [&](auto& structures) {
-                structures.ForEach([&](auto& accel) {
-                    if (accel.structure != VK_NULL_HANDLE) {
-                        m_core->vkDestroyAccelerationStructureKHR(device, accel.structure, nullptr);
-                        accel.structure = VK_NULL_HANDLE;
-                    }
-                });
-            };
-            destroyAccelerationStructure(m_blas);
-            destroyAccelerationStructure(m_tlas);
+            m_as.ForEach([&](VulkanAS& accel) {
+                if (accel.structure != VK_NULL_HANDLE) {
+                    m_core->vkDestroyAccelerationStructureKHR(device, accel.structure, nullptr);
+                    accel.structure = VK_NULL_HANDLE;
+                }
+            });
         }
 
         m_buffers.ForEach([&](VulkanBuffer& buffer) {
@@ -440,7 +436,7 @@ namespace Ccino::RHI {
             });
         }
 
-        m_bufferDeletionQueue.clear();
+        m_deletionQueue.clear();
         m_deletionWaitValues.clear();
         m_commandBufferSubmitValues.clear();
         if (bUseSwapChain) {
@@ -468,7 +464,7 @@ namespace Ccino::RHI {
             DestroyResource(rid);
         } else {
             std::lock_guard lock(m_deletionMutex);
-            m_bufferDeletionQueue[m_currentFrameIndex].push_back(rid);
+            m_deletionQueue[m_currentFrameIndex].push_back(rid);
         }
     }
 
@@ -1086,31 +1082,25 @@ namespace Ccino::RHI {
         };
         const VkDeviceAddress address = m_core->vkGetAccelerationStructureDeviceAddressKHR(device, &addressInfo);
 
-        auto fillAccelerationStructure = [&](VulkanAS& accel) {
-            accel.structure = structure;
-            accel.buffer = storageBuffer;
-            accel.address = address;
-            accel.lastQueue = buildQueue;
-            accel.lastTimelineValue = signalValue;
-        };
-        if (asType == VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR) {
-            VulkanBLAS blas{};
-            fillAccelerationStructure(blas);
-            as = m_blas.Add(std::move(blas));
-        } else if (asType == VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR) {
-            VulkanTLAS tlas{};
-            fillAccelerationStructure(tlas);
-            as = m_tlas.Add(std::move(tlas));
-        } else {
+        if (asType != VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR &&
+            asType != VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR) {
             m_core->vkDestroyAccelerationStructureKHR(device, structure, nullptr);
             DestroyBuffer(storageBuffer);
             throw std::runtime_error("Unsupported acceleration structure type");
         }
+
+        VulkanAS accel{};
+        accel.structure = structure;
+        accel.buffer = storageBuffer;
+        accel.address = address;
+        accel.type = asType;
+        accel.lastQueue = buildQueue;
+        accel.lastTimelineValue = signalValue;
+        as = m_as.Add(std::move(accel));
     }
 
     void Context::DestroyAS(RID rid) {
-        const bool isBlas = rid.type == RID::GetIndex<VulkanBLAS>();
-        VulkanAS* accel = isBlas ? static_cast<VulkanAS*>(m_blas.Get(rid)) : static_cast<VulkanAS*>(m_tlas.Get(rid));
+        VulkanAS* accel = m_as.Get(rid);
         if (accel == nullptr) {
             return;
         }
@@ -1126,14 +1116,18 @@ namespace Ccino::RHI {
         }
         const RID storageBuffer = accel->buffer;
         accel->buffer = RID::Invalid();
-        if (isBlas) {
-            m_blas.Remove(rid);
-        } else {
-            m_tlas.Remove(rid);
-        }
+        m_as.Remove(rid);
         if (storageBuffer) {
             DestroyBuffer(storageBuffer);
         }
+    }
+
+    uint64_t Context::GetASAddress(RID rid) {
+        VulkanAS* accel = m_as.Get(rid);
+        if (accel == nullptr) {
+            throw std::invalid_argument("[RHI Context GetASAddress]: acceleration structure is invalid");
+        }
+        return accel->address;
     }
 
     void Context::InitImgui() {
@@ -1353,16 +1347,20 @@ namespace Ccino::RHI {
     }
 
     RID Context::CreateBLAS(const ASGeometryInfo& geoInfo, ASFlag flag) {
+        if (geoInfo.vertexCount == 0 || geoInfo.indexCount < 3) {
+            throw std::invalid_argument("[RHI Context CreateBLAS]: vertexCount or indexCount is invalid");
+        }
+
         VkAccelerationStructureGeometryKHR       asGeometry{};
         VkAccelerationStructureBuildRangeInfoKHR asBuildRangeInfo{};
 
         const auto                   triangleCount = static_cast<uint32_t>(geoInfo.indexCount / 3U);
         VkAccelerationStructureGeometryTrianglesDataKHR triangles{
             .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
-            .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,  // vec3 vertex position data
+            .vertexFormat = ToVkVertexFormat(geoInfo.format),  // vec3 vertex position data
             .vertexData   = {.deviceAddress = GetBufferBDA(geoInfo.vertexBuffer) + geoInfo.vertexOffset},
             .vertexStride = geoInfo.vertexStride,
-            .maxVertex    = geoInfo.vertexCount,
+            .maxVertex    = geoInfo.vertexCount - 1,
             .indexType    = ToVkIndexType(geoInfo.indexType),  // Index type (VK_INDEX_TYPE_UINT16 or VK_INDEX_TYPE_UINT32)
             .indexData    = {.deviceAddress = GetBufferBDA(geoInfo.indexBuffer) + geoInfo.indexOffset},
         };
@@ -1371,17 +1369,12 @@ namespace Ccino::RHI {
             .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
             .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
             .geometry     = {.triangles = triangles},
-            .flags        = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR | VK_GEOMETRY_OPAQUE_BIT_KHR,
+            .flags        = ToVkGeometryFlags(geoInfo.flags),
         };
         asBuildRangeInfo = VkAccelerationStructureBuildRangeInfoKHR{.primitiveCount = triangleCount};
-        
 
         RID result = RID::Invalid();
-        try {
-            CreateAS(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, result, asGeometry, asBuildRangeInfo, ToVkBuildASFlags(flag));
-        } catch (...) {
-            throw;
-        }
+        CreateAS(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, result, asGeometry, asBuildRangeInfo, ToVkBuildASFlags(flag));
         return result;
     }
 
@@ -1390,8 +1383,11 @@ namespace Ccino::RHI {
         vkInstances.reserve(instanceInfos.size());
 
         for (const ASInstanceInfo& info : instanceInfos) {
-            VulkanBLAS* blas = m_blas.Get(info.blas);
-            if (blas == nullptr || blas->structure == VK_NULL_HANDLE || blas->address == 0) {
+            VulkanAS* blas = m_as.Get(info.blas);
+            if (blas == nullptr ||
+                blas->type != VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR ||
+                blas->structure == VK_NULL_HANDLE ||
+                blas->address == 0) {
                 throw std::invalid_argument("[RHI Context CreateTLAS]: blas is invalid");
             }
             if (blas->lastTimelineValue != 0) {
@@ -2247,7 +2243,7 @@ namespace Ccino::RHI {
             DestroyGraphicsShaderObject(rid);
         } else if (rid.type == RID::GetIndex<DescriptorSlotBinding>()) {
             DestroyDescriptorSlotBinding(rid);
-        } else if (rid.type == RID::GetIndex<VulkanBLAS>() || rid.type == RID::GetIndex<VulkanTLAS>()) {
+        } else if (rid.type == RID::GetIndex<VulkanAS>()) {
             DestroyAS(rid);
         } else {
             throw std::runtime_error("Invalid resource type");

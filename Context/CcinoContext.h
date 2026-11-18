@@ -3,6 +3,7 @@
 #include <memory>
 #include <unordered_map>
 #include "RG/RenderGraph.h"
+#include "Core/AccelerationStructure.h"
 #include "Core/Texture2D.h"
 
 namespace Ccino {
@@ -25,6 +26,14 @@ namespace Ccino {
 
         Ref<Texture2D> CreateTexture2D(const Texture2D::CreateArgs& createArgs) {
             return Texture2D::Create(m_rhiContext, createArgs);
+        }
+
+        Ref<BLAS> CreateBLAS(const BLAS::CreateArgs& createArgs) {
+            return BLAS::Create(m_rhiContext, createArgs);
+        }
+
+        Ref<TLAS> CreateTLAS(const TLAS::CreateArgs& createArgs) {
+            return TLAS::Create(m_rhiContext, createArgs);
         }
 
         RHI::Context& GetRHIContext() { return m_rhiContext; }
