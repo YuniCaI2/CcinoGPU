@@ -168,6 +168,13 @@ namespace Ccino {
             }
         }
 
+        // 3. 非模板内置资源包装类 (ASViewer)
+        if (const clang::CXXRecordDecl* record = canonical->getAsCXXRecordDecl()) {
+            if (record->getQualifiedNameAsString() == "Ccino::ASViewer") {
+                return UniformDataType::AccelerationStructure;
+            }
+        }
+
         throw std::invalid_argument("Unsupported QualType for UniformDataType: " + canonical.getAsString());
     }
 

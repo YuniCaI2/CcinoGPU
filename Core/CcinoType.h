@@ -10,7 +10,7 @@
 #include <unordered_set>
 
 namespace Ccino {
-
+    class ASViewer;
 
     //常规应用
     template<typename T, size_t N>
@@ -96,6 +96,27 @@ namespace Ccino {
     inline constexpr Vec2     PointCoord{};                  // in  gl_PointCoord
     inline float              FragDepth{};                   // out gl_FragDepth (可写，不加 constexpr)
     inline constexpr bool     HelperInvocation{};            // in  gl_HelperInvocation
+
+    // 5. 光线查询内建常量 (GL_EXT_ray_query) //TODO: 使用enum 优化输入体验，当前全局常量不是很优雅
+    inline constexpr uint32_t RayFlagsNoneEXT = 0U;
+    inline constexpr uint32_t RayFlagsOpaqueEXT = 1U;
+    inline constexpr uint32_t RayFlagsNoOpaqueEXT = 2U;
+    inline constexpr uint32_t RayFlagsTerminateOnFirstHitEXT = 4U;
+    inline constexpr uint32_t RayFlagsSkipClosestHitShaderEXT = 8U;
+    inline constexpr uint32_t RayFlagsCullBackFacingTrianglesEXT = 16U;
+    inline constexpr uint32_t RayFlagsCullFrontFacingTrianglesEXT = 32U;
+    inline constexpr uint32_t RayFlagsCullOpaqueEXT = 64U;
+    inline constexpr uint32_t RayFlagsCullNoOpaqueEXT = 128U;
+    inline constexpr uint32_t RayFlagsSkipTrianglesEXT = 256U;
+    inline constexpr uint32_t RayFlagsSkipAABBEXT = 512U;
+
+    inline constexpr uint32_t RayQueryCandidateIntersectionEXT = 0U;
+    inline constexpr uint32_t RayQueryCommittedIntersectionEXT = 1U;
+    inline constexpr uint32_t RayQueryCommittedIntersectionNoneEXT = 0U;
+    inline constexpr uint32_t RayQueryCommittedIntersectionTriangleEXT = 1U;
+    inline constexpr uint32_t RayQueryCommittedIntersectionGeneratedEXT = 2U;
+    inline constexpr uint32_t RayQueryCandidateIntersectionTriangleEXT = 0U;
+    inline constexpr uint32_t RayQueryCandidateIntersectionAABBEXT = 1U;
 
     // 1. 角度与三角函数 (Angle and Trigonometry Functions)
     template <typename... Args>
@@ -564,6 +585,41 @@ namespace Ccino {
         return previous;
     }
 
+    // 10. 光线查询 (GL_EXT_ray_query)
+    // 宿主侧仅作为空壳占位让 C++ 编译和 Clang AST 解析通过; 生成时由 GLSLBuiltinFuncSet 映射为 GLSL 内建调用
+    struct RayQueryEXT {};
+
+    void RayQueryInitializeEXT(RayQueryEXT& rayQuery, const ASViewer& topLevel,
+                                                uint32_t rayFlags, uint32_t cullMask,
+                                                const Vec3& origin, float tMin,
+                                                const Vec3& direction, float tMax);
+
+    void RayQueryTerminateEXT(RayQueryEXT& rayQuery);
+    void RayQueryGenerateIntersectionEXT(RayQueryEXT& rayQuery, float tHit);
+    void RayQueryConfirmIntersectionEXT(RayQueryEXT& rayQuery);
+    bool RayQueryProceedEXT(RayQueryEXT& rayQuery);
+
+    uint32_t RayQueryGetIntersectionTypeEXT(const RayQueryEXT& rayQuery, bool committed);
+    float RayQueryGetRayTMinEXT(const RayQueryEXT& rayQuery);
+    uint32_t RayQueryGetRayFlagsEXT(const RayQueryEXT& rayQuery);
+    Vec3 RayQueryGetWorldRayOriginEXT(const RayQueryEXT& rayQuery);
+    Vec3 RayQueryGetWorldRayDirectionEXT(const RayQueryEXT& rayQuery);
+    float RayQueryGetIntersectionTEXT(const RayQueryEXT& rayQuery, bool committed);
+    int32_t RayQueryGetIntersectionInstanceCustomIndexEXT(const RayQueryEXT& rayQuery, bool committed);
+    int32_t RayQueryGetIntersectionInstanceIdEXT(const RayQueryEXT& rayQuery, bool committed);
+    uint32_t RayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT(const RayQueryEXT& rayQuery, bool committed);
+    int32_t RayQueryGetIntersectionGeometryIndexEXT(const RayQueryEXT& rayQuery, bool committed);
+    int32_t RayQueryGetIntersectionPrimitiveIndexEXT(const RayQueryEXT& rayQuery, bool committed);
+    Vec2 RayQueryGetIntersectionBarycentricsEXT(const RayQueryEXT& rayQuery, bool committed);
+    bool RayQueryGetIntersectionFrontFaceEXT(const RayQueryEXT& rayQuery, bool committed);
+    bool RayQueryGetIntersectionCandidateAABBOpaqueEXT(const RayQueryEXT& rayQuery);
+    Vec3 RayQueryGetIntersectionObjectRayDirectionEXT(const RayQueryEXT& rayQuery, bool committed);
+    Vec3 RayQueryGetIntersectionObjectRayOriginEXT(const RayQueryEXT& rayQuery, bool committed);
+    Mat4x3 RayQueryGetIntersectionObjectToWorldEXT(const RayQueryEXT& rayQuery, bool committed);
+    Mat4x3 RayQueryGetIntersectionWorldToObjectEXT(const RayQueryEXT& rayQuery, bool committed);
+    void RayQueryGetIntersectionTriangleVertexPositionsEXT(const RayQueryEXT& rayQuery, bool committed, Array<Vec3, 3>& positions);
+    void RayQueryGetIntersectionTriangleVertexPositionsEXT(const RayQueryEXT& rayQuery, bool committed, Vec3 (&positions)[3]);
+
     // glm 内部函数名 / GLSL 标准内置函数白名单
     inline const std::unordered_set<std::string> GLSLBuiltinFuncSet = {
         // 1. 角度与三角函数 (Angle and Trigonometry Functions)
@@ -679,6 +735,32 @@ namespace Ccino {
         // 10. 原子操作 (Atomic Memory Functions)
         // 必须保留 GLSL 原拼写. 全小写 atomicadd 会先命中 lowerName, 发出错误的函数名
         "atomicAdd",
+
+        // 11. 光线查询 (GL_EXT_ray_query)
+        "rayQueryInitializeEXT",
+        "rayQueryTerminateEXT",
+        "rayQueryGenerateIntersectionEXT",
+        "rayQueryConfirmIntersectionEXT",
+        "rayQueryProceedEXT",
+        "rayQueryGetIntersectionTypeEXT",
+        "rayQueryGetRayTMinEXT",
+        "rayQueryGetRayFlagsEXT",
+        "rayQueryGetWorldRayOriginEXT",
+        "rayQueryGetWorldRayDirectionEXT",
+        "rayQueryGetIntersectionTEXT",
+        "rayQueryGetIntersectionInstanceCustomIndexEXT",
+        "rayQueryGetIntersectionInstanceIdEXT",
+        "rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT",
+        "rayQueryGetIntersectionGeometryIndexEXT",
+        "rayQueryGetIntersectionPrimitiveIndexEXT",
+        "rayQueryGetIntersectionBarycentricsEXT",
+        "rayQueryGetIntersectionFrontFaceEXT",
+        "rayQueryGetIntersectionCandidateAABBOpaqueEXT",
+        "rayQueryGetIntersectionObjectRayDirectionEXT",
+        "rayQueryGetIntersectionObjectRayOriginEXT",
+        "rayQueryGetIntersectionObjectToWorldEXT",
+        "rayQueryGetIntersectionWorldToObjectEXT",
+        "rayQueryGetIntersectionTriangleVertexPositionsEXT",
     };
 
     // Cpp -> GLSL 内建变量映射表
@@ -712,5 +794,30 @@ namespace Ccino {
         {"PointCoord",                  "gl_PointCoord"},
         {"FragDepth",                   "gl_FragDepth"},
         {"HelperInvocation",            "gl_HelperInvocation"},
+
+        // 5. 光线查询内建常量 (GL_EXT_ray_query)
+        {"RayFlagsNoneEXT",                         "gl_RayFlagsNoneEXT"},
+        {"RayFlagsOpaqueEXT",                       "gl_RayFlagsOpaqueEXT"},
+        {"RayFlagsNoOpaqueEXT",                     "gl_RayFlagsNoOpaqueEXT"},
+        {"RayFlagsTerminateOnFirstHitEXT",          "gl_RayFlagsTerminateOnFirstHitEXT"},
+        {"RayFlagsSkipClosestHitShaderEXT",         "gl_RayFlagsSkipClosestHitShaderEXT"},
+        {"RayFlagsCullBackFacingTrianglesEXT",      "gl_RayFlagsCullBackFacingTrianglesEXT"},
+        {"RayFlagsCullFrontFacingTrianglesEXT",     "gl_RayFlagsCullFrontFacingTrianglesEXT"},
+        {"RayFlagsCullOpaqueEXT",                   "gl_RayFlagsCullOpaqueEXT"},
+        {"RayFlagsCullNoOpaqueEXT",                 "gl_RayFlagsCullNoOpaqueEXT"},
+        {"RayFlagsSkipTrianglesEXT",                "gl_RayFlagsSkipTrianglesEXT"},
+        {"RayFlagsSkipAABBEXT",                     "gl_RayFlagsSkipAABBEXT"},
+        {"RayQueryCandidateIntersectionEXT",        "gl_RayQueryCandidateIntersectionEXT"},
+        {"RayQueryCommittedIntersectionEXT",        "gl_RayQueryCommittedIntersectionEXT"},
+        {"RayQueryCommittedIntersectionNoneEXT",    "gl_RayQueryCommittedIntersectionNoneEXT"},
+        {"RayQueryCommittedIntersectionTriangleEXT","gl_RayQueryCommittedIntersectionTriangleEXT"},
+        {"RayQueryCommittedIntersectionGeneratedEXT","gl_RayQueryCommittedIntersectionGeneratedEXT"},
+        {"RayQueryCandidateIntersectionTriangleEXT","gl_RayQueryCandidateIntersectionTriangleEXT"},
+        {"RayQueryCandidateIntersectionAABBEXT",    "gl_RayQueryCandidateIntersectionAABBEXT"},
+    };
+
+    //内建的已定义都结构体
+    inline const std::unordered_map<std::string, std::string> GLSLBuiltinStructMap = {
+        { "RayQueryEXT", "rayQueryEXT"},
     };
 }

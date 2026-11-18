@@ -1,4 +1,5 @@
 #pragma once
+#include "AccelerationStructure.h"
 #include "Core/Buffer.h"
 #include "Core/Texture2D.h"
 #include "Core/ResourceConcept.h"
@@ -27,6 +28,8 @@ namespace Ccino {
                 return ResourceType::Buffer;
             } else if constexpr (std::is_same_v<T, Texture2D>) {
                 return ResourceType::Texture;
+            } else if constexpr (std::is_same_v<T, TLAS>) {
+                return ResourceType::TLAS;
             } else {
                 static_assert(sizeof(T) == 0, "Unsupported RG resource type");
             }
@@ -54,7 +57,11 @@ namespace Ccino {
         }
 
         size_t GetCreateArgsHash() const override {
-            return std::hash<typename T::CreateArgs>{}(m_createArgs);
+            if constexpr (requires { std::hash<typename T::CreateArgs>{}(m_createArgs); }) {
+                return std::hash<typename T::CreateArgs>{}(m_createArgs);
+            } else {
+                return 0;
+            }
         }
 
         std::unique_ptr<IRGResource> TakeResource() override {
@@ -88,6 +95,7 @@ namespace Ccino {
         static RGResource ExternalBuffer(const Ref<Buffer>& buffer);
         static RGResource TransientTexture2D(Texture2D::CreateArgs createArgs);
         static RGResource ExternalTexture2D(const Ref<Texture2D>& texture);
+        static RGResource ExternalTLAS(const Ref<TLAS>& tlas);
 
         ResourceType GetResourceType() const;
         RID GetRHI() const;

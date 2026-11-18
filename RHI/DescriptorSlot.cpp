@@ -216,6 +216,18 @@ namespace Ccino::RHI {
         return *this;
     }
 
+    DescriptorSlotBinding& DescriptorSlotBinding::BindAS(const std::string& name, RID rid) {
+        const UniformOffset& field = FindField(name);
+        if (field.uniformDataType != UniformDataType::AccelerationStructure) {
+            throw std::runtime_error("Field is not an acceleration structure in descriptor slot layout: " + name);
+        }
+
+        const uint64_t address = m_context->GetASAddress(rid);
+        WriteParam(m_uniformData.data() + field.offset, address);
+        MarkDirty();
+        return *this;
+    }
+
     DescriptorSlotBinding& DescriptorSlotBinding::BindSampler(const std::string& name, SamplerType type) {
         const UniformOffset& field = FindField(name);
         if (field.uniformDataType != UniformDataType::Sampler) {

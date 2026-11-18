@@ -17,6 +17,7 @@ namespace Ccino {
         SampledImage, //全局DescriptorSet 中的数组索引 uint32_t
         StorageImage, //全局DescriptorSet 中的数组索引 uint32_t
         Sampler, //全局DescriptorSet 中的数组索引 uint32_t
+        AccelerationStructure, //TLAS BDA uint64_t
         //Struct, //常规的全局Struct
 
         //Param 标量
@@ -128,10 +129,11 @@ namespace Ccino {
 
     // 2. 资源类型
     #define CCINO_UNIFORM_REPR_TYPES(X) \
-        X(Buffer,       uint64_t, (UniformTypeInfo{8, 8})) \
-        X(SampledImage, uint32_t, (UniformTypeInfo{4, 4})) \
-        X(StorageImage, uint32_t, (UniformTypeInfo{4, 4})) \
-        X(Sampler,      uint32_t, (UniformTypeInfo{4, 4}))
+        X(Buffer,                uint64_t, (UniformTypeInfo{8, 8})) \
+        X(SampledImage,          uint32_t, (UniformTypeInfo{4, 4})) \
+        X(StorageImage,          uint32_t, (UniformTypeInfo{4, 4})) \
+        X(Sampler,               uint32_t, (UniformTypeInfo{4, 4})) \
+        X(AccelerationStructure, uint64_t, (UniformTypeInfo{8, 8}))
 
     #define CCINO_UNIFORM_ALL_TYPES(X) \
         CCINO_UNIFORM_BIDIR_TYPES(X) \

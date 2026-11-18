@@ -49,6 +49,13 @@ namespace Ccino {
         return RGResource{std::make_unique<RGResourceHandle<Texture2D>>(texture->GetCreateArgs(), texture), true};
     }
 
+    RGResource RGResource::ExternalTLAS(const Ref<TLAS>& tlas) {
+        if (!tlas.IsValid()) {
+            throw std::invalid_argument("External TLAS is null");
+        }
+        return RGResource{std::make_unique<RGResourceHandle<TLAS>>(tlas->GetCreateArgs(), tlas), true};
+    }
+
     ResourceType RGResource::GetResourceType() const {
         if (m_handle == nullptr) {
             throw std::runtime_error("RGResource has no handle");

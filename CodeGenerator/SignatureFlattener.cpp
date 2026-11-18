@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cstdint>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace Ccino {
@@ -227,6 +228,18 @@ namespace Ccino {
                 //Ccino::Viewer<Flags, ViewType>
                 if (tmplName == "Viewer" && IsInNamespace(spec, "Ccino") && args.size() >= 1) {
                     return {"uint", dimensions};
+                }
+            }
+
+            // Ccino::ASViewer (TLAS BDA) & Ccino::RayQueryEXT
+            if (IsInNamespace(record, "Ccino")) {
+                llvm::StringRef recName = record->getName();
+                const auto stringName = record->getNameAsString();
+                if (recName == "ASViewer") {
+                    return {"uint64_t", std::move(dimensions)};
+                }
+                if (GLSLBuiltinStructMap.contains(stringName)) {
+                    return {GLSLBuiltinStructMap.at(stringName), std::move(dimensions)};
                 }
             }
 

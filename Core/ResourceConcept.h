@@ -19,6 +19,8 @@ namespace Ccino {
     enum class ResourceType {
         Buffer,
         Texture,
+        TLAS,
+        BLAS
     };
 
 

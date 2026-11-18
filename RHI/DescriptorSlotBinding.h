@@ -35,6 +35,7 @@ namespace Ccino::RHI {
         ~DescriptorSlotBinding(); //UniformBuffer 交给Context 按飞行帧延迟释放
 
         DescriptorSlotBinding& BindBuffer(const std::string& name, RID rid); //写入Buffer 的BDA
+        DescriptorSlotBinding& BindAS(const std::string& name, RID rid); //写入TLAS 的设备地址
         DescriptorSlotBinding& BindSampler(const std::string& name, SamplerType type); //写入Sampler 在全局DescriptorSet 中的数组索引
         //TODO: BindTexture, 等RHI 支持Texture 创建后实现, 写入SampledImage / StorageImage 的数组索引
         DescriptorSlotBinding& BindTexture2DUAV(const std::string& name, RID rid, const ViewRange& viewRange); //StorageTexture StorageImage

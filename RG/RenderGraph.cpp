@@ -173,6 +173,8 @@ namespace Ccino {
             } else if constexpr (std::is_same_v<T, TextureAccessFlags>) {
                 isWritable = HasTextureAccess(arg, TextureAccessFlagBits::StorageWrite) ||
                              HasTextureAccess(arg, TextureAccessFlagBits::RenderTarget);
+            } else if constexpr (std::is_same_v<T, ASAccessFlags>) {
+                isWritable = false;
             }
         }, accessFlags);
         return isWritable;
@@ -187,9 +189,23 @@ namespace Ccino {
             } else if constexpr (std::is_same_v<T, TextureAccessFlags>) {
                 isReadable = HasTextureAccess(arg, TextureAccessFlagBits::StorageRead) ||
                              HasTextureAccess(arg, TextureAccessFlagBits::Sampled);
+            } else if constexpr (std::is_same_v<T, ASAccessFlags>) {
+                isReadable = static_cast<bool>(arg & ASAccessFlagBits::Read);
             }
         }, accessFlags);
         return isReadable;
+    }
+
+    namespace {
+        const char* ResourceTypeName(ResourceType type) {
+            switch (type) {
+            case ResourceType::Buffer:  return "Buffer";
+            case ResourceType::Texture: return "Texture";
+            case ResourceType::TLAS:    return "TLAS";
+            case ResourceType::BLAS:    return "BLAS";
+            }
+            return "Unknown";
+        }
     }
 
     bool RGBuilder::CheckResourceType(RID resourceRID, ResourceType expected, const char* accessName) {
@@ -204,8 +220,8 @@ namespace Ccino {
         if (actual != expected) {
             std::cerr << "RGBuilder::" << accessName << ": resource type mismatch (index "
                       << resourceRID.index << "), expected "
-                      << (expected == ResourceType::Buffer ? "Buffer" : "Texture") << " but got "
-                      << (actual == ResourceType::Buffer ? "Buffer" : "Texture")
+                      << ResourceTypeName(expected) << " but got "
+                      << ResourceTypeName(actual)
                       << ", access skipped\n";
             return false;
         }
@@ -587,6 +603,23 @@ namespace Ccino {
         return true;
     }
 
+    RID RGBuilder::CreateExternalTLAS(const Ref<TLAS>& tlas) {
+        return m_resources.Add(RGResource::ExternalTLAS(tlas));
+    }
+
+    bool RGBuilder::UpdateExternalTLAS(RID resourceRID, const Ref<TLAS>& tlas) {
+        if (!tlas.IsValid() || !CheckResourceType(resourceRID, ResourceType::TLAS, "UpdateExternalTLAS")) {
+            return false;
+        }
+        auto* resource = m_resources.Get(resourceRID);
+        if (!resource->isExternal) {
+            std::cerr << "RGBuilder::UpdateExternalTLAS: target resource is not external\n";
+            return false;
+        }
+        *resource = RGResource::ExternalTLAS(tlas);
+        return true;
+    }
+
     void RGBuilder::CreateGPUResource() {
         // 创建资源: 具体类型由 RGResource 内部的多态句柄分发
         if (m_context == nullptr) return;
@@ -707,6 +740,10 @@ namespace Ccino {
                             auto* viewRange = reinterpret_cast<ViewRange*>(field + sizeof(RID)); // RID中有3个uint64的对象，能保证对齐
                             RID rhiTextureRID = m_resources.Get(*rid)->GetRHI();
                             descriptorSlot->BindTexture2DUAV(data.name, rhiTextureRID, *viewRange);
+                        } else if (data.uniformDataType == UniformDataType::AccelerationStructure) {
+                            auto* rid = reinterpret_cast<RID*>(field);
+                            RID rhiASRID = m_resources.Get(*rid)->GetRHI();
+                            descriptorSlot->BindAS(data.name, rhiASRID);
                         } else {
                             descriptorSlot->BindParam(data.name, data.uniformDataType, field);
                         }

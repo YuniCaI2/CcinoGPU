@@ -286,7 +286,11 @@ namespace Ccino {
                 for (auto& field : argStmt->fields) {
                     returnStmt->fields.push_back(std::move(field));
                 }
-                returnStmt->expr->text += (i ? "," : "") + argStmt->expr->text;
+                std::string argText = argStmt->expr->text;
+                if (funcName == "rayQueryInitializeEXT" && i == 1) {
+                    argText = "accelerationStructureEXT(" + argText + ")";
+                }
+                returnStmt->expr->text += (i ? "," : "") + argText;
             }
 
             returnStmt->expr->text += ")";

@@ -11,7 +11,7 @@ namespace Ccino {
             constexpr VkBufferUsageFlags2 transfer = VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT;
             switch (usage) {
             case BufferUsage::Storage:
-                return VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | transfer;
+                return VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | transfer;
             case BufferUsage::Uniform:
                 return VK_BUFFER_USAGE_2_UNIFORM_BUFFER_BIT | transfer;
             }

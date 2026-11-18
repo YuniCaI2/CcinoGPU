@@ -7,6 +7,7 @@
 #include "RHI/RHIStruct.h"
 #include "RG/Pass.h"
 #include "RG/Viewer.h"
+#include "RG/ASViewer.h"
 #include "RefCounted.hpp"
 #include "ShaderStruct/ShaderCommon.h"
 #include "Texture2D.h"
@@ -277,6 +278,16 @@ namespace Ccino {
             return RenderTarget(resource, viewRange, loadOp, storeOp, clear);
         }
 
+        //加速结构只读访问, 语义同 Read: 不递增版本
+        ASViewer ReadAS(RID& resource, RID& passRID) {
+            if (!CheckResourceType(resource, ResourceType::TLAS, "ReadAS")) {
+                return ASViewer(RID::Invalid());
+            }
+            uint32_t version = m_edgeNums[resource];
+            m_edges.push_back(RGEdge{resource, passRID, version, ASAccessFlagBits::Read});
+            return ASViewer(resource);
+        }
+
         //处理 Texture依赖
         void BuildGraph();
         void Run(); //这里传入一个分配的池
@@ -385,6 +396,9 @@ namespace Ccino {
         RID CreateTransientTexture2D(typename Texture2D::CreateArgs createArgs);
         RID CreateExternalTexture2D(const Ref<Texture2D>& texture);
         bool UpdateExternalTexture2D(RID resourceRID, const Ref<Texture2D>& texture);
+
+        RID CreateExternalTLAS(const Ref<TLAS>& tlas);
+        bool UpdateExternalTLAS(RID resourceRID, const Ref<TLAS>& tlas);
 
     private:
         //运行期资源类型检查(热路径, 不抛异常): 类型不符时cerr 报错并返回false, 调用方跳过建边并返回无效句柄
