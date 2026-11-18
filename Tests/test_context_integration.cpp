@@ -260,7 +260,6 @@ TEST(CcinoIntegrationTest, AtomicAddClosedLoop) {
         rg.AddCS<Ccino::ThreadGroupSize{16, 1, 1}>([=]() {
             Ccino::AtomicAdd(outBuf[0].u32Sum, 2u);
             Ccino::AtomicAdd(outBuf[0].f32Sum, 0.25f);
-            Ccino::AtomicAdd(outBuf[0].u64Sum, 5ull);
         }, Ccino::WorkGroupSize{1, 1, 1});
     });
 

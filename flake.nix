@@ -1,10 +1,6 @@
 {
   description = "CcinoGPU Vulkan Development Environment";
 
-  inputs = {
-    nixpkgs.url = "git+https://github.com/NixOS/nixpkgs?ref=release-26.05&shallow=1";
-  };
-
   outputs = { self, nixpkgs }:
     let
       # 支持的系统架构
@@ -43,10 +39,6 @@
             wayland-protocols
             libxkbcommon
             libdecor
-
-            # libTooling: CMake 配置和头文件在 dev 输出里
-            llvmPackages.llvm
-            llvmPackages.clang-unwrapped
           ];
 
           shellHook = ''
@@ -84,8 +76,6 @@
               wayland
               libxkbcommon
               libdecor
-              llvmPackages.llvm
-              llvmPackages.clang-unwrapped
             ])}:$LD_LIBRARY_PATH"
 
             echo "CcinoGPU Vulkan dev environment loaded (Clang via Flake)."
