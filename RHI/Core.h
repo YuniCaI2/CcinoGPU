@@ -65,6 +65,7 @@ namespace Ccino::RHI {
             return VK_NULL_HANDLE;
         }
         const VkPhysicalDeviceProperties& GetPhysicalDeviceProperties() const { return m_properties; }
+        const VkPhysicalDeviceAccelerationStructurePropertiesKHR& GetAccelerationStructureProperties() const { return m_asProperties; }
 
         std::tuple<int, int> GetWindowExtent() const;
         SDL_Window* GetWindow() const {return m_window;}
@@ -81,6 +82,13 @@ namespace Ccino::RHI {
         PFN_vkCmdSetColorBlendEnableEXT     vkCmdSetColorBlendEnableEXT     = nullptr;
         PFN_vkCmdSetColorWriteMaskEXT       vkCmdSetColorWriteMaskEXT       = nullptr;
         PFN_vkCmdSetColorBlendEquationEXT   vkCmdSetColorBlendEquationEXT   = nullptr;
+
+        // VK_KHR_acceleration_structure 扩展函数指针
+        PFN_vkCreateAccelerationStructureKHR           vkCreateAccelerationStructureKHR           = nullptr;
+        PFN_vkDestroyAccelerationStructureKHR          vkDestroyAccelerationStructureKHR          = nullptr;
+        PFN_vkGetAccelerationStructureBuildSizesKHR    vkGetAccelerationStructureBuildSizesKHR    = nullptr;
+        PFN_vkCmdBuildAccelerationStructuresKHR        vkCmdBuildAccelerationStructuresKHR        = nullptr;
+        PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
 
     private:
         VkInstance m_instance = VK_NULL_HANDLE;
@@ -104,6 +112,7 @@ namespace Ccino::RHI {
         VkPhysicalDeviceFeatures2 m_enabledFeatures{};
         VkPhysicalDeviceProperties2 m_properties2{};
         VkPhysicalDeviceProperties m_properties{};
+        VkPhysicalDeviceAccelerationStructurePropertiesKHR m_asProperties{};
 
         //Window 作为Core的一部分
         SDL_Window* m_window = nullptr;

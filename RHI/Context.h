@@ -1,4 +1,5 @@
 #pragma once
+#include "Core/CcinoType.h"
 #include "Core/Flags.h"
 #include "GraphicsShaderObject.h"
 #include "RHI/RHIStruct.h"
@@ -46,6 +47,7 @@ namespace Ccino::RHI {
         VkBufferUsageFlags2 usage = 0;
         HostAccess access = HostAccess::None;
         bool requireHostCoherent = false; //要求落在 HOST_VISIBLE | HOST_COHERENT 内存上，选不到时创建失败，不做降级
+        VkDeviceSize alignment = 0; //额外对齐，0 表示只按 Vulkan 返回的 memory requirements。加速结构 scratch 需要 minAccelerationStructureScratchOffsetAlignment 这里会影响BDA的起始位置
     };
 
     //Texture比较复杂有各种类型的不同Format的
@@ -130,6 +132,71 @@ namespace Ccino::RHI {
         RID imageRID; //这里指向原来的view
         ViewRange range; //附件尺寸按 range.baseMipMap 从纹理尺寸推出
     };
+
+
+    //AS的FLAG,先开放这两个
+    enum class ASFlag {
+        FAST_TRACE,
+        FAST_BUILD
+    };
+
+    enum class VertexFormat {
+        R32G32B32_SFLOAT,
+    };
+
+    enum class IndexType {
+        e32,
+        e16
+    };
+
+    enum class GeometryFlagBits : uint32_t {
+        SINGLE_ANY_HIT = 1u << 0, //命中只调用一次
+        QPAQUE         = 1u << 1, //不调用AHS
+    };
+    using GeometryFlags = Flags<GeometryFlagBits>;
+
+    enum class GeometryType {
+        Triangles,
+        Instance,
+        AABBs
+    };
+
+    //这里默认几何是三角形, 顶点是标准的vec3 FLOAT， 后续扩展灵活度，现在能Cover 大部分情况即可
+    struct ASGeometryInfo {
+        VertexFormat format = VertexFormat::R32G32B32_SFLOAT;
+        RID vertexBuffer {};
+        uint32_t vertexOffset;
+        uint32_t vertexStride {};
+        uint32_t vertexCount {};
+        IndexType indexType {};
+        RID indexBuffer {};
+        uint32_t indexOffset;
+        uint32_t indexCount;
+        GeometryFlags flags {};
+    };
+
+    //构建TLAS用,这里先不要剔除
+    struct ASInstanceInfo {
+        Ccino::Vec3 position {};
+        RID blas = RID::Invalid();    
+        uint32_t customIndex = 0; //这里最大是24位
+        bool bCulling = false; //双面渲染
+    };
+
+    struct VulkanAS : VulkanResource {
+        VkAccelerationStructureKHR structure = VK_NULL_HANDLE;
+        RID buffer = RID::Invalid(); //加速结构本体所在的 buffer
+        VkDeviceAddress address = 0;
+    };
+
+    struct VulkanBLAS : VulkanAS {
+
+    };
+
+    struct VulkanTLAS : VulkanAS {
+
+    };
+
 
     class Context {
     public:
@@ -217,10 +284,15 @@ namespace Ccino::RHI {
         bool CopyTexToBuffer(RID srcTex, RID dstBuffer);
         bool CopyTex(RID srcTex, RID dstTex);
 
-
+        //View
         RID CreateTextureView(const RID& textureRID, const ViewRange& viewRange); //format 取自纹理, 销毁走 DeleteResource
         void DestroyImageView(RID rid);
         VkImageView GetVkImageView(RID rid) { return m_textureViews.Get(rid)->imageView; }
+
+        //AS
+        RID CreateBLAS(const ASGeometryInfo& geoInfo, ASFlag flag);
+        RID CreateTLAS(const std::vector<ASInstanceInfo>& instanceInfos, ASFlag);
+        void DestroyAS(RID rid);
 
         //Swapchain
         std::vector<RID> RegisterSwapchainImages(const std::vector<VkImage>& images);
@@ -314,6 +386,9 @@ namespace Ccino::RHI {
         TRIDArray<DescriptorSlotBinding> m_descriptorSlots;
         TRIDArray<VulkanTexture> m_textures;
         TRIDArray<GraphicsShaderObject> m_graphicsShaderObjects;
+        TRIDArray<VulkanTLAS> m_tlas;
+        TRIDArray<VulkanBLAS> m_blas;
+
 
         std::mutex m_deletionMutex; //保护m_bufferDeletionQueue 和m_currentFrameIndex 的切换, Ref 可能在任意线程析构
         std::vector<std::vector<RID>> m_bufferDeletionQueue; //延迟释放队列
@@ -342,9 +417,12 @@ namespace Ccino::RHI {
 
         //这里是直接阻塞等待
         void WaitResource_Impl(VulkanResource* resource); //首先其是资源
-
         VkRenderingAttachmentInfo GetAttachmentInfo(const AttachmentInfo& attachmentInfo);
 
+        //AS
+        void CreateAS(VkAccelerationStructureTypeKHR asType, RID& as, VkAccelerationStructureGeometryKHR& asGeometry,  // The geometry to build the acceleration structure from
+                                   VkAccelerationStructureBuildRangeInfoKHR& asBuildRangeInfo,  // The range info for building the acceleration structure
+                                   VkBuildAccelerationStructureFlagsKHR flags);
         //使用 InitImgui
         void InitImgui();
         void DestroyImgui();

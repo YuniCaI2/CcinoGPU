@@ -193,7 +193,8 @@ namespace Ccino
                               "#extension GL_EXT_shader_image_load_formatted : require\n"
                               "#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require\n"
                               "#extension GL_EXT_shader_atomic_float : require\n"
-                              "#extension GL_EXT_shader_atomic_int64 : require\n";
+                              "#extension GL_EXT_shader_atomic_int64 : require\n"
+                              "#extension GL_EXT_ray_query : require\n";
 
     // 外部主入口：运行一次 ClangTool 解析该文件，在 MatchCallback 回调里直接把匹配到的所有 Lambda 转成 ShaderIR 返回
     std::vector<ShaderIR> CppParser::ParseFilePassShaders(const std::string& compileCommandJsonPath, std::string* globalFunctions) {

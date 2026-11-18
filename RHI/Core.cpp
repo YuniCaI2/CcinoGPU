@@ -84,18 +84,31 @@ namespace Ccino::RHI {
         atomicFloatFeatures.shaderBufferFloat32Atomics = VK_TRUE;
         atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
 
+        //RayQuery: accelerationStructure 依赖已开启的 bufferDeviceAddress; rayQuery 必须同时打开 accelerationStructure
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
+        accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        accelerationStructureFeatures.accelerationStructure = VK_TRUE;
 
+        VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+        rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+        rayQueryFeatures.rayQuery = VK_TRUE;
 
         features11.pNext = &features12;
         features12.pNext = &features13;
         features13.pNext = &features14;
         features14.pNext = &shaderObjectFeatures;
         shaderObjectFeatures.pNext = &atomicFloatFeatures;
+        atomicFloatFeatures.pNext = &accelerationStructureFeatures;
+        accelerationStructureFeatures.pNext = &rayQueryFeatures;
 
         //Bindless 只依赖Vulkan 1.2 核心的bufferDeviceAddress 和descriptor_indexing, 浮点原子加依赖 VK_EXT_shader_atomic_float
+        //RayQuery 依赖 deferred host operations + acceleration structure, 不需要 ray tracing pipeline
         std::vector<const char*> deviceExtensions = {
             VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
             VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
+            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+            VK_KHR_RAY_QUERY_EXTENSION_NAME,
         };
         if (settings.bUseSwapChain) {
             deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -428,7 +441,9 @@ namespace Ccino::RHI {
         vkGetDeviceQueue(m_device, m_queueFamilyIndices.compute, 0, &m_computeQueue);
         vkGetDeviceQueue(m_device, m_queueFamilyIndices.transfer, 0, &m_transferQueue);
 
+        m_asProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
         m_properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        m_properties2.pNext = &m_asProperties;
         vkGetPhysicalDeviceProperties2(m_physicalDevice, &m_properties2);
         m_properties = m_properties2.properties;
 
@@ -503,6 +518,13 @@ namespace Ccino::RHI {
         loadDeviceFunc(vkCmdSetColorBlendEnableEXT,      "vkCmdSetColorBlendEnableEXT");
         loadDeviceFunc(vkCmdSetColorWriteMaskEXT,        "vkCmdSetColorWriteMaskEXT");
         loadDeviceFunc(vkCmdSetColorBlendEquationEXT,    "vkCmdSetColorBlendEquationEXT");
+
+        // 3. Acceleration Structure (VK_KHR_acceleration_structure)
+        loadDeviceFunc(vkCreateAccelerationStructureKHR,           "vkCreateAccelerationStructureKHR");
+        loadDeviceFunc(vkDestroyAccelerationStructureKHR,          "vkDestroyAccelerationStructureKHR");
+        loadDeviceFunc(vkGetAccelerationStructureBuildSizesKHR,    "vkGetAccelerationStructureBuildSizesKHR");
+        loadDeviceFunc(vkCmdBuildAccelerationStructuresKHR,        "vkCmdBuildAccelerationStructuresKHR");
+        loadDeviceFunc(vkGetAccelerationStructureDeviceAddressKHR, "vkGetAccelerationStructureDeviceAddressKHR");
     }
 
     void Core::SetDebugging(VkInstance instance) {

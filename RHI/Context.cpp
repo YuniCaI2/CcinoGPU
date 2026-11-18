@@ -1,4 +1,5 @@
 #include "RHI/Context.h"
+#include "Context.h"
 #include "RHI/ComputePipeline.h"
 #include "RHI/Core.h"
 #include "RHI/DescriptorSlot.h"
@@ -246,6 +247,49 @@ namespace Ccino::RHI {
             barrier.subresourceRange.layerCount = arrayLayers == 0 ? VK_REMAINING_ARRAY_LAYERS : arrayLayers;
             return barrier;
         }
+
+        VkBuildAccelerationStructureFlagsKHR ToVkBuildASFlags(ASFlag flag) {
+            switch (flag) {
+            case ASFlag::FAST_TRACE: return VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            case ASFlag::FAST_BUILD: return VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+            }
+            throw std::invalid_argument("Unknown ASFlag");
+        }
+
+        VkFormat ToVkVertexFormat(VertexFormat format) {
+            switch (format) {
+            case VertexFormat::R32G32B32_SFLOAT: return VK_FORMAT_R32G32B32_SFLOAT;
+            }
+            throw std::invalid_argument("Unknown VertexFormat");
+        }
+
+        VkIndexType ToVkIndexType(IndexType type) {
+            switch (type) {
+            case IndexType::e32: return VK_INDEX_TYPE_UINT32;
+            case IndexType::e16: return VK_INDEX_TYPE_UINT16;
+            }
+            throw std::invalid_argument("Unknown IndexType");
+        }
+
+        VkGeometryFlagsKHR ToVkGeometryFlags(GeometryFlags flags) {
+            VkGeometryFlagsKHR vkFlags = 0;
+            if (flags & GeometryFlagBits::SINGLE_ANY_HIT) {
+                vkFlags |= VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
+            }
+            if (flags & GeometryFlagBits::QPAQUE) {
+                vkFlags |= VK_GEOMETRY_OPAQUE_BIT_KHR;
+            }
+            return vkFlags;
+        }
+
+        VkGeometryTypeKHR ToVkGeometryType(GeometryType type) {
+            switch (type) {
+            case GeometryType::Triangles: return VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            case GeometryType::Instance:  return VK_GEOMETRY_TYPE_INSTANCES_KHR;
+            case GeometryType::AABBs:     return VK_GEOMETRY_TYPE_AABBS_KHR;
+            }
+            throw std::invalid_argument("Unknown GeometryType");
+        }
     }
 
     Context::Context()
@@ -342,6 +386,18 @@ namespace Ccino::RHI {
                 slot.Release();
             });
             m_descriptorSlot->Destroy();
+
+            //加速结构引用着存储 buffer，必须先于 buffer 销毁
+            auto destroyAccelerationStructure = [&](auto& structures) {
+                structures.ForEach([&](auto& accel) {
+                    if (accel.structure != VK_NULL_HANDLE) {
+                        m_core->vkDestroyAccelerationStructureKHR(device, accel.structure, nullptr);
+                        accel.structure = VK_NULL_HANDLE;
+                    }
+                });
+            };
+            destroyAccelerationStructure(m_blas);
+            destroyAccelerationStructure(m_tlas);
         }
 
         m_buffers.ForEach([&](VulkanBuffer& buffer) {
@@ -466,6 +522,7 @@ namespace Ccino::RHI {
         } else {
             allocCreateInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         }
+        allocCreateInfo.minAlignment = createInfo.alignment;
 
         VulkanBuffer buffer{};
         VmaAllocationInfo allocInfo{};
@@ -947,6 +1004,138 @@ namespace Ccino::RHI {
         return info;
     }
 
+    void Context::CreateAS(VkAccelerationStructureTypeKHR asType, RID& as, VkAccelerationStructureGeometryKHR& asGeometry,  // The geometry to build the acceleration structure from
+    VkAccelerationStructureBuildRangeInfoKHR& asBuildRangeInfo,  // The range info for building the acceleration structure
+    VkBuildAccelerationStructureFlagsKHR flags) {
+        auto device = m_core->GetVkDevice();
+        VkAccelerationStructureBuildGeometryInfoKHR asBuildInfo{
+            .sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+            .type          = asType,  // The type of acceleration structure (BLAS or TLAS)
+            .flags         = flags,   // Build flags (e.g. prefer fast trace)
+            .mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,  // Build mode vs update
+            .geometryCount = 1,                                               // Deal with one geometry at a time
+            .pGeometries   = &asGeometry,  // The geometry to build the acceleration structure from
+        };
+
+        // One geometry at a time (could be multiple)
+        std::vector<uint32_t> maxPrimCount{asBuildRangeInfo.primitiveCount};
+
+        VkAccelerationStructureBuildSizesInfoKHR asBuildSize{.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+        m_core->vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &asBuildInfo,
+                                                        maxPrimCount.data(), &asBuildSize);
+
+        const uint32_t scratchAlignment = m_core->GetAccelerationStructureProperties().minAccelerationStructureScratchOffsetAlignment;
+        const VkDeviceSize scratchSize = ALIGN_UP(asBuildSize.buildScratchSize, scratchAlignment);
+        if (scratchSize > std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("Acceleration structure scratch buffer is too large");
+        }
+
+        // scratch 只在构建期间使用，需要 STORAGE_BUFFER；SHADER_DEVICE_ADDRESS 由 CreateBuffer 补上
+        const RID scratchBuffer = CreateBuffer(BufferCreateInfo{
+            .size = static_cast<uint32_t>(scratchSize),
+            .usage = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                            | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+            .alignment = scratchAlignment,
+        });
+        asBuildInfo.scratchData.deviceAddress = GetBufferBDA(scratchBuffer);
+
+        if (asBuildSize.accelerationStructureSize > std::numeric_limits<uint32_t>::max()) {
+            DestroyBuffer(scratchBuffer);
+            throw std::runtime_error("Acceleration structure storage buffer is too large");
+        }
+        const RID storageBuffer = CreateBuffer(BufferCreateInfo{
+            .size = static_cast<uint32_t>(asBuildSize.accelerationStructureSize),
+            .usage = VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT,
+        });
+
+        VkAccelerationStructureKHR structure = VK_NULL_HANDLE;
+        VkAccelerationStructureCreateInfoKHR createInfo{
+            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
+            .buffer = GetVkBuffer(storageBuffer),
+            .offset = 0,
+            .size = asBuildSize.accelerationStructureSize,
+            .type = asType,
+        };
+        VULKAN_CHECK(m_core->vkCreateAccelerationStructureKHR(device, &createInfo, nullptr, &structure));
+
+        asBuildInfo.dstAccelerationStructure = structure;
+
+        const CommandQueueType buildQueue = CommandQueueType::GRAPHICS;
+        CommandContext::CommandBuffer& commandBuffer = GetCommandBuffer(buildQueue);
+        StartRecording(commandBuffer);
+        VkAccelerationStructureBuildRangeInfoKHR* buildRangeInfo = &asBuildRangeInfo;
+        m_core->vkCmdBuildAccelerationStructuresKHR(commandBuffer.commandBuffer, 1, &asBuildInfo, &buildRangeInfo);
+        EndRecording(commandBuffer);
+
+        const uint64_t signalValue = SubmitCommandBufferTracked(buildQueue, true, {commandBuffer}, 0, {}, {}, {});
+        auto markBufferUsed = [&](RID rid) {
+            VulkanBuffer* buffer = m_buffers.Get(rid);
+            if (buffer == nullptr) {
+                throw std::runtime_error("Acceleration structure buffer is invalid");
+            }
+            buffer->lastQueue = buildQueue;
+            buffer->lastTimelineValue = signalValue;
+        };
+        markBufferUsed(scratchBuffer);
+        markBufferUsed(storageBuffer);
+        DestroyBuffer(scratchBuffer);
+
+        VkAccelerationStructureDeviceAddressInfoKHR addressInfo{
+            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
+            .accelerationStructure = structure,
+        };
+        const VkDeviceAddress address = m_core->vkGetAccelerationStructureDeviceAddressKHR(device, &addressInfo);
+
+        auto fillAccelerationStructure = [&](VulkanAS& accel) {
+            accel.structure = structure;
+            accel.buffer = storageBuffer;
+            accel.address = address;
+            accel.lastQueue = buildQueue;
+            accel.lastTimelineValue = signalValue;
+        };
+        if (asType == VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR) {
+            VulkanBLAS blas{};
+            fillAccelerationStructure(blas);
+            as = m_blas.Add(std::move(blas));
+        } else if (asType == VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR) {
+            VulkanTLAS tlas{};
+            fillAccelerationStructure(tlas);
+            as = m_tlas.Add(std::move(tlas));
+        } else {
+            m_core->vkDestroyAccelerationStructureKHR(device, structure, nullptr);
+            DestroyBuffer(storageBuffer);
+            throw std::runtime_error("Unsupported acceleration structure type");
+        }
+    }
+
+    void Context::DestroyAS(RID rid) {
+        const bool isBlas = rid.type == RID::GetIndex<VulkanBLAS>();
+        VulkanAS* accel = isBlas ? static_cast<VulkanAS*>(m_blas.Get(rid)) : static_cast<VulkanAS*>(m_tlas.Get(rid));
+        if (accel == nullptr) {
+            return;
+        }
+
+        if (accel->lastTimelineValue != 0) {
+            if (TimelineSemaphore* timeline = GetTimeline(m_core->GetQueueFamilyIndex(accel->lastQueue))) {
+                timeline->Wait(accel->lastTimelineValue);
+            }
+        }
+        if (accel->structure != VK_NULL_HANDLE) {
+            m_core->vkDestroyAccelerationStructureKHR(m_core->GetVkDevice(), accel->structure, nullptr);
+            accel->structure = VK_NULL_HANDLE;
+        }
+        const RID storageBuffer = accel->buffer;
+        accel->buffer = RID::Invalid();
+        if (isBlas) {
+            m_blas.Remove(rid);
+        } else {
+            m_tlas.Remove(rid);
+        }
+        if (storageBuffer) {
+            DestroyBuffer(storageBuffer);
+        }
+    }
+
     void Context::InitImgui() {
         // Setup Dear ImGui context
         IMGUI_CHECKVERSION();
@@ -1161,6 +1350,126 @@ namespace Ccino::RHI {
             view->imageView = VK_NULL_HANDLE;
         }
         m_textureViews.Remove(rid);
+    }
+
+    RID Context::CreateBLAS(const ASGeometryInfo& geoInfo, ASFlag flag) {
+        VkAccelerationStructureGeometryKHR       asGeometry{};
+        VkAccelerationStructureBuildRangeInfoKHR asBuildRangeInfo{};
+
+        const auto                   triangleCount = static_cast<uint32_t>(geoInfo.indexCount / 3U);
+        VkAccelerationStructureGeometryTrianglesDataKHR triangles{
+            .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+            .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,  // vec3 vertex position data
+            .vertexData   = {.deviceAddress = GetBufferBDA(geoInfo.vertexBuffer) + geoInfo.vertexOffset},
+            .vertexStride = geoInfo.vertexStride,
+            .maxVertex    = geoInfo.vertexCount,
+            .indexType    = ToVkIndexType(geoInfo.indexType),  // Index type (VK_INDEX_TYPE_UINT16 or VK_INDEX_TYPE_UINT32)
+            .indexData    = {.deviceAddress = GetBufferBDA(geoInfo.indexBuffer) + geoInfo.indexOffset},
+        };
+
+        asGeometry = VkAccelerationStructureGeometryKHR{
+            .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+            .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
+            .geometry     = {.triangles = triangles},
+            .flags        = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR | VK_GEOMETRY_OPAQUE_BIT_KHR,
+        };
+        asBuildRangeInfo = VkAccelerationStructureBuildRangeInfoKHR{.primitiveCount = triangleCount};
+        
+
+        RID result = RID::Invalid();
+        try {
+            CreateAS(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, result, asGeometry, asBuildRangeInfo, ToVkBuildASFlags(flag));
+        } catch (...) {
+            throw;
+        }
+        return result;
+    }
+
+    RID Context::CreateTLAS(const std::vector<ASInstanceInfo>& instanceInfos, ASFlag flag) {
+        std::vector<VkAccelerationStructureInstanceKHR> vkInstances;
+        vkInstances.reserve(instanceInfos.size());
+
+        for (const ASInstanceInfo& info : instanceInfos) {
+            VulkanBLAS* blas = m_blas.Get(info.blas);
+            if (blas == nullptr || blas->structure == VK_NULL_HANDLE || blas->address == 0) {
+                throw std::invalid_argument("[RHI Context CreateTLAS]: blas is invalid");
+            }
+            if (blas->lastTimelineValue != 0) {
+                WaitResource_Impl(blas);
+            }
+
+            VkAccelerationStructureInstanceKHR instance{};
+            instance.transform = VkTransformMatrixKHR{
+                .matrix = {
+                    {1.0f, 0.0f, 0.0f, info.position.x},
+                    {0.0f, 1.0f, 0.0f, info.position.y},
+                    {0.0f, 0.0f, 1.0f, info.position.z},
+                }
+            };
+            instance.instanceCustomIndex = info.customIndex & 0x00FFFFFFu;
+            instance.mask = 0xFF;
+            instance.instanceShaderBindingTableRecordOffset = 0;
+            instance.flags = info.bCulling ? 0 : VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            instance.accelerationStructureReference = blas->address;
+            vkInstances.push_back(instance);
+        }
+
+        RID instancesBuffer = RID::Invalid();
+        VkDeviceAddress instancesAddress = 0;
+        if (!vkInstances.empty()) {
+            const VkDeviceSize instancesSize = sizeof(VkAccelerationStructureInstanceKHR) * vkInstances.size();
+            if (instancesSize > std::numeric_limits<uint32_t>::max()) {
+                throw std::runtime_error("[RHI Context CreateTLAS]: instances buffer is too large");
+            }
+
+            instancesBuffer = CreateBuffer(BufferCreateInfo{
+                .size = static_cast<uint32_t>(instancesSize),
+                .usage = VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                       | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                       | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT,
+                .alignment = 16, // VkAccelerationStructureGeometryInstancesDataKHR::data.deviceAddress 要求 16 字节对齐
+                // See: https://docs.vulkan.org/spec/latest/chapters/accelstructures.html#VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03717
+            });
+
+            try {
+                UploadBuffer(instancesBuffer, vkInstances.data(), static_cast<uint32_t>(instancesSize));
+                instancesAddress = GetBufferBDA(instancesBuffer);
+            } catch (...) {
+                DestroyBuffer(instancesBuffer);
+                throw;
+            }
+        }
+
+        VkAccelerationStructureGeometryInstancesDataKHR instancesData{
+            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
+            .arrayOfPointers = VK_FALSE,
+            .data = {.deviceAddress = instancesAddress},
+        };
+
+        VkAccelerationStructureGeometryKHR asGeometry{
+            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+            .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
+            .geometry = {.instances = instancesData},
+        };
+
+        VkAccelerationStructureBuildRangeInfoKHR asBuildRangeInfo{
+            .primitiveCount = static_cast<uint32_t>(vkInstances.size()),
+        };
+
+        RID result = RID::Invalid();
+        try {
+            CreateAS(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, result, asGeometry, asBuildRangeInfo, ToVkBuildASFlags(flag));
+        } catch (...) {
+            if (instancesBuffer) {
+                DestroyBuffer(instancesBuffer);
+            }
+            throw;
+        }
+
+        if (instancesBuffer) {
+            DestroyBuffer(instancesBuffer);
+        }
+        return result;
     }
 
     void Context::TransitionTextureLayout(RID rid, VkImageLayout newLayout) {
@@ -1938,6 +2247,8 @@ namespace Ccino::RHI {
             DestroyGraphicsShaderObject(rid);
         } else if (rid.type == RID::GetIndex<DescriptorSlotBinding>()) {
             DestroyDescriptorSlotBinding(rid);
+        } else if (rid.type == RID::GetIndex<VulkanBLAS>() || rid.type == RID::GetIndex<VulkanTLAS>()) {
+            DestroyAS(rid);
         } else {
             throw std::runtime_error("Invalid resource type");
         }
