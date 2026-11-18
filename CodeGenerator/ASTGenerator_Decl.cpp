@@ -142,16 +142,6 @@ namespace {
 namespace Ccino {
     void ASTGenerator::InsertFunctionDeclToGraph(clang::FunctionDecl* functionDecl) {
         if(!functionDecl) return;
-        auto* definition = functionDecl->getDefinition(); //得到其定义
-
-        if (!definition) {
-            llvm::errs() << "Can't Find Function Decl Name : " << functionDecl->getNameAsString() << "\n";
-            return ;
-        }
-        if (!definition->hasBody()) {
-            llvm::errs() << "Can't Find Function Body : " << functionDecl->getNameAsString() << "\n";
-            return ;
-        }
         std::string rawName = functionDecl->getNameAsString();
         std::string lowerName = rawName;
         std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
@@ -165,6 +155,17 @@ namespace Ccino {
             GLSLBuiltinFuncSet.contains(lowerName) ||
             GLSLBuiltinFuncSet.contains(camelName)) {
             return; //直接返回
+        }
+
+        auto* definition = functionDecl->getDefinition(); //得到其定义
+
+        if (!definition) {
+            llvm::errs() << "Can't Find Function Decl Name : " << functionDecl->getNameAsString() << "\n";
+            return ;
+        }
+        if (!definition->hasBody()) {
+            llvm::errs() << "Can't Find Function Body : " << functionDecl->getNameAsString() << "\n";
+            return ;
         }
 
         auto* memberFuncDecl = llvm::dyn_cast<clang::CXXMethodDecl>(functionDecl);
