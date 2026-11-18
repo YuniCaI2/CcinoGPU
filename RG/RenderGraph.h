@@ -155,6 +155,12 @@ namespace Ccino {
             std::memcpy(pass->fsLambda.data(), &fs, sizeof(FSLambda));
         }
 
+        //简单的记录
+        void AddCustom() {
+            auto pass = m_passes.Get(m_currentPass);
+            pass->passType = RGPassTypeFlagBits::Custom;
+        }
+
         template<ThreadGroupSize threadGroupSize, typename CS> //ThreadGraphSize一定要作为编译器的,这样可以被ClangAST看到
         requires std::invocable<CS>
         void AddCS(CS&& cs, const WorkGroupSize& workGroupSize) {

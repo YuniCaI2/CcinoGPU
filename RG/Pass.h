@@ -15,7 +15,8 @@
 namespace Ccino {
     enum class RGPassTypeFlagBits : uint32_t {
         Compute = 1 << 0,
-        Graphics = 1 << 1 
+        Graphics = 1 << 1,
+        Custom = 1 << 2, //Custom
     };
 
     using RGPassTypeFlags = Flags<RGPassTypeFlagBits>;
