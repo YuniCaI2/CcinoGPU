@@ -229,6 +229,11 @@ cmake --build build/release --target OfflineTriangle
 
 ---
 
+## 当前的问题
+1. 多个RGBuilder 同时运行会出现踩踏现象。
+
+---
+
 ## 当前进展与后续计划（Roadmap）
 
 CcinoGPU 目前正处于活跃迭代阶段，核心的计算与图形渲染闭环已经跑通：
