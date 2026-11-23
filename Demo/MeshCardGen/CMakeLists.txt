@@ -1,5 +1,5 @@
 
-add_executable(MeshCardGen main.cpp)
+add_executable(MeshCardGen main.cpp MeshCard.cpp)
 # SDL3 用于窗口事件轮询; RHI 对 SDL3 是 PRIVATE 依赖, 头文件不会传递过来
 target_link_libraries(MeshCardGen PRIVATE Context RHI RG SDL3::SDL3-static)
 target_include_directories(MeshCardGen PRIVATE ${CMAKE_SOURCE_DIR})
