@@ -354,4 +354,23 @@ namespace Ccino {
         auto* record = type.getNonReferenceType().getCanonicalType()->getAsCXXRecordDecl();
         return Ccino::SignatureFlattener::FlattenRecord(record) != Ccino::SignatureFlattener::FlattenType(type).name;
     }
+
+    bool SignatureFlattener::IsAccessor(clang::QualType type) {
+        clang::QualType canonical = type.getNonReferenceType().getCanonicalType().getUnqualifiedType();
+        clang::QualType elemType = canonical;
+
+        if (const auto* record = elemType->getAsCXXRecordDecl()) {
+            if (const auto* spec = llvm::dyn_cast<clang::ClassTemplateSpecializationDecl>(record)) {
+                llvm::StringRef tmplName = spec->getName();
+                const clang::TemplateArgumentList& args = spec->getTemplateArgs();
+
+                // Ccino::Accessor<T, Flags>
+                if (tmplName == "Accessor" && IsInNamespace(spec, "Ccino") && args.size() >= 1 &&
+                    args[0].getKind() == clang::TemplateArgument::Type) {
+                        return true;
+                }
+            }
+        }
+        return false;
+    }
 }

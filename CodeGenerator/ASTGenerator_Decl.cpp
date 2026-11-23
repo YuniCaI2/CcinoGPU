@@ -58,12 +58,12 @@ namespace {
             return "inout ";
         } else {
             return "";
-        } 
+        }
     }
 
     std::vector<std::unique_ptr<Ccino::GLSL::DeclField>> GetFunctionDeclFields(clang::FunctionDecl* funcDecl) {
         if (!funcDecl) return {};
-         
+
         //处理几种情况成员函数和普通函数
         //非静态成员函数才需要追加隐式 self 参数
         std::vector<std::unique_ptr<Ccino::GLSL::DeclField>> results;
@@ -77,7 +77,7 @@ namespace {
                 return {};
             }
 
-            auto selfDeclField = std::make_unique<Ccino::GLSL::DeclField>(); 
+            auto selfDeclField = std::make_unique<Ccino::GLSL::DeclField>();
             if (classType->getTypeClassName() ) {
                 std::string className = Ccino::SignatureFlattener::FlattenType(classType).name;
                 selfDeclField->type = "inout " + className;
@@ -115,7 +115,7 @@ namespace {
                 if (auto* var = llvm::dyn_cast<clang::VarDecl>(stmt)) {
                     auto canonical = var->getType().getNonReferenceType().getCanonicalType().getUnqualifiedType();
                     if (!IsBuiltinType(canonical)) { //不要处理内建变量
-                        depDeclNames.push_back(Ccino::SignatureFlattener::FlattenType(canonical).name); 
+                        depDeclNames.push_back(Ccino::SignatureFlattener::FlattenType(canonical).name);
                     }
                 }
             }
@@ -155,6 +155,10 @@ namespace Ccino {
             GLSLBuiltinFuncSet.contains(lowerName) ||
             GLSLBuiltinFuncSet.contains(camelName)) {
             return; //直接返回
+        }
+
+        if (functionDecl->isImplicit() || functionDecl->isDefaulted()) {
+            return; // 编译器隐式生成的拷贝/移动/赋值由 GLSL 原生语法处理
         }
 
         auto* definition = functionDecl->getDefinition(); //得到其定义
@@ -202,7 +206,7 @@ namespace Ccino {
         clang::CXXRecordDecl* outerStructDecl = m_currentStructDecl;
         if (memberFuncDecl && memberFuncDecl->isInstance()) {
             //这里是类函数所有这里的函数需要调整
-            //这里特殊处理构造和析构 
+            //这里特殊处理构造和析构
             /*
             构造：
             auto a = A(b);
@@ -281,7 +285,7 @@ namespace Ccino {
                 }
                 InsertCXXRecordDeclToGraph(record);
             }
-        } 
+        }
         InsertGLSLStruct(std::move(glslStruct));
     }
 
@@ -352,7 +356,7 @@ namespace Ccino {
 
     void ASTGenerator::InsertGLSLFunc(std::unique_ptr<GLSL::FunctionDecl>&& funcDecl) {
         auto* rawPtr = funcDecl.get(); //方便先拿出
-        m_declGraph.nodes[funcDecl->name] = std::move(funcDecl);    
+        m_declGraph.nodes[funcDecl->name] = std::move(funcDecl);
         std::unordered_set<std::string> ms;
         for (auto& dep : rawPtr->fields) {
             ms.insert(dep->type);
@@ -369,7 +373,16 @@ namespace Ccino {
 
     void ASTGenerator::InsertGLSLStruct(std::unique_ptr<GLSL::StructDecl>&& structDecl) {
         auto* rawPtr = structDecl.get(); //方便先拿出
-        m_declGraph.nodes[structDecl->name] = std::move(structDecl);    
+
+        //这里做两件事， 因为出现了Decl name = (Accessor Param) 这样会将Decl 插入两次， 所以要保证isBufferReference一直为true
+        if (auto it = m_declGraph.nodes.find(structDecl->name); it != m_declGraph.nodes.end() && it->second) {
+            if (auto* existing = dynamic_cast<GLSL::StructDecl*>(it->second.get());
+                existing && existing->isBufferReference && !rawPtr->isBufferReference) {
+                rawPtr->isBufferReference = true;
+                rawPtr->bufferReferenceAlign = existing->bufferReferenceAlign;
+            }
+        }
+        m_declGraph.nodes[structDecl->name] = std::move(structDecl);
         std::unordered_set<std::string> ms;
         for (auto& dep : rawPtr->fields) {
             ms.insert(dep->type);

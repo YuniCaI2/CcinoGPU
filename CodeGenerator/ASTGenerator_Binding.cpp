@@ -1,6 +1,7 @@
 #include "CodeGenerator/ASTGenerator.h"
 #include "CodeGenerator/SignatureFlattener.h"
 #include "GLSLAST.h"
+#include <cassert>
 #include <clang/AST/Decl.h>
 #include <clang/AST/DeclCXX.h>
 #include <clang/AST/DeclTemplate.h>
@@ -19,8 +20,8 @@ namespace Ccino {
             declField->name = field->getNameAsString();
             /*
             普通变量捕获（如 [a, &b] 或 [=] 隐式捕获）： Clang 在生成闭包类的 FieldDecl 时，
-            不会给这个 FieldDecl 设置名字（它的 IdentifierInfo* 是 nullptr），所以 field->getNameAsString() 
-            返回的一定是空字符串 ""。此时必须通过字段下标 fieldIndex 去查对应的 
+            不会给这个 FieldDecl 设置名字（它的 IdentifierInfo* 是 nullptr），所以 field->getNameAsString()
+            返回的一定是空字符串 ""。此时必须通过字段下标 fieldIndex 去查对应的
             LambdaCapture（lambdaClass->getCapture(fieldIndex)），
             再通过 capture->getCapturedVar()->getNameAsString() 拿到原变量名。
             */
@@ -36,7 +37,7 @@ namespace Ccino {
             if (auto* tmp = llvm::dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(type->getAsCXXRecordDecl())) {
                 //Accessor
                 if (tmp->getName() == "Accessor" || tmp->getName() == "accessor") {
-                    //得到第一个模板参数     
+                    //得到第一个模板参数
                     auto& args = tmp->getTemplateArgs();
                     if (args[1].getKind() == clang::TemplateArgument::Declaration) {
                         if (llvm::isa<clang::TemplateParamObjectDecl>(args[1].getAsDecl())) {
@@ -49,16 +50,20 @@ namespace Ccino {
                             "Error: Accessor template need BufferAccessFlags as second argument: " + tmp->getNameAsString());
                         return {};
                     }
-                    
+
                 } else if (tmp->getName() != "Viewer") {
                     InsertCXXRecordDeclToGraph(type->getAsCXXRecordDecl(), false);
                 }
             } else {
                 InsertCXXRecordDeclToGraph(type->getAsCXXRecordDecl(), false);
             }
-            
-            
+
+
             auto flattenType = SignatureFlattener::FlattenType(field->getType());
+
+            if (SignatureFlattener::IsAccessor(field->getType())) {
+                flattenType.name += "_Ref";
+            }
             declField->type = flattenType.name;
             declField->dimensions = flattenType.dimensions;
             fieldIndex++;
@@ -66,7 +71,7 @@ namespace Ccino {
         }
         return result;
     }
-    
+
     std::unique_ptr<GLSL::OutBinding> ASTGenerator::GenerateOutBinding(const clang::LambdaExpr* lambdaExpr, clang::ASTContext& context) {
         auto result = std::make_unique<GLSL::OutBinding>();
         const clang::CXXMethodDecl* callOp = lambdaExpr->getCallOperator(); //这个相当于Lambda是一个隐式的struct 其中有operator()这个对象
@@ -78,8 +83,8 @@ namespace Ccino {
 
                 auto declField = std::make_unique<GLSL::DeclField>();
                 auto typePack = SignatureFlattener::FlattenType(type);
-                declField->type = std::move(typePack.name); 
-                declField->dimensions = std::move(typePack.dimensions); 
+                declField->type = std::move(typePack.name);
+                declField->dimensions = std::move(typePack.dimensions);
                 declField->name = param->getNameAsString();
                 result->fields.push_back(std::move(declField));
             }

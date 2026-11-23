@@ -244,20 +244,15 @@ namespace MeshCardGen {
                     return;
                 }
 
-                Ccino::IVec3 volSize = bases[dir].volumeSize;
-                if (int32_t(coordX) >= volSize.x || int32_t(coordY) >= volSize.y) {
+                AxisBasisGPU basis = bases[dir];
+                if (int32_t(coordX) >= basis.volumeSize.x || int32_t(coordY) >= basis.volumeSize.y) {
                     return;
                 }
-
-                Ccino::Vec3 bAxisX  = bases[dir].axisX;
-                Ccino::Vec3 bAxisY  = bases[dir].axisY;
-                Ccino::Vec3 bRayDir = bases[dir].rayDir;
-                Ccino::Vec3 bOffset = bases[dir].offset;
 
                 uint32_t numSamples      = params[0].numSamples;
                 uint32_t numVisRays      = params[0].numVisRays;
                 float    normalThreshold = params[0].normalThreshold;
-                float    voxelSize       = bases[dir].voxelSize;
+                float    voxelSize       = basis.voxelSize;
                 float    nearPlaneOffset = 2.0f * voxelSize;
 
                 // 记录当前 (coordX, coordY) 列中命中的若干 (cellZ, minRayZ) 层 (对应 UE 的 span 聚合)
@@ -272,22 +267,22 @@ namespace MeshCardGen {
                     float jx = (float(s) + 0.5f) / float(numSamples);
                     float jy = float(Ccino::BitfieldReverse(s)) * 2.3283064365386963e-10f;
 
-                    Ccino::Vec3 rayOrigin = bOffset
-                        + (bAxisX * (float(coordX) + jx) + bAxisY * (float(coordY) + jy)) * voxelSize
-                        - bRayDir * nearPlaneOffset;
+                    Ccino::Vec3 rayOrigin = basis.offset
+                        + (basis.axisX * (float(coordX) + jx) + basis.axisY * (float(coordY) + jy)) * voxelSize
+                        - basis.rayDir * nearPlaneOffset;
 
                     int32_t lastHitZ = -2;
                     float   rayTNear = 0.0f;
 
                     for (uint32_t step = 0u; step < 8u; ++step) {
-                        if (lastHitZ + 1 >= volSize.z) {
+                        if (lastHitZ + 1 >= basis.volumeSize.z) {
                             break;
                         }
 
                         Ccino::RayQueryEXT rq;
                         Ccino::RayQueryInitializeEXT(
                             rq, sceneAS, Ccino::RayFlagsOpaqueEXT, 0xFFu,
-                            rayOrigin, rayTNear, bRayDir, 1000.0f);
+                            rayOrigin, rayTNear, basis.rayDir, 1000.0f);
                         while (Ccino::RayQueryProceedEXT(rq)) {
                         }
 
@@ -308,12 +303,12 @@ namespace MeshCardGen {
 
                         int32_t hitZ = Ccino::Clamp(
                             int32_t((hitT - nearPlaneOffset) / voxelSize),
-                            0, volSize.z - 1);
+                            0, basis.volumeSize.z - 1);
 
-                        float nDotD = Ccino::Dot(-bRayDir, hitNormal);
+                        float nDotD = Ccino::Dot(-basis.rayDir, hitNormal);
                         if (nDotD >= normalThreshold && hitZ > lastHitZ + 1) {
                             int32_t minRayZ = (lastHitZ >= 0) ? (lastHitZ + 1) : 0;
-                            Ccino::Vec3 hitPos = rayOrigin + bRayDir * hitT;
+                            Ccino::Vec3 hitPos = rayOrigin + basis.rayDir * hitT;
 
                             bool merged = false;
                             for (uint32_t k = 0u; k < numLayers; ++k) {
@@ -394,19 +389,21 @@ namespace MeshCardGen {
                             float visibility = visibilitySum / float(numVisRays);
                             float coverage = float(layerCount[k]) / float(numSamples);
 
-                            surfels[slot].worldPos = bOffset
-                                + (bAxisX * (float(coordX) + 0.5f)
-                                 + bAxisY * (float(coordY) + 0.5f)
-                                 + bRayDir * float(layerZ[k])) * voxelSize;
-                            surfels[slot].coverage = coverage;
-                            surfels[slot].worldNormal = -bRayDir;
-                            surfels[slot].weightedCoverage = coverage * (visibility + 1.0f);
-                            surfels[slot].coord = Ccino::IVec3(int32_t(coordX), int32_t(coordY), layerZ[k]);
-                            surfels[slot].minRayZ = layerMinRayZ[k];
-                            surfels[slot].dirIndex = dir;
-                            surfels[slot].valid = 1u;
-                            surfels[slot].clusterId = invalidCluster;
-                            surfels[slot].visibility = visibility;
+                            SurfelGPU outSurfel;
+                            outSurfel.worldPos = basis.offset
+                                + (basis.axisX * (float(coordX) + 0.5f)
+                                 + basis.axisY * (float(coordY) + 0.5f)
+                                 + basis.rayDir * float(layerZ[k])) * voxelSize;
+                            outSurfel.coverage = coverage;
+                            outSurfel.worldNormal = -basis.rayDir;
+                            outSurfel.weightedCoverage = coverage * (visibility + 1.0f);
+                            outSurfel.coord = Ccino::IVec3(int32_t(coordX), int32_t(coordY), layerZ[k]);
+                            outSurfel.minRayZ = layerMinRayZ[k];
+                            outSurfel.dirIndex = dir;
+                            outSurfel.valid = 1u;
+                            outSurfel.clusterId = invalidCluster;
+                            outSurfel.visibility = visibility;
+                            surfels[slot] = outSurfel;
                         }
                     }
                 }
@@ -436,14 +433,7 @@ namespace MeshCardGen {
                 }
 
                 uint32_t totalSurfels = Ccino::Min(counters[6].value, maxTotalSurfels);
-                int32_t volZ          = bases[dir].volumeSize.z;
-                float vs              = bases[dir].voxelSize;
-                Ccino::Vec3 bAxisX    = bases[dir].axisX;
-                Ccino::Vec3 bAxisY    = bases[dir].axisY;
-                Ccino::Vec3 bRayDir   = bases[dir].rayDir;
-                Ccino::Vec3 bOffset   = bases[dir].offset;
-                Ccino::Vec3 bLocalMin = bases[dir].localMin;
-                Ccino::Vec3 bLocalMax = bases[dir].localMax;
+                AxisBasisGPU basis    = bases[dir];
 
                 float minDensity         = params[0].minDensity;
                 float minClusterCov      = params[0].minClusterCoverage;
@@ -462,7 +452,7 @@ namespace MeshCardGen {
                     Ccino::IVec3 bestMax(-999999, -999999, -999999);
 
                     int32_t startZ = (iter == 0u) ? 0 : 1;
-                    int32_t endZ   = (iter == 0u) ? 1 : volZ;
+                    int32_t endZ   = (iter == 0u) ? 1 : basis.volumeSize.z;
 
                     for (int32_t nearPlane = startZ; nearPlane < endZ; ++nearPlane) {
                         Ccino::IVec3 bMin(999999, 999999, 999999);
@@ -525,42 +515,45 @@ namespace MeshCardGen {
                     }
 
                     // 计算卡片 OBB (对应 UE SerializeLOD)
+                    float vs = basis.voxelSize;
                     Ccino::Vec3 cMin = (Ccino::Vec3(float(bestMin.x), float(bestMin.y), float(bestMin.z)) - Ccino::Vec3(0.0f, 0.0f, 0.5f)) * vs;
                     Ccino::Vec3 cMax = (Ccino::Vec3(float(bestMax.x), float(bestMax.y), float(bestMax.z)) + Ccino::Vec3(1.0f, 1.0f, 1.5f)) * vs;
 
                     float marginZ = 0.25f * vs;
-                    cMin.x = Ccino::Max(cMin.x, bLocalMin.x);
-                    cMin.y = Ccino::Max(cMin.y, bLocalMin.y);
-                    cMin.z = Ccino::Max(cMin.z, bLocalMin.z - marginZ);
-                    cMax.x = Ccino::Min(cMax.x, bLocalMax.x);
-                    cMax.y = Ccino::Min(cMax.y, bLocalMax.y);
-                    cMax.z = Ccino::Min(cMax.z, bLocalMax.z + marginZ);
+                    cMin.x = Ccino::Max(cMin.x, basis.localMin.x);
+                    cMin.y = Ccino::Max(cMin.y, basis.localMin.y);
+                    cMin.z = Ccino::Max(cMin.z, basis.localMin.z - marginZ);
+                    cMax.x = Ccino::Min(cMax.x, basis.localMax.x);
+                    cMax.y = Ccino::Min(cMax.y, basis.localMax.y);
+                    cMax.z = Ccino::Min(cMax.z, basis.localMax.z + marginZ);
 
                     Ccino::Vec3 localOrigin = (cMin + cMax) * 0.5f;
                     Ccino::Vec3 extent      = Ccino::Max((cMax - cMin) * 0.5f, Ccino::Vec3(0.01f));
-                    Ccino::Vec3 worldOrigin = bOffset
-                        + bAxisX * localOrigin.x
-                        + bAxisY * localOrigin.y
-                        + bRayDir * localOrigin.z;
+                    Ccino::Vec3 worldOrigin = basis.offset
+                        + basis.axisX * localOrigin.x
+                        + basis.axisY * localOrigin.y
+                        + basis.rayDir * localOrigin.z;
 
-                    cards[cardSlot].origin           = worldOrigin;
-                    cards[cardSlot].weightedCoverage = bestWCov;
-                    cards[cardSlot].extent           = extent;
-                    cards[cardSlot].coverage         = bestCov;
-                    cards[cardSlot].axisX            = bAxisX;
-                    cards[cardSlot].dirIndex         = dir;
-                    cards[cardSlot].axisY            = bAxisY;
-                    cards[cardSlot].nearPlane        = bestNearPlane;
-                    cards[cardSlot].axisZ            = -bRayDir;
-                    cards[cardSlot].surfelCount      = bestCount;
-                    cards[cardSlot].boundsMin        = bestMin;
-                    cards[cardSlot].isActive         = 1u;
-                    cards[cardSlot].boundsMax        = bestMax;
-                    cards[cardSlot].density          = bestDensity;
-                    cards[cardSlot].cardId           = cardSlot;
-                    cards[cardSlot].pad0             = 0u;
-                    cards[cardSlot].pad1             = 0u;
-                    cards[cardSlot].pad2             = 0u;
+                    MeshCardGPU card;
+                    card.origin           = worldOrigin;
+                    card.weightedCoverage = bestWCov;
+                    card.extent           = extent;
+                    card.coverage         = bestCov;
+                    card.axisX            = basis.axisX;
+                    card.dirIndex         = dir;
+                    card.axisY            = basis.axisY;
+                    card.nearPlane        = bestNearPlane;
+                    card.axisZ            = -basis.rayDir;
+                    card.surfelCount      = bestCount;
+                    card.boundsMin        = bestMin;
+                    card.isActive         = 1u;
+                    card.boundsMax        = bestMax;
+                    card.density          = bestDensity;
+                    card.cardId           = cardSlot;
+                    card.pad0             = 0u;
+                    card.pad1             = 0u;
+                    card.pad2             = 0u;
+                    cards[cardSlot]       = card;
 
                     committedInDir = committedInDir + 1u;
                 }
@@ -594,53 +587,9 @@ namespace MeshCardGen {
                         }
                     }
                     if (best != i) {
-                        Ccino::Vec3 tOrigin = cards[i].origin;
-                        float tWCov = cards[i].weightedCoverage;
-                        Ccino::Vec3 tExt = cards[i].extent;
-                        float tCov = cards[i].coverage;
-                        Ccino::Vec3 tAx = cards[i].axisX;
-                        uint32_t tDir = cards[i].dirIndex;
-                        Ccino::Vec3 tAy = cards[i].axisY;
-                        int32_t tNear = cards[i].nearPlane;
-                        Ccino::Vec3 tAz = cards[i].axisZ;
-                        uint32_t tSurf = cards[i].surfelCount;
-                        Ccino::IVec3 tMin = cards[i].boundsMin;
-                        uint32_t tAct = cards[i].isActive;
-                        Ccino::IVec3 tMax = cards[i].boundsMax;
-                        float tDens = cards[i].density;
-                        uint32_t tId = cards[i].cardId;
-
-                        cards[i].origin           = cards[best].origin;
-                        cards[i].weightedCoverage = cards[best].weightedCoverage;
-                        cards[i].extent           = cards[best].extent;
-                        cards[i].coverage         = cards[best].coverage;
-                        cards[i].axisX            = cards[best].axisX;
-                        cards[i].dirIndex         = cards[best].dirIndex;
-                        cards[i].axisY            = cards[best].axisY;
-                        cards[i].nearPlane        = cards[best].nearPlane;
-                        cards[i].axisZ            = cards[best].axisZ;
-                        cards[i].surfelCount      = cards[best].surfelCount;
-                        cards[i].boundsMin        = cards[best].boundsMin;
-                        cards[i].isActive         = cards[best].isActive;
-                        cards[i].boundsMax        = cards[best].boundsMax;
-                        cards[i].density          = cards[best].density;
-                        cards[i].cardId           = cards[best].cardId;
-
-                        cards[best].origin           = tOrigin;
-                        cards[best].weightedCoverage = tWCov;
-                        cards[best].extent           = tExt;
-                        cards[best].coverage         = tCov;
-                        cards[best].axisX            = tAx;
-                        cards[best].dirIndex         = tDir;
-                        cards[best].axisY            = tAy;
-                        cards[best].nearPlane        = tNear;
-                        cards[best].axisZ            = tAz;
-                        cards[best].surfelCount      = tSurf;
-                        cards[best].boundsMin        = tMin;
-                        cards[best].isActive         = tAct;
-                        cards[best].boundsMax        = tMax;
-                        cards[best].density          = tDens;
-                        cards[best].cardId           = tId;
+                        MeshCardGPU tmp = cards[i];
+                        cards[i] = cards[best];
+                        cards[best] = tmp;
                     }
                 }
 

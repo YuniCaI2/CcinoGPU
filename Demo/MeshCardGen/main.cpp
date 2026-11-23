@@ -240,16 +240,13 @@ namespace {
             auto vs = [=](Ccino::Vec3& col) {
                 uint32_t surfelIdx = uint32_t(Ccino::VertexIndex) / 6u;
                 uint32_t cornerIdx = uint32_t(Ccino::VertexIndex) % 6u;
+                MeshCardGen::SurfelGPU s = surfels[surfelIdx];
 
-                uint32_t sValid = surfels[surfelIdx].valid;
-                uint32_t sDir = surfels[surfelIdx].dirIndex;
-                uint32_t sCluster = surfels[surfelIdx].clusterId;
-
-                bool visible = (sValid != 0u);
-                if (dirFilter >= 0 && int32_t(sDir) != dirFilter) {
+                bool visible = (s.valid != 0u);
+                if (dirFilter >= 0 && int32_t(s.dirIndex) != dirFilter) {
                     visible = false;
                 }
-                if (selectedCard >= 0 && int32_t(sCluster) != selectedCard) {
+                if (selectedCard >= 0 && int32_t(s.clusterId) != selectedCard) {
                     visible = false;
                 }
 
@@ -264,7 +261,7 @@ namespace {
 
                 Ccino::Vec3 ax(1.0f, 0.0f, 0.0f);
                 Ccino::Vec3 ay(0.0f, 1.0f, 0.0f);
-                uint32_t axis = sDir / 2u;
+                uint32_t axis = s.dirIndex / 2u;
                 if (axis == 0u) {
                     ax = Ccino::Vec3(0.0f, 1.0f, 0.0f);
                     ay = Ccino::Vec3(0.0f, 0.0f, 1.0f);
@@ -273,18 +270,18 @@ namespace {
                     ay = Ccino::Vec3(0.0f, 0.0f, 1.0f);
                 }
 
-                Ccino::Vec3 worldPos = surfels[surfelIdx].worldPos + surfels[surfelIdx].worldNormal * 0.008f + (ax * u + ay * v) * halfSize;
+                Ccino::Vec3 worldPos = s.worldPos + s.worldNormal * 0.008f + (ax * u + ay * v) * halfSize;
 
                 if (colorMode == 0) {
-                    col = DirectionColor(sDir) * (0.45f + 0.55f * surfels[surfelIdx].coverage);
+                    col = DirectionColor(s.dirIndex) * (0.45f + 0.55f * s.coverage);
                 } else if (colorMode == 1) {
-                    float t = Ccino::Clamp(surfels[surfelIdx].weightedCoverage * 0.5f, 0.0f, 1.0f);
+                    float t = Ccino::Clamp(s.weightedCoverage * 0.5f, 0.0f, 1.0f);
                     col = Ccino::Mix(Ccino::Vec3(0.10f, 0.25f, 0.85f), Ccino::Vec3(1.0f, 0.90f, 0.15f), t);
                 } else {
-                    if (sCluster == invalidId) {
+                    if (s.clusterId == invalidId) {
                         col = Ccino::Vec3(0.22f, 0.22f, 0.25f);
                     } else {
-                        col = DirectionColor(sCluster % 6u);
+                        col = DirectionColor(s.clusterId % 6u);
                     }
                 }
 
@@ -323,11 +320,10 @@ namespace {
                 uint32_t localV  = uint32_t(Ccino::VertexIndex) % 36u;
                 uint32_t face    = localV / 6u;
                 uint32_t tv      = localV % 6u;
+                MeshCardGen::MeshCardGPU c = cards[cardIdx];
 
-                uint32_t cActive = cards[cardIdx].isActive;
-                uint32_t cDir    = cards[cardIdx].dirIndex;
-                bool visible = (cActive != 0u);
-                if (dirFilter >= 0 && int32_t(cDir) != dirFilter) {
+                bool visible = (c.isActive != 0u);
+                if (dirFilter >= 0 && int32_t(c.dirIndex) != dirFilter) {
                     visible = false;
                 }
                 if (selectedCard >= 0 && int32_t(cardIdx) != selectedCard) {
@@ -351,16 +347,14 @@ namespace {
                     lp = Ccino::Vec3(u, sgn, v);
                 }
 
-                Ccino::Vec3 origin = cards[cardIdx].origin;
-                Ccino::Vec3 ext    = cards[cardIdx].extent;
-                Ccino::Vec3 wp = origin
-                    + cards[cardIdx].axisX * (lp.x * ext.x)
-                    + cards[cardIdx].axisY * (lp.y * ext.y)
-                    + cards[cardIdx].axisZ * (lp.z * ext.z);
+                Ccino::Vec3 wp = c.origin
+                    + c.axisX * (lp.x * c.extent.x)
+                    + c.axisY * (lp.y * c.extent.y)
+                    + c.axisZ * (lp.z * c.extent.z);
 
                 Ccino::Vec3 rgb = (int32_t(cardIdx) == selectedCard)
                     ? Ccino::Vec3(1.0f, 0.95f, 0.35f)
-                    : DirectionColor(cDir);
+                    : DirectionColor(c.dirIndex);
                 float alpha = (face == 5u) ? Ccino::Min(baseAlpha * 2.2f, 0.55f) : baseAlpha; // 近投影面稍亮
                 col = Ccino::Vec4(rgb, alpha);
                 Ccino::Position = vp * Ccino::Vec4(wp, 1.0f);
@@ -398,11 +392,10 @@ namespace {
                 uint32_t localV  = uint32_t(Ccino::VertexIndex) % 28u;
                 uint32_t seg     = localV / 2u;
                 uint32_t endPt   = localV % 2u;
+                MeshCardGen::MeshCardGPU c = cards[cardIdx];
 
-                uint32_t cActive = cards[cardIdx].isActive;
-                uint32_t cDir    = cards[cardIdx].dirIndex;
-                bool visible = (cActive != 0u);
-                if (dirFilter >= 0 && int32_t(cDir) != dirFilter) {
+                bool visible = (c.isActive != 0u);
+                if (dirFilter >= 0 && int32_t(c.dirIndex) != dirFilter) {
                     visible = false;
                 }
                 if (selectedCard >= 0 && int32_t(cardIdx) != selectedCard) {
@@ -414,13 +407,7 @@ namespace {
                     return;
                 }
 
-                Ccino::Vec3 origin = cards[cardIdx].origin;
-                Ccino::Vec3 ext    = cards[cardIdx].extent;
-                Ccino::Vec3 ax     = cards[cardIdx].axisX;
-                Ccino::Vec3 ay     = cards[cardIdx].axisY;
-                Ccino::Vec3 az     = cards[cardIdx].axisZ;
-
-                Ccino::Vec3 wp = origin;
+                Ccino::Vec3 wp = c.origin;
                 if (seg < 12u) {
                     uint32_t axis = seg / 4u;
                     uint32_t k = seg % 4u;
@@ -434,23 +421,23 @@ namespace {
                     } else if (axis == 2u) {
                         lp = Ccino::Vec3(a, b, e);
                     }
-                    wp = origin
-                       + ax * (lp.x * ext.x)
-                       + ay * (lp.y * ext.y)
-                       + az * (lp.z * ext.z);
+                    wp = c.origin
+                       + c.axisX * (lp.x * c.extent.x)
+                       + c.axisY * (lp.y * c.extent.y)
+                       + c.axisZ * (lp.z * c.extent.z);
                 } else if (seg == 12u) {
                     // 卡片近面中心向外的法线指示线
                     float extra = (endPt == 0u) ? 0.0f : 0.28f;
-                    wp = origin + az * (ext.z + extra);
+                    wp = c.origin + c.axisZ * (c.extent.z + extra);
                 } else {
                     // 卡片近投影面对角线 (标识哪一面是近平面)
                     float d = (endPt == 0u) ? -1.0f : 1.0f;
-                    wp = origin + ax * (d * ext.x) + ay * (d * ext.y) + az * ext.z;
+                    wp = c.origin + c.axisX * (d * c.extent.x) + c.axisY * (d * c.extent.y) + c.axisZ * c.extent.z;
                 }
 
                 col = (int32_t(cardIdx) == selectedCard)
                     ? Ccino::Vec3(1.0f, 0.98f, 0.40f)
-                    : DirectionColor(cDir);
+                    : DirectionColor(c.dirIndex);
                 Ccino::Position = vp * Ccino::Vec4(wp, 1.0f);
             };
 

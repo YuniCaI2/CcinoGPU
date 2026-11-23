@@ -84,7 +84,8 @@ namespace Ccino {
             for (auto& idxField : idx->fields) {
                 base->fields.push_back(std::move(idxField));
             }
-            base->expr->text += "[" + idx->expr->text + "]";
+            auto idxStr = "[" + idx->expr->text + "]";
+            base->expr->text += idxStr;
             return base;
         }
 
@@ -205,7 +206,11 @@ namespace Ccino {
             for (auto& f : idx->fields) {
                 base->fields.push_back(std::move(f));
             }
+
             base->expr->text += "[" + idx->expr->text + "]";
+            if (SignatureFlattener::IsAccessor(expr->getArg(0)->getType())) {
+                base->expr->text += ".accessorData";
+            }
             return base;
         }
 

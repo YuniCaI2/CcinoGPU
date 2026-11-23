@@ -1,5 +1,6 @@
 #pragma once
 #include <clang/AST/Type.h>
+#include <clang/AST/TypeBase.h>
 #include <string>
 
 namespace clang {
@@ -33,6 +34,8 @@ namespace Ccino {
         static FlattenedType FlattenType(clang::QualType type);
 
         static bool IsBuiltinType(clang::QualType type);
+
+        static bool IsAccessor(clang::QualType type);
     private:
         static std::string FlattenTypeAsIdentifier(clang::QualType type);
         static std::string FormatDeclOwnName(const clang::NamedDecl* decl);

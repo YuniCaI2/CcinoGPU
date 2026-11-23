@@ -272,7 +272,7 @@ namespace Ccino::GLSL {
     }
 
     std::string DeclField::EmitGLSL() {
-        return type + " " + name + dimensions; //这里的dimension默认有[]  
+        return type + " " + name + dimensions; //这里的dimension默认有[]
     }
 
     std::string FunctionDecl::EmitGLSL() {
@@ -287,22 +287,22 @@ namespace Ccino::GLSL {
         out += body->EmitGLSL();
         out += "}\n";
 
-        return out;        
+        return out;
     }
 
     std::string StructDecl::EmitGLSL() {
         std::string out = {};
+        //生成结构体
+        out += "struct " + name + "{\n";
+        for (int i = 0; i < fields.size(); i++) {
+            out += fields[i]->EmitGLSL() + ";\n";
+        }
+        out += "};\n";
+
+        //生成绑定
         if (isBufferReference) {
-            out += "layout(buffer_reference, scalar, buffer_reference_align = " + std::to_string(bufferReferenceAlign) + ") buffer " + name + "{ \n";
-            for (int i = 0; i < fields.size(); i++) {
-                out += fields[i]->EmitGLSL() + ";\n";
-            }
-            out += "};\n";
-        } else {
-            out += "struct " + name + "{\n";
-            for (int i = 0; i < fields.size(); i++) {
-                out += fields[i]->EmitGLSL() + ";\n";
-            }
+            out += "layout(buffer_reference, scalar, buffer_reference_align = " + std::to_string(bufferReferenceAlign)  + ") buffer " + name + "_Ref" + "{ \n";
+            out += "    " + name + " " + "accessorData;\n";
             out += "};\n";
         }
         return out;
