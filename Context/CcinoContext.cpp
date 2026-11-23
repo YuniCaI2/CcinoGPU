@@ -14,10 +14,16 @@
 
 namespace Ccino {
     bool Context::Run(const std::string& rgBuilderName) {
+        if (m_isRunning) {
+            std::cerr << "Only Support One RG Running !" << std::endl;
+            return false;
+        }
+        m_isRunning = true;
         if (m_rgBuilders.contains(rgBuilderName) && m_rgBuilders[rgBuilderName] != nullptr) {
             m_rgBuilders[rgBuilderName]->Run();
             return true;
         }
+        m_isRunning = false;
         return false;
     }
 
@@ -121,7 +127,7 @@ namespace Ccino {
             m_rgBuilders[name]->Destroy();
             m_rgBuilders[name] = nullptr;
             return true;
-        } 
+        }
         return false;
     }
 

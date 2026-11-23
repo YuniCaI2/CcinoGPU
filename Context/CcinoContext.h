@@ -46,5 +46,6 @@ namespace Ccino {
         bool hasInit = false;
         std::vector<ShaderIR> m_shaderIRs;
         std::string globalFunctions; //其中包含了全局函数和结构体
+        std::atomic<bool> m_isRunning = false;
     };
 };
