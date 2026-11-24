@@ -211,12 +211,7 @@ namespace MeshCardGen {
         RID vbRID       = m_genBuilder->CreateExternalBuffer(vertexBuffer);
         RID ibRID       = m_genBuilder->CreateExternalBuffer(indexBuffer);
         RID tlasRID     = m_genBuilder->CreateExternalTLAS(tlas);
-        RID basisRID    = m_genBuilder->CreateExternalBuffer(m_basisBuf);
-        RID hemiRID     = m_genBuilder->CreateExternalBuffer(m_hemiBuf);
-        RID paramsRID   = m_genBuilder->CreateExternalBuffer(m_paramsBuf);
-        RID surfelsRID  = m_genBuilder->CreateExternalBuffer(m_surfelsBuf);
-        RID cardsRID    = m_genBuilder->CreateExternalBuffer(m_cardsBuf);
-        RID countersRID = m_genBuilder->CreateExternalBuffer(m_countersBuf);
+        auto [basisRID, hemiRID, paramsRID, surfelsRID, cardsRID, countersRID] = m_genBuilder->CreateExternalBuffers(m_basisBuf, m_hemiBuf, m_paramsBuf, m_surfelsBuf, m_cardsBuf, m_countersBuf);
 
         // =========================================================================
         // Pass 1: 体素化 + RayQuery 求交 + 半球可见性 -> 生成 Surfel

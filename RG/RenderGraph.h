@@ -17,12 +17,19 @@
 #include <functional>
 #include <future>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <variant>
 
 union SDL_Event;
 
+#define FLATTEN_CREATE(FuncName)                              \
+template<typename... Args>                                    \
+    requires (sizeof...(Args) > 0)                              \
+auto FuncName##s(Args&&... args) {                            \
+    return std::tuple{FuncName(std::forward<Args>(args))...}; \
+}
 
 namespace Ccino {
 
@@ -395,15 +402,25 @@ namespace Ccino {
         }
 
         RID CreateTransientBuffer(typename Buffer::CreateArgs createArgs);
+        FLATTEN_CREATE(CreateTransientBuffer)
+
         RID CreateExternalBuffer(const Ref<Buffer>& buffer);
+        FLATTEN_CREATE(CreateExternalBuffer)
+
         bool UpdateExternalBuffer(RID resourceRID, const Ref<Buffer>& buffer);
 
 
         RID CreateTransientTexture2D(typename Texture2D::CreateArgs createArgs);
+        FLATTEN_CREATE(CreateTransientTexture2D)
+
         RID CreateExternalTexture2D(const Ref<Texture2D>& texture);
+        FLATTEN_CREATE(CreateExternalTexture2D)
+
         bool UpdateExternalTexture2D(RID resourceRID, const Ref<Texture2D>& texture);
 
         RID CreateExternalTLAS(const Ref<TLAS>& tlas);
+        FLATTEN_CREATE(CreateExternalTLAS)
+
         bool UpdateExternalTLAS(RID resourceRID, const Ref<TLAS>& tlas);
 
     private:
