@@ -8,6 +8,7 @@
 #include "Core/CcinoType.h"
 #include "Core/Texture2D.h"
 #include "RG/RenderGraph.h"
+#include "Demo/RayQueryDemo/Camera.h"
 
 #include <SDL3/SDL_events.h>
 #include <chrono>
@@ -29,6 +30,7 @@ namespace {
 
     int RunDemo(uint64_t maxFrames) {
         Ccino::Context ctx;
+        Camera camera({0, 0, 0}, 90.0f, kWidth * 1.0f / kHeight);
         RHISettings settings{};
         settings.bUseSwapChain = true;
         settings.flightFrameCount = 2;
@@ -135,13 +137,8 @@ namespace {
         // 5. 全屏 Graphics Pass: VS 输出全屏三角形, FS (AS + PS) 做主光线 + 阴影光线追踪
         builder->AddPass<"RayQueryASPSPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
             auto sceneAS = rg.ReadAS(tlasRID, passRID);
-
-            const float t = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
-            const float orbitAngle = t * 0.6f;
-            const float radius = 3.6f;
-            const Ccino::Vec3 camPos(std::sin(orbitAngle) * radius, 1.35f, std::cos(orbitAngle) * radius);
-            const Ccino::Vec3 targetPos(0.0f, -0.05f, 0.0f);
-            const Ccino::Vec3 camForward = glm::normalize(targetPos - camPos);
+            Ccino::Vec3 camPos = camera.Position();
+            const Ccino::Vec3 camForward = camera.LookAt();
             const Ccino::Vec3 worldUp(0.0f, 1.0f, 0.0f);
             const Ccino::Vec3 camRight = glm::normalize(glm::cross(camForward, worldUp));
             const Ccino::Vec3 camUp = glm::normalize(glm::cross(camRight, camForward));
@@ -227,7 +224,8 @@ namespace {
 
         uint64_t frameCount = 0;
         builder->LoopRun(targetRID, Ccino::LoopHooks{
-            .onEvent = [](SDL_Event& event) {
+            .onEvent = [&](SDL_Event& event) {
+                camera.Update(event);
                 return event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE;
             },
             .onResize = [&](uint32_t w, uint32_t h) {
@@ -239,6 +237,7 @@ namespace {
                 }
             },
             .onUpdate = [&](Ccino::FrameContext& frame) {
+                camera.UpdateMovement(frame.dt);
                 if (maxFrames != 0 && frame.frameIndex >= maxFrames) {
                     frame.shouldExit = true;
                 }
