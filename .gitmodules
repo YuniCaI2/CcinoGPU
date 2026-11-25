@@ -27,3 +27,6 @@
 	path = ThirdPart/imgui
 	url = https://github.com/ocornut/imgui.git
 	shallow = true
+[submodule "Demo/ThirdPart/tinygltf"]
+	path = Demo/ThirdPart/tinygltf
+	url = https://github.com/syoyo/tinygltf.git
