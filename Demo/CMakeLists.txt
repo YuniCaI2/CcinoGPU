@@ -1,5 +1,4 @@
 add_subdirectory(ThirdPart)
-add_subdirectory(Tools)
 add_subdirectory(OfflineTriangle)
 add_subdirectory(SwapchainTriangle)
 add_subdirectory(ParticleGalaxy)
