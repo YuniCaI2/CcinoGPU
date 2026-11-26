@@ -133,7 +133,7 @@ namespace {
 
         auto sphereTLAS = ctx.CreateTLAS({
             .instances = {
-                {.position = {0.0f, 0.0f, 0.0f}, .blas = sphereBLAS, .customIndex = 0, .bCulling = false},
+                {.transform = Ccino::Mat4(1.0f), .blas = sphereBLAS, .customIndex = 0, .bCulling = false},
             }
         });
 

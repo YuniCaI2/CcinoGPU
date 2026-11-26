@@ -58,7 +58,7 @@ namespace Ccino {
         }
 
         struct InstanceInfo {
-            Vec3 position{};
+            Mat4 transform{1.0f};
             Ref<BLAS> blas;
             uint32_t customIndex = 0;
             bool bCulling = false;

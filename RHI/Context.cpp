@@ -1397,9 +1397,9 @@ namespace Ccino::RHI {
             VkAccelerationStructureInstanceKHR instance{};
             instance.transform = VkTransformMatrixKHR{
                 .matrix = {
-                    {1.0f, 0.0f, 0.0f, info.position.x},
-                    {0.0f, 1.0f, 0.0f, info.position.y},
-                    {0.0f, 0.0f, 1.0f, info.position.z},
+                    {info.transform[0][0], info.transform[1][0], info.transform[2][0], info.transform[3][0]},
+                    {info.transform[0][1], info.transform[1][1], info.transform[2][1], info.transform[3][1]},
+                    {info.transform[0][2], info.transform[1][2], info.transform[2][2], info.transform[3][2]},
                 }
             };
             instance.instanceCustomIndex = info.customIndex & 0x00FFFFFFu;

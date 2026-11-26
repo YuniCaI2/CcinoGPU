@@ -55,7 +55,7 @@ namespace Ccino {
                 throw std::invalid_argument("[Core TLAS]: instance blas is invalid");
             }
             RHI::ASInstanceInfo rhiInstance{};
-            rhiInstance.position = instance.position;
+            rhiInstance.transform = instance.transform;
             rhiInstance.blas = instance.blas->GetRHI();
             rhiInstance.customIndex = instance.customIndex;
             rhiInstance.bCulling = instance.bCulling;

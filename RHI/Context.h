@@ -177,7 +177,7 @@ namespace Ccino::RHI {
 
     //构建TLAS用,这里先不要剔除
     struct ASInstanceInfo {
-        Ccino::Vec3 position {};
+        Ccino::Mat4 transform{1.0f};
         RID blas = RID::Invalid();    
         uint32_t customIndex = 0; //这里最大是24位
         bool bCulling = false; //双面渲染
