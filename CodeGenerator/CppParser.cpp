@@ -37,12 +37,12 @@
 #include <utility>
 
 namespace {
-    inline std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
+    inline std::string ExtractMethodDeclFixString(const clang::CXXMethodDecl* passMethod, uint32_t index) {
         if (!passMethod) return {};
         std::string result = "";
         const auto* args = passMethod->getTemplateSpecializationArgs();
         if (!args || args->size() == 0) return {};
-        const clang::TemplateArgument& arg0 = args->get(0);
+        const clang::TemplateArgument& arg0 = args->get(index);
 
         const clang::APValue* structValPtr = Ccino::ASTGenerator::ExtractStructuralAPValue(arg0);
         if (!structValPtr) {
@@ -65,6 +65,10 @@ namespace {
         }
 
         return result;
+    }
+
+    inline std::string ExtractPassName(const clang::CXXMethodDecl* passMethod) {
+        return ExtractMethodDeclFixString(passMethod, 0);
     }
 
     class ComputePassShaderCollector : public clang::ast_matchers::MatchFinder::MatchCallback {

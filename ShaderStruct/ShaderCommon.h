@@ -7,6 +7,8 @@
 #include <string_view>
 
 namespace Ccino {
+    inline constexpr char kVariantDefaultName[] = "defaultVariant"; //这里是因为模板无法接受非定长的字符串
+
     enum class ShaderType {
         Compute,
         Vertex,

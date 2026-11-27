@@ -193,5 +193,9 @@ namespace Ccino {
         GraphicsSetting graphicsSetting{};
         std::vector<RenderTarget> renderTargets; //下标对应FS 的 out location
         std::optional<RenderTarget> depthRenderTarget; //这里区别上述的颜色
+
+        //这里增加变体， 变体使用hash map 实现，并且记录当前的变体的名字来实现变体定位
+        std::unordered_map<std::string, RID> variants;
+        std::string currentVariantName = {};
     };
 }

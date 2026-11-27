@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <imgui.h>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -54,6 +55,7 @@ namespace {
         settings.windowWidth = kWidth;
         settings.windowHeight = kHeight;
         settings.bVsync = true;
+        settings.bUseImgui = true;
         if (!ctx.Init(settings)) {
             std::cerr << "Failed to initialize Ccino context\n";
             return 1;
@@ -457,6 +459,11 @@ namespace {
                 if (maxFrames != 0 && frame.frameIndex >= maxFrames) {
                     frame.shouldExit = true;
                 }
+            },
+            .onGUI = [&](Ccino::FrameContext& frame) {
+                ImGui::Begin("Path Tracing");
+                ImGui::Text("Sample Nums: %d", sampleIndex);
+                ImGui::End();
             },
             .onPostFrame = [&](Ccino::FrameContext& frame) {
                 frameCount = frame.frameIndex;
