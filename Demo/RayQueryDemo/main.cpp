@@ -1,6 +1,8 @@
-// RayQuery AS + PS 可视化 Demo:
+// RayQuery Path Tracing Demo:
 //   1. 通过 LoadModel 加载 Khronos DamagedHelmet.glb (几何 + 全套 PBR 贴图) 构建 BLAS, 并与地面 Ground BLAS 组合成 TLAS
-//   2. 每帧通过一个全屏 Graphics Pass (VS 生成全屏三角形 + FS/PS 发射主光线与阴影光线) 调用单源 PBR 库 (Material.h) 着色
+//   2. Pass 1 (RayQueryPathTracePass): 全屏 FS 发射多跳路径追踪光线 (GGX + Cosine 重要性采样 + 俄罗斯轮盘赌),
+//      通过 Alpha 混合将线性 HDR 均值渐进累积到 RGBA16_Float 缓冲
+//   3. Pass 2 (RayQueryToneMapPass): 对累积后的线性 HDR 缓冲执行 ACES 色调映射, 输出到 RGBA8_sRGB 后 Blit 到交换链
 // 用法: RayQueryDemo [帧数], 不传或传 0 时一直运行到关闭窗口或按 Esc
 #include "Context/CcinoContext.h"
 #include "Core/AccelerationStructure.h"
@@ -8,9 +10,10 @@
 #include "Core/CcinoType.h"
 #include "Core/Texture2D.h"
 #include "RG/RenderGraph.h"
-#include "Demo/RayQueryDemo/Camera.h"
+#include "Demo/Common/Camera.h"
 #include "Demo/RayQueryDemo/LoadModel.h"
 #include "Demo/RayQueryDemo/Material.h"
+#include "Demo/RayQueryDemo/PathTracing.h"
 
 #include <SDL3/SDL_events.h>
 #include <array>
@@ -26,7 +29,9 @@
 namespace {
     constexpr uint32_t kWidth = 960;
     constexpr uint32_t kHeight = 600;
-    constexpr Ccino::ClearColor kClearColor{{0.05f, 0.06f, 0.08f, 1.0f}};
+    constexpr uint32_t kMaxSpp = 2048;
+    constexpr int kMaxBounce = 6;
+    constexpr Ccino::ClearColor kClearBlack{{0.0f, 0.0f, 0.0f, 0.0f}};
 
     struct PositionVertex {
         float x, y, z;
@@ -140,9 +145,24 @@ namespace {
             }
         });
 
-        // 4. 离屏渲染目标 (sRGB, 最后 Blit 到交换链)
+        // 4. 离屏渲染目标:
+        //    - accumTarget (RGBA16_Float): 线性 HDR 渐进累积缓冲
+        //    - target      (RGBA8_sRGB):   ToneMap 后的输出纹理, 最后 Blit 到交换链
         uint32_t curWidth = kWidth;
         uint32_t curHeight = kHeight;
+        bool needResetAccum = true;
+        bool clearAccumThisFrame = true;
+        uint32_t sampleIndex = 0;
+
+        auto createAccumTarget = [&](uint32_t w, uint32_t h) {
+            return ctx.CreateTexture2D(Ccino::Texture2D::CreateArgs{
+                .width = w,
+                .height = h,
+                .mipLevels = 1,
+                .format = Ccino::TextureFormat::RGBA16_Float,
+                .usage = Ccino::TextureUsage::ColorAttachment | Ccino::TextureUsage::Sampled,
+            });
+        };
         auto createTarget = [&](uint32_t w, uint32_t h) {
             return ctx.CreateTexture2D(Ccino::Texture2D::CreateArgs{
                 .width = w,
@@ -152,9 +172,11 @@ namespace {
                 .usage = Ccino::TextureUsage::ColorAttachment | Ccino::TextureUsage::TransferSrc,
             });
         };
+        Ccino::Ref<Ccino::Texture2D> accumTarget = createAccumTarget(curWidth, curHeight);
         Ccino::Ref<Ccino::Texture2D> target = createTarget(curWidth, curHeight);
 
         Ccino::RGBuilder* builder = ctx.CreateRGBuilder("RayQueryDemo");
+        RID accumRID        = builder->CreateExternalTexture2D(accumTarget);
         RID targetRID       = builder->CreateExternalTexture2D(target);
         RID tlasRID         = builder->CreateExternalTLAS(tlas);
         RID helmetVBRid     = builder->CreateExternalBuffer(helmetVB);
@@ -162,7 +184,6 @@ namespace {
         RID baseColorTexRID = builder->CreateExternalTexture2D(baseColorTexture);
         RID normalTexRID    = builder->CreateExternalTexture2D(normalTexture);
         RID mrTexRID        = builder->CreateExternalTexture2D(mrTexture);
-        RID aoTexRID        = builder->CreateExternalTexture2D(aoTexture);
         RID emissiveTexRID  = builder->CreateExternalTexture2D(emissiveTexture);
 
         const uint32_t posBaseFloats    = static_cast<uint32_t>(posView[2]) / 4u;
@@ -179,31 +200,30 @@ namespace {
 
         const auto start = std::chrono::steady_clock::now();
 
-        // 5. 全屏 Graphics Pass: VS 输出全屏三角形, FS (AS + PS) 做主光线 + 阴影光线 + Cook-Torrance PBR
-        builder->AddPass<"RayQueryASPSPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+        // 5. Pass 1: 全屏纯 Path Tracing, 通过 Alpha 混合将每帧线性 HDR 样本渐进平均到 accumTarget
+        builder->AddPass<"RayQueryPathTracePass">([&](Ccino::RGBuilder& rg, RID& passRID) {
             auto sceneAS      = rg.ReadAS(tlasRID, passRID);
             auto vb           = rg.Read<FloatElem>(helmetVBRid, passRID);
             auto ib           = rg.Read<IndexElem>(helmetIBRid, passRID);
             auto baseColorTex = rg.Sample<Ccino::ViewType::Float>(baseColorTexRID, passRID);
             auto normalTex    = rg.Sample<Ccino::ViewType::Float>(normalTexRID, passRID);
             auto mrTex        = rg.Sample<Ccino::ViewType::Float>(mrTexRID, passRID);
-            auto aoTex        = rg.Sample<Ccino::ViewType::Float>(aoTexRID, passRID);
             auto emissiveTex  = rg.Sample<Ccino::ViewType::Float>(emissiveTexRID, passRID);
 
-            Ccino::Vec3 camPos = camera.Position();
+            const Ccino::Vec3 camPos = camera.Position();
             const Ccino::Vec3 camForward = camera.LookAt();
             const Ccino::Vec3 worldUp(0.0f, 1.0f, 0.0f);
             const Ccino::Vec3 camRight = glm::normalize(glm::cross(camForward, worldUp));
             const Ccino::Vec3 camUp = glm::normalize(glm::cross(camRight, camForward));
             const float aspect = curHeight > 0 ? static_cast<float>(curWidth) / static_cast<float>(curHeight) : 1.0f;
+            const Ccino::Vec2 invResolution(
+                curWidth > 0 ? 1.0f / static_cast<float>(curWidth) : 0.0f,
+                curHeight > 0 ? 1.0f / static_cast<float>(curHeight) : 0.0f);
+            uint32_t frameSampleIdx = sampleIndex;
+            uint32_t maxSppCount = kMaxSpp;
+            int maxBounce = kMaxBounce;
 
-            // 主方向光 (从右前上方打向头盔面罩) + 补光 (从左后上方勾勒金属轮廓)
-            const Ccino::Vec3 keyLightDir = glm::normalize(Ccino::Vec3(0.55f, 0.72f, -0.42f));
-            const Ccino::Vec3 keyLightRad(3.4f, 3.2f, 2.9f);
-            const Ccino::Vec3 fillLightDir = glm::normalize(Ccino::Vec3(-0.75f, 0.40f, -0.52f));
-            const Ccino::Vec3 fillLightRad(0.95f, 1.15f, 1.55f);
-
-            auto vs = [=](Ccino::Vec2& uv) {
+            auto vs = [](Ccino::Vec2& uv) {
                 Ccino::Vec2 pos(-1.0f, -1.0f);
                 uv = Ccino::Vec2(0.0f, 0.0f);
                 if (Ccino::VertexIndex == 1) {
@@ -218,29 +238,53 @@ namespace {
             };
 
             auto fs = [=](const Ccino::Vec2& uv, Ccino::Vec4& outColor) {
-                Ccino::Vec2 ndc(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f);
+                // 达到目标 SPP 后输出 alpha = 0, Alpha 混合保持 accumTarget 不变并跳过光追
+                if (frameSampleIdx == 0u || frameSampleIdx > maxSppCount) {
+                    outColor = Ccino::Vec4(0.0f, 0.0f, 0.0f, 0.0f);
+                    return;
+                }
+
+                // 每像素每帧独立的 PCG 随机数种子
+                uint32_t px = uint32_t(Ccino::FragCoord.x);
+                uint32_t py = uint32_t(Ccino::FragCoord.y);
+                uint32_t rngState = PBR::PCGHash(px * 1973u + py * 9277u + frameSampleIdx * 26699u + 17u);
+
+                // 亚像素随机抖动 (AA)
+                float jx = PBR::NextRand(rngState) - 0.5f;
+                float jy = PBR::NextRand(rngState) - 0.5f;
+                Ccino::Vec2 jitteredUv = uv + Ccino::Vec2(jx, jy) * invResolution;
+                Ccino::Vec2 ndc(jitteredUv.x * 2.0f - 1.0f, 1.0f - jitteredUv.y * 2.0f);
                 float tanHalfFov = 0.55f;
+
+                Ccino::Vec3 rayOrigin = camPos;
                 Ccino::Vec3 rayDir = Ccino::Normalize(
                     camForward +
                     camRight * (ndc.x * aspect * tanHalfFov) +
                     camUp * (ndc.y * tanHalfFov));
 
-                Ccino::RayQueryEXT rq;
-                Ccino::RayQueryInitializeEXT(
-                    rq, sceneAS,
-                    Ccino::RayFlagsOpaqueEXT, 0xFFu,
-                    camPos, 0.001f, rayDir, 100.0f);
-                while (Ccino::RayQueryProceedEXT(rq)) {
-                }
+                Ccino::Vec3 radiance(0.0f, 0.0f, 0.0f);
+                Ccino::Vec3 throughput(1.0f, 1.0f, 1.0f);
 
-                Ccino::Vec3 hdrColor = PBR::EvalEnvColor(rayDir);
+                for (int bounce = 0; bounce < maxBounce; ++bounce) {
+                    Ccino::RayQueryEXT rq;
+                    Ccino::RayQueryInitializeEXT(
+                        rq, sceneAS,
+                        Ccino::RayFlagsOpaqueEXT, 0xFFu,
+                        rayOrigin, 0.001f, rayDir, 100.0f);
+                    while (Ccino::RayQueryProceedEXT(rq)) {
+                    }
 
-                if (Ccino::RayQueryGetIntersectionTypeEXT(rq, true) == Ccino::RayQueryCommittedIntersectionTriangleEXT) {
+                    // 未命中物体 -> 采样天空环境光, 路径终止
+                    if (Ccino::RayQueryGetIntersectionTypeEXT(rq, true) != Ccino::RayQueryCommittedIntersectionTriangleEXT) {
+                        radiance = radiance + throughput * PBR::EvalPathTracingSky(rayDir);
+                        break;
+                    }
+
                     float hitT = Ccino::RayQueryGetIntersectionTEXT(rq, true);
                     Ccino::Vec2 bary = Ccino::RayQueryGetIntersectionBarycentricsEXT(rq, true);
                     int32_t instId = Ccino::RayQueryGetIntersectionInstanceCustomIndexEXT(rq, true);
                     int32_t primId = Ccino::RayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
-                    Ccino::Vec3 hitPos = camPos + rayDir * hitT;
+                    Ccino::Vec3 hitPos = rayOrigin + rayDir * hitT;
                     Ccino::Vec3 V = Ccino::Normalize(-rayDir);
 
                     PBR::Surface surface;
@@ -252,11 +296,14 @@ namespace {
                     surface.emissive  = Ccino::Vec3(0.0f, 0.0f, 0.0f);
 
                     if (instId == 0) {
+                        if (Ccino::Dot(surface.normal, V) < 0.0f) {
+                            surface.normal = -surface.normal;
+                        }
                         float cx = Ccino::Floor(hitPos.x * 2.0f);
                         float cz = Ccino::Floor(hitPos.z * 2.0f);
                         float checker = Ccino::Mod(cx + cz, 2.0f);
                         surface.albedo    = checker < 0.5f ? Ccino::Vec3(0.18f, 0.20f, 0.24f) : Ccino::Vec3(0.36f, 0.39f, 0.44f);
-                        surface.roughness = checker < 0.5f ? 0.42f : 0.68f;
+                        surface.roughness = checker < 0.5f ? 0.38f : 0.65f;
                         surface.metallic  = 0.05f;
                     } else {
                         float b0 = 1.0f - bary.x - bary.y;
@@ -301,50 +348,112 @@ namespace {
                         surface.albedo    = Ccino::Vec3(baseColorTex.Sample(texUV, Ccino::SamplerType::LINEAR_REPEAT, 0.0f)) * baseColorFactor;
                         surface.roughness = Ccino::Clamp(mrSample.y * roughnessFactor, 0.04f, 1.0f);
                         surface.metallic  = Ccino::Clamp(mrSample.z * metallicFactor, 0.0f, 1.0f);
-                        surface.ao        = aoTex.Sample(texUV, Ccino::SamplerType::LINEAR_REPEAT, 0.0f).x;
                         surface.emissive  = Ccino::Vec3(emissiveTex.Sample(texUV, Ccino::SamplerType::LINEAR_REPEAT, 0.0f)) * emissiveFactor;
                     }
 
-                    // 主光阴影光线检测
-                    Ccino::RayQueryEXT shadowRq;
-                    Ccino::RayQueryInitializeEXT(
-                        shadowRq, sceneAS,
-                        Ccino::RayFlagsOpaqueEXT | Ccino::RayFlagsTerminateOnFirstHitEXT,
-                        0xFFu,
-                        hitPos + surface.normal * 0.003f, 0.001f, keyLightDir, 50.0f);
-                    while (Ccino::RayQueryProceedEXT(shadowRq)) {
-                    }
-                    float keyVis = (Ccino::RayQueryGetIntersectionTypeEXT(shadowRq, true) == Ccino::RayQueryCommittedIntersectionNoneEXT) ? 1.0f : 0.0f;
+                    // 累加物体自发光贡献 (Bounce 之间直接相加)
+                    radiance = radiance + throughput * surface.emissive * 1.4f;
 
-                    Ccino::Vec3 Lo = PBR::EvalDirectCookTorrance(surface, V, keyLightDir, keyLightRad * keyVis)
-                                   + PBR::EvalDirectCookTorrance(surface, V, fillLightDir, fillLightRad);
-                    Ccino::Vec3 ambient = PBR::EvalAmbientIBL(surface, V);
-                    hdrColor = Lo + ambient + surface.emissive * 1.4f;
+                    // BSDF 重要性采样下一跳方向
+                    PBR::BSDFSample bsdfSample = PBR::SamplePBRBSDF(surface, V, rngState);
+                    if (bsdfSample.valid == 0) {
+                        break;
+                    }
+                    throughput = throughput * bsdfSample.weight;
+
+                    // 俄罗斯轮盘赌 (从第 2 次弹射后开始按剩余能量概率提前终止)
+                    if (bounce >= 2) {
+                        float maxComp = Ccino::Max(throughput.x, Ccino::Max(throughput.y, throughput.z));
+                        float q = Ccino::Clamp(maxComp, 0.05f, 0.95f);
+                        if (PBR::NextRand(rngState) > q) {
+                            break;
+                        }
+                        throughput = throughput / q;
+                    }
+
+                    // 推进光线到下一跳 (沿法线微偏移防止自相交)
+                    rayOrigin = hitPos + surface.normal * 0.002f;
+                    rayDir = bsdfSample.dir;
                 }
 
+                // NaN 防护与温和萤火虫抑制
+                if (Ccino::IsNan(radiance.x) || Ccino::IsNan(radiance.y) || Ccino::IsNan(radiance.z)) {
+                    radiance = Ccino::Vec3(0.0f, 0.0f, 0.0f);
+                }
+                radiance = Ccino::Min(radiance, Ccino::Vec3(20.0f, 20.0f, 20.0f));
+
+                // Alpha = 1 / N: 硬件 Alpha 混合自动计算 dst = (1/N) * curr + (1 - 1/N) * prev
+                float blendWeight = 1.0f / float(frameSampleIdx);
+                outColor = Ccino::Vec4(radiance, blendWeight);
+            };
+
+            auto accumView = rg.RTView(
+                accumRID, passRID,
+                clearAccumThisFrame ? Ccino::LoadOp::Clear : Ccino::LoadOp::Load,
+                kClearBlack);
+            rg.AddVSAndFS(
+                vs, fs,
+                Ccino::GraphicsSetting{.drawCounts = 3, .blendMode = Ccino::BlendMode::Alpha},
+                {accumView});
+        }).AddPass<"RayQueryToneMapPass">([&](Ccino::RGBuilder& rg, RID& passRID) {
+            // 6. Pass 2: 采样线性 HDR 累积缓冲, ACES 色调映射到 RGBA8_sRGB
+            auto accumTex = rg.Sample<Ccino::ViewType::Float>(accumRID, passRID);
+
+            auto vs = [](Ccino::Vec2& uv) {
+                Ccino::Vec2 pos(-1.0f, -1.0f);
+                uv = Ccino::Vec2(0.0f, 0.0f);
+                if (Ccino::VertexIndex == 1) {
+                    pos = Ccino::Vec2(3.0f, -1.0f);
+                    uv = Ccino::Vec2(2.0f, 0.0f);
+                }
+                if (Ccino::VertexIndex == 2) {
+                    pos = Ccino::Vec2(-1.0f, 3.0f);
+                    uv = Ccino::Vec2(0.0f, 2.0f);
+                }
+                Ccino::Position = Ccino::Vec4(pos, 0.0f, 1.0f);
+            };
+
+            auto fs = [=](const Ccino::Vec2& uv, Ccino::Vec4& outColor) {
+                Ccino::Vec3 hdrColor = Ccino::Vec3(accumTex.Sample(uv, Ccino::SamplerType::NEAREST_CLAMP_TO_EDGE, 0.0f));
                 outColor = Ccino::Vec4(PBR::ToneMapACES(hdrColor), 1.0f);
             };
 
-            auto renderTarget = rg.RTView(targetRID, passRID, Ccino::LoadOp::Clear, kClearColor);
-            rg.AddVSAndFS(vs, fs, Ccino::GraphicsSetting{.drawCounts = 3}, {renderTarget});
+            auto presentView = rg.RTView(targetRID, passRID, Ccino::LoadOp::DontCare);
+            rg.AddVSAndFS(vs, fs, Ccino::GraphicsSetting{.drawCounts = 3}, {presentView});
         });
 
         uint64_t frameCount = 0;
         builder->LoopRun(targetRID, Ccino::LoopHooks{
             .onEvent = [&](SDL_Event& event) {
-                camera.Update(event);
+                if (camera.Update(event)) {
+                    needResetAccum = true;
+                }
                 return event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE;
             },
             .onResize = [&](uint32_t w, uint32_t h) {
                 if (w > 0 && h > 0 && (w != curWidth || h != curHeight)) {
                     curWidth = w;
                     curHeight = h;
+                    camera.SetAspect(static_cast<float>(curWidth) / static_cast<float>(curHeight));
+                    accumTarget = createAccumTarget(curWidth, curHeight);
                     target = createTarget(curWidth, curHeight);
+                    builder->UpdateExternalTexture2D(accumRID, accumTarget);
                     builder->UpdateExternalTexture2D(targetRID, target);
                 }
+                needResetAccum = true;
             },
             .onUpdate = [&](Ccino::FrameContext& frame) {
-                camera.UpdateMovement(frame.dt);
+                if (camera.UpdateMovement(frame.dt)) {
+                    needResetAccum = true;
+                }
+                clearAccumThisFrame = needResetAccum;
+                if (needResetAccum) {
+                    sampleIndex = 0;
+                    needResetAccum = false;
+                }
+                if (sampleIndex <= kMaxSpp) {
+                    ++sampleIndex;
+                }
                 if (maxFrames != 0 && frame.frameIndex >= maxFrames) {
                     frame.shouldExit = true;
                 }
@@ -361,6 +470,7 @@ namespace {
         }
         std::cout << std::endl;
 
+        accumTarget.Reset();
         target.Reset();
         tlas.Reset();
         helmetBLAS.Reset();

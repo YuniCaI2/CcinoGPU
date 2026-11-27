@@ -1,6 +1,6 @@
 #include "Accessor.h"
 #include "AccessorEnums.h"
-#include "Camera.h"
+#include "Demo/Common/Camera.h"
 #include "Context/CcinoContext.h"
 #include "Core/Buffer.h"
 #include "Core/CcinoType.h"

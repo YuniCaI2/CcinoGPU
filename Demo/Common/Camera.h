@@ -19,7 +19,7 @@ public:
         RebuildView();
     }
 
-    void Update(const SDL_Event& event) {
+    bool Update(const SDL_Event& event) {
         if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT) {
             m_window = SDL_GetWindowFromID(event.button.windowID);
             SetLooking(true);
@@ -32,6 +32,7 @@ public:
             const float pitchLimit = glm::radians(89.0f);
             m_pitch = std::clamp(m_pitch, -pitchLimit, pitchLimit);
             RebuildView();
+            return true;
         } else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
             const bool pressed = event.type == SDL_EVENT_KEY_DOWN;
             switch (event.key.scancode) {
@@ -46,18 +47,19 @@ public:
             m_moveForward = m_moveBackward = m_moveLeft = m_moveRight = false;
             SetLooking(false);
         }
+        return false;
     }
 
     // 按键事件只记录状态, 每帧根据 dt 移动, 不依赖系统的按键重复频率
-    void UpdateMovement(float dt) {
+    bool UpdateMovement(float dt) {
         if (dt <= 0.0f) {
-            return;
+            return false;
         }
 
         const float forward = static_cast<float>(m_moveForward) - static_cast<float>(m_moveBackward);
         const float strafe = static_cast<float>(m_moveRight) - static_cast<float>(m_moveLeft);
         if (forward == 0.0f && strafe == 0.0f) {
-            return;
+            return false;
         }
 
         // 右手相机默认朝 +Z, 此时屏幕右方为世界 -X
@@ -66,6 +68,7 @@ public:
         constexpr float kMoveSpeed = 2.5f; // 世界单位 / 秒
         m_position += direction * kMoveSpeed * dt;
         RebuildView();
+        return true;
     }
 
     void SetAspect(float aspect) {
